@@ -1109,6 +1109,9 @@
             <option value="Hard">Hard</option>
           </select>
         </label>
+        <label for="shared-playlist-select">In Playlist:
+          <select id="shared-playlist-select" class="sort-select"></select>
+        </label>
       </div>
       <div class="pl-range-row">
         <label for="min-pl-select">Min shared playlists:
@@ -1193,6 +1196,7 @@
     let minPlTouched = false, maxPlTouched = false;
     let sortMode = 'shared';
     let diffFilter = 'all';
+    let playlistFilter = 'all';
     const selectedTags = new Set();
     const input = wrap.querySelector('#shared-search');
     const minPlSelect = wrap.querySelector('#min-pl-select');
@@ -1200,6 +1204,7 @@
     const plRangeCount = wrap.querySelector('#pl-range-count');
     const sortSelect = wrap.querySelector('#shared-sort');
     const diffSelect = wrap.querySelector('#shared-diff-select');
+    const playlistSelect = wrap.querySelector('#shared-playlist-select');
     const unrankedWrap = wrap.querySelector('#shared-unranked-wrap');
     const unrankedCb = wrap.querySelector('#shared-unranked-cb');
     const tagChips = wrap.querySelector('#tag-chips');
@@ -1234,6 +1239,27 @@
       // Tag filter is OR: a scenario matches if it carries ANY selected tag.
       if(selectedTags.size>0) stage = stage.filter(sc=>sc.tags.some(t=>selectedTags.has(t)));
       if(diffFilter!=='all') stage = stage.filter(sc=>sc.diff===diffFilter);
+
+      // "In Playlist" options reflect exactly the benchmark titles present
+      // among the cards matching every other active filter — same idea as
+      // the tag chips, just as a single-select dropdown since a scenario
+      // can only be filtered to one playlist at a time. A shared scenario
+      // counts once per playlist it actually belongs to, not once total.
+      const playlistCounts = new Map();
+      stage.forEach(sc=>{
+        // Dedupe per scenario first — a scenario shared across two
+        // difficulties of the *same* playlist (e.g. both Easy and Hard of
+        // "X Benchmarks") must only count once toward that playlist's
+        // total, not once per difficulty entry.
+        const namesInThisScenario = new Set(sc.playlists.map(pl=>pl.playlist));
+        namesInThisScenario.forEach(n=>{ playlistCounts.set(n, (playlistCounts.get(n)||0)+1); });
+      });
+      const playlistNames = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
+      if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
+      playlistSelect.innerHTML = '<option value="all">All ('+stage.length+')</option>'
+        + playlistNames.map(n=>`<option value="${esc(n)}" ${n===playlistFilter?'selected':''}>${esc(n)} (${playlistCounts.get(n)})</option>`).join('');
+      playlistSelect.value = playlistFilter;
+      if(playlistFilter!=='all') stage = stage.filter(sc=>sc.playlists.some(pl=>pl.playlist===playlistFilter));
 
       // The min/max playlist dropdowns only offer values that are actually
       // reachable under search + played-state + tags (independent of the
@@ -1289,6 +1315,10 @@
     });
     diffSelect.addEventListener("change", ()=>{
       diffFilter = diffSelect.value;
+      applyFilters();
+    });
+    playlistSelect.addEventListener('change', ()=>{
+      playlistFilter = playlistSelect.value;
       applyFilters();
     });
     unrankedCb.addEventListener('change', ()=>{
@@ -1354,6 +1384,9 @@
             <option value="Hard">Hard</option>
           </select>
         </label>
+        <label for="uniq-playlist-select">In Playlist:
+          <select id="uniq-playlist-select" class="sort-select"></select>
+        </label>
       </div>
       <div class="tag-row">
         <div class="tag-row-top">
@@ -1408,11 +1441,13 @@
     let unrankedOnly = false;
     let sortMode = 'name';
     let diffFilter = 'all';
+    let playlistFilter = 'all';
     const selectedTags = new Set();
     const input = wrap.querySelector('#uniq-search');
     const uniqCount = wrap.querySelector('#uniq-count');
     const sortSelect = wrap.querySelector('#uniq-sort');
     const diffSelect = wrap.querySelector('#uniq-diff-select');
+    const playlistSelect = wrap.querySelector('#uniq-playlist-select');
     const unrankedWrap = wrap.querySelector('#uniq-unranked-wrap');
     const unrankedCb = wrap.querySelector('#uniq-unranked-cb');
     const tagChips = wrap.querySelector('#uniq-tag-chips');
@@ -1437,6 +1472,19 @@
       if(mode==='played' && unrankedOnly) items = items.filter(u=>u.score>0 && achievedIndex(u.score,u.tiers)<0);
       if(selectedTags.size>0) items = items.filter(u=>u.tags.some(t=>selectedTags.has(t)));
       if(diffFilter!=='all') items = items.filter(u=>u.diff===diffFilter);
+
+      // Same "recompute what's actually on screen" approach as the tag
+      // chips: options reflect the benchmark titles present among cards
+      // matching every other active filter.
+      const playlistCounts = new Map();
+      items.forEach(u=>{ playlistCounts.set(u.playlist, (playlistCounts.get(u.playlist)||0)+1); });
+      const playlistNames = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
+      if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
+      playlistSelect.innerHTML = '<option value="all">All ('+items.length+')</option>'
+        + playlistNames.map(n=>`<option value="${esc(n)}" ${n===playlistFilter?'selected':''}>${esc(n)} (${playlistCounts.get(n)})</option>`).join('');
+      playlistSelect.value = playlistFilter;
+      if(playlistFilter!=='all') items = items.filter(u=>u.playlist===playlistFilter);
+
       uniqCount.textContent = items.length+' of '+unique.length+' scenarios';
       renderTagChips(items);
       let sorted = items;
@@ -1466,6 +1514,10 @@
     });
     diffSelect.addEventListener("change", ()=>{
       diffFilter = diffSelect.value;
+      applyFilters();
+    });
+    playlistSelect.addEventListener('change', ()=>{
+      playlistFilter = playlistSelect.value;
       applyFilters();
     });
     unrankedCb.addEventListener('change', ()=>{
