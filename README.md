@@ -46,6 +46,10 @@ folder once; the browser remembers it, so every visit after that is just a click
 and a quick permission reconfirm — no file explorer, no script, no external tool.
 Results are kept in that browser's local storage, same as *Load Your Data*. Not
 supported in Firefox or Safari — the button disables itself automatically there.
+It also only works when this page is the top-level tab — browsers block the folder
+picker from inside a cross-origin embedded viewer (e.g. a Claude Artifact), and
+you'll get a specific message explaining that if you hit it. Open the file directly,
+or via `static-server.ps1`, to use this button.
 
 **`sync.ps1`** — the scriptable equivalent, for anyone who wants it in an
 automated/scheduled workflow, or is on a browser without File System Access API

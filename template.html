@@ -1547,8 +1547,12 @@
         setSyncStatus('Up to date ('+filesScanned+' files scanned)', 4000);
       }
     }catch(e){
+      const msg = e && e.message ? e.message : String(e);
       if(e && e.name==='AbortError'){ setSyncStatus('Cancelled', 3000); }
-      else { setSyncStatus('Error: '+(e && e.message ? e.message : e), 8000); }
+      else if(/cross origin sub ?frames?/i.test(msg)){
+        setSyncStatus("Can't open a folder picker inside an embedded viewer (like a Claude Artifact). Open this file directly in your browser, or via static-server.ps1, then try again.", 12000);
+      }
+      else { setSyncStatus('Error: '+msg, 8000); }
     }finally{
       navSync.disabled = !window.showDirectoryPicker ? true : false;
     }
