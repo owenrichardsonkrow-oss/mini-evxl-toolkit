@@ -1,10 +1,18 @@
 # Scraping your evxl.app data
 
-This tracker's dataset is just a JSON array of your benchmark playlists, each with its
+**Most people don't need this.** `template.html` already ships pre-loaded with every
+playlist evxl.app tracks — scenario lists, category groupings, tier thresholds, the
+same for every player. Just click **Sync Scores** and enter your KovaaK's username;
+it fills your own scores in from KovaaK's own servers, no scraping involved. This
+guide is only for building that structural dataset in the first place — relevant if
+you want playlists that aren't in the pre-loaded template (a private/community
+benchmark, or a fully custom list), or you're maintaining this toolkit itself.
+
+This tracker's dataset is just a JSON array of benchmark playlists, each with its
 scenario table and evxl.app's Rank/Volts badge. evxl.app has no public API — it's a
-client-rendered app — so getting your data means visiting your own pages on evxl.app
-and reading what's on screen. This is **only reading your own public benchmark
-results that evxl already displays to anyone with your profile URL** — no login,
+client-rendered app — so getting this structural data means visiting pages on
+evxl.app and reading what's on screen. This is **only reading public benchmark
+data that evxl already displays to anyone with a profile URL** — no login,
 no private data, no bypassing anything.
 
 There is no plain-JavaScript/Node scraper script here (see the README for why), so

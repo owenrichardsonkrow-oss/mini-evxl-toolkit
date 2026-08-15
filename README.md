@@ -13,25 +13,28 @@ copy, for free, with their own data.
 
 1. Open `template.html` in a browser (double-click it, or serve it with anything
    static — GitHub Pages works too, see below).
-2. Click **Load Your Data** and paste or upload your dataset JSON. If you don't have
-   one yet, see [`docs/SCRAPING_GUIDE.md`](docs/SCRAPING_GUIDE.md) — it walks through
-   pulling your own data off evxl.app.
+2. Click **⟳ Sync Scores** (top right) and enter your KovaaK's username — this is
+   your in-game display name (Settings → Profile in-game), which is often *not*
+   your Steam name.
 
-That's it for a quick look — your data lives only in that browser's local storage,
-never uploaded anywhere. For a permanent copy you can keep syncing over time, see
-below.
+That's it. `template.html` ships pre-loaded with every evxl-tracked playlist's
+structure — scenario lists, category groupings, tier thresholds — the same
+benchmark metadata for every player, already baked in. Only the scores are yours to
+fill in, and syncing does that directly from KovaaK's own servers. No scraping, no
+JSON file, no AI assistant required for this path. Your data lives only in that
+browser's local storage, never uploaded anywhere.
 
 ## Two ways to use this
 
-**Casual / try it out**: the *Load Your Data* page on `template.html` is enough on
-its own. Good for "let me see what this looks like with my own scores" without
-touching any files.
+**The normal path**: sync your scores into the pre-loaded template as above. Covers
+every playlist evxl.app tracks, using nothing but your KovaaK's username.
 
-**Permanent, self-hosted copy**: paste your dataset JSON directly into
-`template.html`'s `<script id="benchmarks-data" type="application/json">[]</script>`
-tag (replacing the `[]`), rename the file if you like, and host it yourself (a
-folder you open locally, or a GitHub Pages site — both free). This is the version
-`sync.ps1` can keep updated.
+**Loading a different playlist set entirely**: if you want scenarios/benchmarks
+*not* in the pre-loaded template — a private/community benchmark not on evxl, or a
+completely custom list — use **Load Your Data** to paste or upload your own dataset
+JSON instead. That does need a real scrape; see
+[`docs/SCRAPING_GUIDE.md`](docs/SCRAPING_GUIDE.md). This replaces the whole dataset,
+not just scores.
 
 ## Keeping it fresh
 
@@ -55,10 +58,17 @@ for per-playlist Rank/Volts.
 patched score directly into your tracker HTML on disk. Useful if you want a
 permanent copy that updates without relying on browser local storage, or want it in
 an automated/scheduled workflow:
-1. Copy `sync-state.example.json` to `sync-state.json` next to `sync.ps1`.
-2. Edit `statsDir` (your local KovaaK's stats folder) and `trackerHtml` (the path to
-   your tracker HTML with a real dataset embedded — not the empty template).
-3. Run it (PowerShell): `.\sync.ps1`
+1. Make your own copy of `template.html` (e.g. `my-benchmarks.html`) so `sync.ps1`
+   isn't repeatedly rewriting the shared template file.
+2. Copy `sync-state.example.json` to `sync-state.json` next to `sync.ps1`.
+3. Edit `statsDir` (your local KovaaK's stats folder) and `trackerHtml` (the path to
+   your copy from step 1).
+4. Run it (PowerShell): `.\sync.ps1`
+
+Note `sync.ps1` only has scores to patch for scenarios you've *recently* played —
+your local stats folder has limited retention. For full history in one shot, use
+Sync Scores in the browser first (reads all-time data from KovaaK's servers), then
+`sync.ps1` going forward for routine updates without opening a browser.
 
 **What neither of these does**: update the per-playlist Rank/Volts badges. Those are
 evxl's own server-computed composite across a whole playlist, sourced from evxl.app
@@ -81,12 +91,18 @@ open `http://localhost:8744`.
 
 ## Files
 
-- `template.html` — the tracker itself. Ships with an empty dataset (`[]`) and a
-  "no data loaded yet" home screen pointing at *Load Your Data*.
+- `template.html` — the tracker itself. Ships pre-loaded with every evxl-tracked
+  playlist's structure (scenarios, tier thresholds, category labels) but every
+  score zeroed and every rank reset to Unranked — a blank template waiting for
+  **Sync Scores** to fill it in with a real username.
+- `generate-template.ps1` — regenerates `template.html` from a personal copy of
+  this tracker (genericizes branding, zeroes every score/rank, flips a couple of
+  internal flags that change some wording). Only relevant if you're maintaining
+  this toolkit itself, not using it.
 - `sync.ps1` / `sync-state.example.json` — the local-sync script and its config
-  template.
-- `docs/SCRAPING_GUIDE.md` — how to pull your own dataset off evxl.app, with the
-  exact verified DOM selectors and extraction script.
+  template — an alternative to the in-browser Sync Scores button, see above.
+- `docs/SCRAPING_GUIDE.md` — how to pull a dataset off evxl.app from scratch, only
+  needed if you want playlists outside what's already pre-loaded in the template.
 
 ## Data format
 
