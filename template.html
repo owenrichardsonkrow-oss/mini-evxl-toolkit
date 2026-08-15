@@ -53,6 +53,14 @@
   .topnav .spacer { flex:1; }
   .topnav .steam-link { font-family:ui-monospace,monospace; font-size:11.5px; color:var(--text-faint); text-decoration:none; }
   .topnav .steam-link:hover { color:var(--text-dim); }
+  .sync-btn {
+    font-family:ui-monospace,monospace; font-size:11.5px; padding:6px 11px; border-radius:6px; cursor:pointer;
+    background:var(--accent-soft); color:var(--accent-text); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    margin-right:10px;
+  }
+  .sync-btn:hover { background:color-mix(in srgb, var(--accent) 22%, var(--accent-soft)); }
+  .sync-btn:disabled { opacity:.55; cursor:default; }
+  .sync-status { font-family:ui-monospace,monospace; font-size:11px; color:var(--text-faint); margin-right:14px; max-width:220px; }
 
   .wrap { max-width: 1000px; margin:0 auto; padding: 36px 24px 90px; }
   .wrap.narrow { max-width: 900px; }
@@ -281,6 +289,8 @@
     <button id="nav-import">Load Your Data</button>
   </nav>
   <div class="spacer"></div>
+  <button id="nav-sync" class="sync-btn" title="Read your local KovaaK's stats folder and update scores, right here in the browser">&#8635; Sync Scores</button>
+  <span id="sync-status" class="sync-status"></span>
   <span id="topnav-source"></span>
 </div>
 
@@ -311,6 +321,8 @@
   const navShared = document.getElementById('nav-shared');
   const navUnique = document.getElementById('nav-unique');
   const navImport = document.getElementById('nav-import');
+  const navSync = document.getElementById('nav-sync');
+  const syncStatus = document.getElementById('sync-status');
 
   function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
   function stripSuffix(s){ return String(s).replace(/\s*-\s*[\d,]+$/,'').trim(); }
@@ -496,6 +508,120 @@
     } else {
       el.innerHTML = '<a class="steam-link" href="#/import">no data loaded &#8599;</a>';
     }
+  }
+
+  // In-browser local score sync via the File System Access API (Chromium
+  // only — Chrome/Edge/Brave/Opera; unsupported in Firefox/Safari as of this
+  // writing). Lets a "Sync Scores" click read the local KovaaK's stats folder
+  // directly, with no file-explorer/script step and no server round-trip.
+  // The folder handle is persisted in IndexedDB (localStorage can't hold a
+  // FileSystemDirectoryHandle) so only the very first click needs the full
+  // native folder picker; later clicks just need a lightweight permission
+  // reconfirm. Patched results are funneled through loadBenchmarks() — the
+  // same path the JSON-import feature uses — so a local sync behaves exactly
+  // like "import this data" and persists the same way.
+  const IDB_NAME = 'mini-evxl-fs';
+  const IDB_STORE = 'handles';
+  const STATS_DIR_KEY = 'statsDir';
+  function idbOpen(){
+    return new Promise((resolve,reject)=>{
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>reject(req.error);
+    });
+  }
+  async function idbGet(key){
+    const db = await idbOpen();
+    return new Promise((resolve,reject)=>{
+      const tx = db.transaction(IDB_STORE,'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = ()=>resolve(req.result);
+      req.onerror = ()=>reject(req.error);
+    });
+  }
+  async function idbSet(key,val){
+    const db = await idbOpen();
+    return new Promise((resolve,reject)=>{
+      const tx = db.transaction(IDB_STORE,'readwrite');
+      tx.objectStore(IDB_STORE).put(val,key);
+      tx.oncomplete = ()=>resolve();
+      tx.onerror = ()=>reject(tx.error);
+    });
+  }
+
+  function formatScoreJs(n){
+    if(n===Math.floor(n)) return n.toLocaleString(undefined,{maximumFractionDigits:0});
+    return n.toLocaleString(undefined,{maximumFractionDigits:2});
+  }
+
+  async function getStatsDirHandle(forcePicker){
+    if(!window.showDirectoryPicker) return null;
+    let handle = forcePicker ? null : await idbGet(STATS_DIR_KEY).catch(()=>null);
+    if(!handle){
+      handle = await window.showDirectoryPicker({ id:'kovaaks-stats', mode:'read' });
+      // Best-effort persistence — if IndexedDB is unavailable (private
+      // browsing, quota, etc.) the sync should still run for this session
+      // rather than fail outright; it'll just re-prompt next time.
+      try{ await idbSet(STATS_DIR_KEY, handle); }catch(e){}
+    }
+    const perm = await handle.queryPermission({mode:'read'});
+    if(perm!=='granted'){
+      const req = await handle.requestPermission({mode:'read'});
+      if(req!=='granted') throw new Error("Permission to read the stats folder wasn't granted.");
+    }
+    return handle;
+  }
+
+  async function runLocalSync(forcePicker){
+    const handle = await getStatsDirHandle(forcePicker);
+    if(!handle) throw new Error('This browser doesn\'t support direct folder access (Chrome/Edge/Brave/Opera only) — use sync.ps1 instead.');
+
+    const localMap = new Map();
+    let filesScanned = 0;
+    for await (const [fname, entry] of handle.entries()){
+      if(entry.kind!=='file' || !fname.toLowerCase().endsWith('.csv')) continue;
+      filesScanned++;
+      const file = await entry.getFile();
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const scoreLine = lines.find(l=>l.startsWith('Score:,'));
+      const scenLine = lines.find(l=>l.startsWith('Scenario:,'));
+      if(scoreLine && scenLine){
+        const score = Math.round(parseFloat(scoreLine.slice('Score:,'.length))*100)/100;
+        const scenario = scenLine.slice('Scenario:,'.length).trim();
+        if(!localMap.has(scenario) || localMap.get(scenario) < score) localMap.set(scenario, score);
+      }
+    }
+
+    // Clone before patching — BENCHMARKS may currently just be a reference to
+    // DEFAULT_BENCHMARKS, and mutating rows in place would silently corrupt
+    // the pristine copy resetToDefault() relies on.
+    const working = JSON.parse(JSON.stringify(BENCHMARKS));
+    const pctRe = /^-?\d+(\.\d+)?%$/;
+    const changes = [];
+    working.forEach(b=>{
+      b.rows.forEach(row=>{
+        if(!row || row.length<=1) return;
+        let p=-1;
+        for(let i=0;i<row.length;i++){ if(pctRe.test(row[i])){ p=i; break; } }
+        if(p<2) return;
+        const scenario = row[p-2], scoreStr = row[p-1];
+        if(localMap.has(scenario)){
+          const localScore = localMap.get(scenario);
+          const currentScore = Math.round((parseFloat(String(scoreStr).replace(/,/g,''))||0)*100)/100;
+          if(localScore > currentScore){
+            changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:scoreStr, newScore:formatScoreJs(localScore) });
+            row[p-1] = formatScoreJs(localScore);
+          }
+        }
+      });
+    });
+
+    if(changes.length>0){
+      loadBenchmarks(working, JSON.stringify(working));
+    }
+    return { changes, filesScanned };
   }
 
   function lerpColor(a,b,t){
@@ -1398,6 +1524,36 @@
   navImport.addEventListener('click', ()=>{ location.hash='#/import'; });
   document.getElementById('brand-home').addEventListener('click', ()=>{ location.hash='#/'; });
   window.addEventListener('hashchange', route);
+
+  if(!window.showDirectoryPicker){
+    navSync.disabled = true;
+    navSync.title = "This browser doesn't support direct folder access (Chrome/Edge/Brave/Opera only) — use sync.ps1 instead.";
+  }
+  let syncStatusTimer = null;
+  function setSyncStatus(text, ms){
+    syncStatus.textContent = text;
+    if(syncStatusTimer) clearTimeout(syncStatusTimer);
+    if(ms) syncStatusTimer = setTimeout(()=>{ syncStatus.textContent=''; }, ms);
+  }
+  navSync.addEventListener('click', async ()=>{
+    navSync.disabled = true;
+    setSyncStatus('Syncing…');
+    try{
+      const { changes, filesScanned } = await runLocalSync(false);
+      if(changes.length>0){
+        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+filesScanned+' files scanned)', 6000);
+        route();
+      } else {
+        setSyncStatus('Up to date ('+filesScanned+' files scanned)', 4000);
+      }
+    }catch(e){
+      if(e && e.name==='AbortError'){ setSyncStatus('Cancelled', 3000); }
+      else { setSyncStatus('Error: '+(e && e.message ? e.message : e), 8000); }
+    }finally{
+      navSync.disabled = !window.showDirectoryPicker ? true : false;
+    }
+  });
+
   updateTopnavSource();
   route();
 })();

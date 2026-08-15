@@ -33,19 +33,31 @@ tag (replacing the `[]`), rename the file if you like, and host it yourself (a
 folder you open locally, or a GitHub Pages site — both free). This is the version
 `sync.ps1` can keep updated.
 
-## Keeping it fresh — `sync.ps1`
+## Keeping it fresh
 
 KovaaK's writes one CSV per attempt to your local stats folder
-(`...\FPSAimTrainer\FPSAimTrainer\stats\`) with clean `Scenario:`/`Score:` fields.
-`sync.ps1` reads only the files newer than your last sync, and patches any scenario
-score in your tracker HTML's embedded dataset where your local score beats what's
-stored — no evxl scraping needed for routine "I just played" updates.
+(`...\FPSAimTrainer\FPSAimTrainer\stats\`) with clean `Scenario:`/`Score:` fields —
+no evxl scraping needed for routine "I just played" updates. Two ways to pull that
+in, both patch any scenario score where your local file beats what's stored:
 
-Setup:
+**In the browser — click "Sync Scores"** (Chrome/Edge/Brave/Opera only, uses the
+File System Access API). The first click asks you to pick your KovaaK's stats
+folder once; the browser remembers it, so every visit after that is just a click
+and a quick permission reconfirm — no file explorer, no script, no external tool.
+Results are kept in that browser's local storage, same as *Load Your Data*. Not
+supported in Firefox or Safari — the button disables itself automatically there.
+
+**`sync.ps1`** — the scriptable equivalent, for anyone who wants it in an
+automated/scheduled workflow, or is on a browser without File System Access API
+support:
 1. Copy `sync-state.example.json` to `sync-state.json` next to `sync.ps1`.
 2. Edit `statsDir` (your local KovaaK's stats folder) and `trackerHtml` (the path to
    your tracker HTML with a real dataset embedded — not the empty template).
 3. Run it (PowerShell): `.\sync.ps1`
+
+This one writes the patched score directly into the HTML file on disk, so it's the
+right choice if you want a permanent copy that updates without relying on that
+browser's local storage.
 
 **What it doesn't do**: update the per-playlist Rank/Volts badges. Those are evxl's
 own server-computed composite across a whole playlist and only change by re-running
