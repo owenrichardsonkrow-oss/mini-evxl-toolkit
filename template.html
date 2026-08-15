@@ -489,6 +489,12 @@
     usingImported = true;
     invalidateCaches();
     try{ localStorage.setItem(IMPORT_KEY, rawJsonString); }catch(e){}
+    // The cached "lifetime runs" number is only valid for the scenario set
+    // it was computed against — clear it here so a plain import (not a
+    // sync) never shows a stale figure for a different dataset. A sync that
+    // reaches this via patchScoresFromMap immediately re-sets it right
+    // after, with the freshly computed value.
+    try{ localStorage.removeItem(LIFETIME_RUNS_KEY); }catch(e){}
     updateTopnavSource();
   }
   function resetToDefault(){
@@ -496,6 +502,7 @@
     usingImported = false;
     invalidateCaches();
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
+    try{ localStorage.removeItem(LIFETIME_RUNS_KEY); }catch(e){}
     updateTopnavSource();
   }
   function updateTopnavSource(){
@@ -550,6 +557,52 @@
     return name;
   }
 
+  // Shared scenario-row scanner: every place that needs to read/patch a
+  // (scenario name, score) pair out of a benchmark's raw evxl table (hdrs
+  // pattern: [...labels, Scenario, Score, pct%, ...tiers]) goes through
+  // here instead of re-deriving the percent-column index each time. Takes
+  // the data array explicitly (not a closure over BENCHMARKS) so callers
+  // can run it over a cloned `working` copy when patching, or the live
+  // BENCHMARKS when just reading.
+  const PCT_RE = /^-?\d+(\.\d+)?%$/;
+  function forEachScenarioRow(data, callback){
+    data.forEach(b=>{
+      b.rows.forEach(row=>{
+        if(!row || row.length<=1) return;
+        let p=-1;
+        for(let i=0;i<row.length;i++){ if(PCT_RE.test(row[i])){ p=i; break; } }
+        if(p<2) return;
+        const scenario = String(row[p-2]).trim();
+        const score = Math.round((parseFloat(String(row[p-1]).replace(/,/g,''))||0)*100)/100;
+        callback(scenario, score, b, row, p);
+      });
+    });
+  }
+
+  // Unique scenario names appearing anywhere in the loaded dataset (played
+  // or not) — used to scope KovaaK's-API-sourced stats down to "scenarios
+  // that are actually part of this tracker's playlists," per the standing
+  // rule that home-page stats reflect evxl's scenario set, not a player's
+  // whole KovaaK's history (which includes scenarios never in any playlist
+  // tracked here).
+  function collectOurScenarioNames(){
+    const names = new Set();
+    forEachScenarioRow(BENCHMARKS, (scenario)=>{ names.add(scenario); });
+    return names;
+  }
+
+  // Unique scenarios "cleared" — score > 0 in at least one playlist that
+  // carries it, regardless of which tier/rank that score lands in (hence
+  // "independent of benchmark ranking"). Always computed fresh off whatever
+  // is currently loaded, so it needs no sync/cache and can't go stale.
+  function computeUniqueScenariosCleared(){
+    const cleared = new Set();
+    forEachScenarioRow(BENCHMARKS, (scenario, score)=>{ if(score>0) cleared.add(scenario); });
+    return cleared.size;
+  }
+
+  const LIFETIME_RUNS_KEY = 'mini-evxl-lifetime-runs';
+
   async function fetchKovaaksScores(username){
     const base = 'https://kovaaks.com/webapp-backend/user/scenario/total-play';
     const first = await fetch(base+'?username='+encodeURIComponent(username)+'&page=0&max=100&sort_param[]=count');
@@ -573,14 +626,21 @@
       if(body && Array.isArray(body.data)) allData.push(...body.data);
     });
 
+    // scoreMap drives the actual score patch; playsMap only feeds the
+    // "Lifetime runs completed" stat (KovaaK's tracks total attempts per
+    // scenario — evxl's own tables never carry a play count at all, so this
+    // is the only source for that number).
     const scoreMap = new Map();
+    const playsMap = new Map();
     allData.forEach(d=>{
       const name = String(d.scenarioName||'').trim();
+      if(!name) return;
       const score = Number(d.score);
-      if(!name || !Number.isFinite(score)) return;
-      if(!scoreMap.has(name) || scoreMap.get(name) < score) scoreMap.set(name, score);
+      if(Number.isFinite(score) && (!scoreMap.has(name) || scoreMap.get(name) < score)) scoreMap.set(name, score);
+      const plays = Number(d.counts && d.counts.plays) || 0;
+      playsMap.set(name, (playsMap.get(name)||0) + plays);
     });
-    return scoreMap;
+    return { scoreMap, playsMap };
   }
 
   function patchScoresFromMap(scoreMap){
@@ -588,24 +648,15 @@
     // DEFAULT_BENCHMARKS, and mutating rows in place would silently corrupt
     // the pristine copy resetToDefault() relies on.
     const working = JSON.parse(JSON.stringify(BENCHMARKS));
-    const pctRe = /^-?\d+(\.\d+)?%$/;
     const changes = [];
-    working.forEach(b=>{
-      b.rows.forEach(row=>{
-        if(!row || row.length<=1) return;
-        let p=-1;
-        for(let i=0;i<row.length;i++){ if(pctRe.test(row[i])){ p=i; break; } }
-        if(p<2) return;
-        const scenario = String(row[p-2]).trim(), scoreStr = row[p-1];
-        if(scoreMap.has(scenario)){
-          const newScore = scoreMap.get(scenario);
-          const currentScore = Math.round((parseFloat(String(scoreStr).replace(/,/g,''))||0)*100)/100;
-          if(newScore > currentScore){
-            changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:scoreStr, newScore:formatScoreJs(newScore) });
-            row[p-1] = formatScoreJs(newScore);
-          }
+    forEachScenarioRow(working, (scenario, currentScore, b, row, p)=>{
+      if(scoreMap.has(scenario)){
+        const newScore = scoreMap.get(scenario);
+        if(newScore > currentScore){
+          changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:row[p-1], newScore:formatScoreJs(newScore) });
+          row[p-1] = formatScoreJs(newScore);
         }
-      });
+      }
     });
     if(changes.length>0){
       loadBenchmarks(working, JSON.stringify(working));
@@ -619,9 +670,18 @@
     }
     const username = getKovaaksUsername(forcePrompt);
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
-    const scoreMap = await fetchKovaaksScores(username);
+    const { scoreMap, playsMap } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
     const changes = patchScoresFromMap(scoreMap);
+
+    // "Lifetime runs completed" scoped to evxl's scenario set: sum play
+    // counts only for names that actually appear somewhere in this
+    // tracker's playlists, not the player's whole KovaaK's history.
+    const ourNames = collectOurScenarioNames();
+    let lifetimeRuns = 0;
+    playsMap.forEach((plays, name)=>{ if(ourNames.has(name)) lifetimeRuns += plays; });
+    try{ localStorage.setItem(LIFETIME_RUNS_KEY, String(lifetimeRuns)); }catch(e){}
+
     return { changes, scenariosChecked: scoreMap.size };
   }
 
@@ -849,13 +909,14 @@
       return;
     }
     const parsed = getParsedBenchmarks();
-    let totalVolts=0, totalScenarios=0, playedCount=0;
+    let playedCount=0;
     parsed.forEach(({benchmark,items})=>{
-      totalVolts+=benchmark.volts;
-      totalScenarios+=items.length;
       if(isPlayed(benchmark, items)) playedCount++;
     });
     const sharedCount = computeSharedScenarios().length;
+    const clearedCount = computeUniqueScenariosCleared();
+    const lifetimeRunsRaw = localStorage.getItem(LIFETIME_RUNS_KEY);
+    const lifetimeRunsDisplay = lifetimeRunsRaw!==null ? fmt(Number(lifetimeRunsRaw)) : '—';
 
     const wrap = document.createElement('div');
     wrap.className='wrap';
@@ -865,9 +926,9 @@
       <p class="sub">A self-hosted view of all ${BENCHMARKS.length} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
       <div class="meta">${usingImported ? 'IMPORTED DATA &nbsp;&middot;&nbsp; loaded from your file, kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset to demo</a>' : 'STEAM: sinseriously &nbsp;&middot;&nbsp; SOURCE DATA evxl.app/u/76561198251208570'}</div>
       <div class="stats">
-        <div class="stat"><div class="val">${fmt(totalVolts)}</div><div class="label">Total Volts</div></div>
+        <div class="stat"><div class="val">${lifetimeRunsDisplay}</div><div class="label">Lifetime runs completed</div></div>
         <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${BENCHMARKS.length}</span></div><div class="label">Benchmarks played</div></div>
-        <div class="stat"><div class="val">${totalScenarios}</div><div class="label">Scenario clears</div></div>
+        <div class="stat"><div class="val">${clearedCount}</div><div class="label">Scenario clears</div></div>
         <div class="stat"><div class="val">${sharedCount}</div><div class="label">Shared scenarios</div></div>
       </div>
       <div class="searchbar">
