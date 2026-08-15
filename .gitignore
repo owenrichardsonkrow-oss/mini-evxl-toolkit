@@ -1,0 +1,10 @@
+# Your local sync config — has real filesystem paths on your machine.
+sync-state.json
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# If you keep a personal copy of the tracker with your own data embedded,
+# consider naming it something like my-benchmarks.html and listing it here
+# so you don't accidentally commit your own scores to a public repo.
