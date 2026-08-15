@@ -35,38 +35,37 @@ folder you open locally, or a GitHub Pages site — both free). This is the vers
 
 ## Keeping it fresh
 
-KovaaK's writes one CSV per attempt to your local stats folder
-(`...\FPSAimTrainer\FPSAimTrainer\stats\`) with clean `Scenario:`/`Score:` fields —
-no evxl scraping needed for routine "I just played" updates. Two ways to pull that
-in, both patch any scenario score where your local file beats what's stored:
+**In the browser — click "Sync Scores"**. This reads your best score per scenario
+directly from KovaaK's own official backend (`kovaaks.com/webapp-backend`) — a real,
+public, no-login-required API confirmed by testing a plain cross-origin `fetch()`
+against it. The first click asks for your KovaaK's username (Settings → Profile
+in-game — this is your in-game display name, often *not* your Steam name);
+right-click the button any time to change it. Because this reads KovaaK's own
+server-side record rather than local files, it survives reinstalling the game
+entirely, works in any modern browser (no Chromium requirement), and even works
+through an embedded viewer like a Claude Artifact — none of which was true of an
+earlier local-folder-based version of this feature. Results are kept in that
+browser's local storage, same as *Load Your Data*.
 
-**In the browser — click "Sync Scores"** (Chrome/Edge/Brave/Opera only, uses the
-File System Access API). The first click asks you to pick your KovaaK's stats
-folder once; the browser remembers it, so every visit after that is just a click
-and a quick permission reconfirm — no file explorer, no script, no external tool.
-Results are kept in that browser's local storage, same as *Load Your Data*. Not
-supported in Firefox or Safari — the button disables itself automatically there.
-It also only works when this page is the top-level tab — browsers block the folder
-picker from inside a cross-origin embedded viewer (e.g. a Claude Artifact), and
-you'll get a specific message explaining that if you hit it. Open the file directly,
-or via `static-server.ps1`, to use this button.
+Note this only patches individual scenario scores — see "What it doesn't do" below
+for per-playlist Rank/Volts.
 
-**`sync.ps1`** — the scriptable equivalent, for anyone who wants it in an
-automated/scheduled workflow, or is on a browser without File System Access API
-support:
+**`sync.ps1`** — an alternative that reads your local KovaaK's stats folder instead
+(`...\FPSAimTrainer\FPSAimTrainer\stats\`, one CSV per attempt) and writes the
+patched score directly into your tracker HTML on disk. Useful if you want a
+permanent copy that updates without relying on browser local storage, or want it in
+an automated/scheduled workflow:
 1. Copy `sync-state.example.json` to `sync-state.json` next to `sync.ps1`.
 2. Edit `statsDir` (your local KovaaK's stats folder) and `trackerHtml` (the path to
    your tracker HTML with a real dataset embedded — not the empty template).
 3. Run it (PowerShell): `.\sync.ps1`
 
-This one writes the patched score directly into the HTML file on disk, so it's the
-right choice if you want a permanent copy that updates without relying on that
-browser's local storage.
-
-**What it doesn't do**: update the per-playlist Rank/Volts badges. Those are evxl's
-own server-computed composite across a whole playlist and only change by re-running
-the scrape in `docs/SCRAPING_GUIDE.md`. Everything else — individual scenario
-scores and their derived tier/progress bars — stays fresh through `sync.ps1` alone.
+**What neither of these does**: update the per-playlist Rank/Volts badges. Those are
+evxl's own server-computed composite across a whole playlist, sourced from evxl.app
+specifically (not the kovaaks.com API above — its benchmark catalog and rank tiers
+don't map 1:1 onto evxl's), and only change by re-running the scrape in
+`docs/SCRAPING_GUIDE.md`. Everything else — individual scenario scores and their
+derived tier/progress bars — stays fresh through either sync method alone.
 
 ## Hosting it for free
 

@@ -289,7 +289,7 @@
     <button id="nav-import">Load Your Data</button>
   </nav>
   <div class="spacer"></div>
-  <button id="nav-sync" class="sync-btn" title="Read your local KovaaK's stats folder and update scores, right here in the browser">&#8635; Sync Scores</button>
+  <button id="nav-sync" class="sync-btn" title="Pull your latest scores from KovaaK's own servers (right-click to change username)">&#8635; Sync Scores</button>
   <span id="sync-status" class="sync-status"></span>
   <span id="topnav-source"></span>
 </div>
@@ -510,90 +510,80 @@
     }
   }
 
-  // In-browser local score sync via the File System Access API (Chromium
-  // only — Chrome/Edge/Brave/Opera; unsupported in Firefox/Safari as of this
-  // writing). Lets a "Sync Scores" click read the local KovaaK's stats folder
-  // directly, with no file-explorer/script step and no server round-trip.
-  // The folder handle is persisted in IndexedDB (localStorage can't hold a
-  // FileSystemDirectoryHandle) so only the very first click needs the full
-  // native folder picker; later clicks just need a lightweight permission
-  // reconfirm. Patched results are funneled through loadBenchmarks() — the
-  // same path the JSON-import feature uses — so a local sync behaves exactly
-  // like "import this data" and persists the same way.
-  const IDB_NAME = 'mini-evxl-fs';
-  const IDB_STORE = 'handles';
-  const STATS_DIR_KEY = 'statsDir';
-  function idbOpen(){
-    return new Promise((resolve,reject)=>{
-      const req = indexedDB.open(IDB_NAME, 1);
-      req.onupgradeneeded = ()=>{ req.result.createObjectStore(IDB_STORE); };
-      req.onsuccess = ()=>resolve(req.result);
-      req.onerror = ()=>reject(req.error);
-    });
-  }
-  async function idbGet(key){
-    const db = await idbOpen();
-    return new Promise((resolve,reject)=>{
-      const tx = db.transaction(IDB_STORE,'readonly');
-      const req = tx.objectStore(IDB_STORE).get(key);
-      req.onsuccess = ()=>resolve(req.result);
-      req.onerror = ()=>reject(req.error);
-    });
-  }
-  async function idbSet(key,val){
-    const db = await idbOpen();
-    return new Promise((resolve,reject)=>{
-      const tx = db.transaction(IDB_STORE,'readwrite');
-      tx.objectStore(IDB_STORE).put(val,key);
-      tx.oncomplete = ()=>resolve();
-      tx.onerror = ()=>reject(tx.error);
-    });
-  }
+  // In-browser score sync via KovaaK's own official public backend
+  // (kovaaks.com/webapp-backend) — confirmed by direct testing to be public
+  // (no login/session needed) and genuinely cross-origin-fetchable (tested
+  // via a plain fetch() from a totally different origin, no CORS rejection).
+  // This replaced an earlier local-folder version (File System Access API):
+  // that approach needed a Chromium browser, couldn't run inside a
+  // cross-origin embedded viewer at all, additionally refused any folder
+  // under Program Files/Program Files (x86) outright, and — the actual
+  // reason it got replaced — only ever reflected whatever was still in the
+  // local stats folder, which KovaaK's itself rotates out after a couple of
+  // days and a reinstall wipes entirely. This reads KovaaK's own permanent
+  // server-side record instead, so it survives both.
+  //
+  // Scores are matched back into BENCHMARKS by scenario name — same
+  // approach sync.ps1 and the old local-folder sync both used — so a
+  // scenario shared across playlists gets patched everywhere it appears.
+  // Patches funnel through loadBenchmarks(), same as every other data path
+  // on this page.
+  const KOVAAKS_USERNAME_KEY = 'mini-evxl-kovaaks-username';
+  const DEFAULT_KOVAAKS_USERNAME = '';
 
   function formatScoreJs(n){
     if(n===Math.floor(n)) return n.toLocaleString(undefined,{maximumFractionDigits:0});
     return n.toLocaleString(undefined,{maximumFractionDigits:2});
   }
 
-  async function getStatsDirHandle(forcePicker){
-    if(!window.showDirectoryPicker) return null;
-    let handle = forcePicker ? null : await idbGet(STATS_DIR_KEY).catch(()=>null);
-    if(!handle){
-      handle = await window.showDirectoryPicker({ id:'kovaaks-stats', mode:'read' });
-      // Best-effort persistence — if IndexedDB is unavailable (private
-      // browsing, quota, etc.) the sync should still run for this session
-      // rather than fail outright; it'll just re-prompt next time.
-      try{ await idbSet(STATS_DIR_KEY, handle); }catch(e){}
+  function getKovaaksUsername(forcePrompt){
+    let name = forcePrompt ? null : (localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME || null);
+    if(!name){
+      const entered = window.prompt("Your KovaaK's username, as shown on kovaaks.com (Settings → Profile in-game — this is often NOT your Steam name):");
+      if(!entered) return null;
+      name = entered.trim();
+      if(!name) return null;
     }
-    const perm = await handle.queryPermission({mode:'read'});
-    if(perm!=='granted'){
-      const req = await handle.requestPermission({mode:'read'});
-      if(req!=='granted') throw new Error("Permission to read the stats folder wasn't granted.");
-    }
-    return handle;
+    // Not persisted here — only saved once fetchKovaaksScores() actually
+    // confirms it's a real username, so a typo doesn't silently lock in a
+    // username that will keep failing on every later click.
+    return name;
   }
 
-  async function runLocalSync(forcePicker){
-    const handle = await getStatsDirHandle(forcePicker);
-    if(!handle) throw new Error('This browser doesn\'t support direct folder access (Chrome/Edge/Brave/Opera only) — use sync.ps1 instead.');
-
-    const localMap = new Map();
-    let filesScanned = 0;
-    for await (const [fname, entry] of handle.entries()){
-      if(entry.kind!=='file' || !fname.toLowerCase().endsWith('.csv')) continue;
-      filesScanned++;
-      const file = await entry.getFile();
-      const text = await file.text();
-      const lines = text.split(/\r?\n/);
-      const scoreLine = lines.find(l=>l.startsWith('Score:,'));
-      const scenLine = lines.find(l=>l.startsWith('Scenario:,'));
-      if(scoreLine && scenLine){
-        const score = Math.round(parseFloat(scoreLine.slice('Score:,'.length))*100)/100;
-        const scenario = scenLine.slice('Scenario:,'.length).trim();
-        if(!localMap.has(scenario) || localMap.get(scenario) < score) localMap.set(scenario, score);
-      }
+  async function fetchKovaaksScores(username){
+    const base = 'https://kovaaks.com/webapp-backend/user/scenario/total-play';
+    const first = await fetch(base+'?username='+encodeURIComponent(username)+'&page=0&max=100&sort_param[]=count');
+    if(first.status===409 || first.status===404){
+      throw new Error('No KovaaK\'s player found for username "'+username+'" — double check it (Settings → Profile in-game, not your Steam name).');
     }
+    if(!first.ok) throw new Error('KovaaK\'s API returned an error (status '+first.status+').');
+    const firstBody = await first.json();
+    if(!firstBody || !Array.isArray(firstBody.data)) throw new Error('No score data returned for that username.');
 
+    const total = Number(firstBody.total) || firstBody.data.length;
+    const pageCount = Math.ceil(total/100);
+    const allData = firstBody.data.slice();
+    const restRequests = [];
+    for(let p=1; p<pageCount; p++){
+      restRequests.push(
+        fetch(base+'?username='+encodeURIComponent(username)+'&page='+p+'&max=100&sort_param[]=count').then(r=>r.json())
+      );
+    }
+    (await Promise.all(restRequests)).forEach(body=>{
+      if(body && Array.isArray(body.data)) allData.push(...body.data);
+    });
+
+    const scoreMap = new Map();
+    allData.forEach(d=>{
+      const name = String(d.scenarioName||'').trim();
+      const score = Number(d.score);
+      if(!name || !Number.isFinite(score)) return;
+      if(!scoreMap.has(name) || scoreMap.get(name) < score) scoreMap.set(name, score);
+    });
+    return scoreMap;
+  }
+
+  function patchScoresFromMap(scoreMap){
     // Clone before patching — BENCHMARKS may currently just be a reference to
     // DEFAULT_BENCHMARKS, and mutating rows in place would silently corrupt
     // the pristine copy resetToDefault() relies on.
@@ -606,22 +596,33 @@
         let p=-1;
         for(let i=0;i<row.length;i++){ if(pctRe.test(row[i])){ p=i; break; } }
         if(p<2) return;
-        const scenario = row[p-2], scoreStr = row[p-1];
-        if(localMap.has(scenario)){
-          const localScore = localMap.get(scenario);
+        const scenario = String(row[p-2]).trim(), scoreStr = row[p-1];
+        if(scoreMap.has(scenario)){
+          const newScore = scoreMap.get(scenario);
           const currentScore = Math.round((parseFloat(String(scoreStr).replace(/,/g,''))||0)*100)/100;
-          if(localScore > currentScore){
-            changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:scoreStr, newScore:formatScoreJs(localScore) });
-            row[p-1] = formatScoreJs(localScore);
+          if(newScore > currentScore){
+            changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:scoreStr, newScore:formatScoreJs(newScore) });
+            row[p-1] = formatScoreJs(newScore);
           }
         }
       });
     });
-
     if(changes.length>0){
       loadBenchmarks(working, JSON.stringify(working));
     }
-    return { changes, filesScanned };
+    return changes;
+  }
+
+  async function runKovaaksSync(forcePrompt){
+    if(BENCHMARKS.length===0){
+      throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
+    }
+    const username = getKovaaksUsername(forcePrompt);
+    if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
+    const scoreMap = await fetchKovaaksScores(username);
+    localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
+    const changes = patchScoresFromMap(scoreMap);
+    return { changes, scenariosChecked: scoreMap.size };
   }
 
   function lerpColor(a,b,t){
@@ -1525,10 +1526,6 @@
   document.getElementById('brand-home').addEventListener('click', ()=>{ location.hash='#/'; });
   window.addEventListener('hashchange', route);
 
-  if(!window.showDirectoryPicker){
-    navSync.disabled = true;
-    navSync.title = "This browser doesn't support direct folder access (Chrome/Edge/Brave/Opera only) — use sync.ps1 instead.";
-  }
   let syncStatusTimer = null;
   function setSyncStatus(text, ms){
     syncStatus.textContent = text;
@@ -1539,22 +1536,39 @@
     navSync.disabled = true;
     setSyncStatus('Syncing…');
     try{
-      const { changes, filesScanned } = await runLocalSync(false);
+      const { changes, scenariosChecked } = await runKovaaksSync(false);
       if(changes.length>0){
-        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+filesScanned+' files scanned)', 6000);
+        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)', 6000);
         route();
       } else {
-        setSyncStatus('Up to date ('+filesScanned+' files scanned)', 4000);
+        setSyncStatus('Up to date ('+scenariosChecked+' scenarios checked)', 4000);
       }
     }catch(e){
-      const msg = e && e.message ? e.message : String(e);
       if(e && e.name==='AbortError'){ setSyncStatus('Cancelled', 3000); }
-      else if(/cross origin sub ?frames?/i.test(msg)){
-        setSyncStatus("Can't open a folder picker inside an embedded viewer (like a Claude Artifact). Open this file directly in your browser, or via static-server.ps1, then try again.", 12000);
-      }
-      else { setSyncStatus('Error: '+msg, 8000); }
+      else { setSyncStatus('Error: '+(e && e.message ? e.message : e), 10000); }
     }finally{
-      navSync.disabled = !window.showDirectoryPicker ? true : false;
+      navSync.disabled = false;
+    }
+  });
+  // Right-click (or long-press context menu) re-prompts for a different
+  // KovaaK's username — handy if the wrong one got entered the first time.
+  navSync.addEventListener('contextmenu', async (e)=>{
+    e.preventDefault();
+    navSync.disabled = true;
+    setSyncStatus('Syncing…');
+    try{
+      const { changes, scenariosChecked } = await runKovaaksSync(true);
+      if(changes.length>0){
+        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)', 6000);
+        route();
+      } else {
+        setSyncStatus('Up to date ('+scenariosChecked+' scenarios checked)', 4000);
+      }
+    }catch(e){
+      if(e && e.name==='AbortError'){ setSyncStatus('Cancelled', 3000); }
+      else { setSyncStatus('Error: '+(e && e.message ? e.message : e), 10000); }
+    }finally{
+      navSync.disabled = false;
     }
   });
 
