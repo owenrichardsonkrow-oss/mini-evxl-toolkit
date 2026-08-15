@@ -326,7 +326,7 @@
 
   function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
   function stripSuffix(s){ return String(s).replace(/\s*-\s*[\d,]+$/,'').trim(); }
-  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   function parseTable(hdrs, rows){
     const sIdx = hdrs.indexOf('Scenario');
@@ -1240,26 +1240,31 @@
       if(selectedTags.size>0) stage = stage.filter(sc=>sc.tags.some(t=>selectedTags.has(t)));
       if(diffFilter!=='all') stage = stage.filter(sc=>sc.diff===diffFilter);
 
-      // "In Playlist" options reflect exactly the benchmark titles present
-      // among the cards matching every other active filter — same idea as
-      // the tag chips, just as a single-select dropdown since a scenario
-      // can only be filtered to one playlist at a time. A shared scenario
-      // counts once per playlist it actually belongs to, not once total.
+      // "In Playlist" options reflect exactly the playlist+difficulty pairs
+      // present among the cards matching every other active filter — same
+      // idea as the tag chips. Each difficulty of the same playlist (e.g.
+      // Easy vs Hard of "X Benchmarks") is its own distinct entry here on
+      // purpose, so this dropdown alone can pin down a specific playlist
+      // variant without needing the separate Desired Difficulty filter.
       const playlistCounts = new Map();
       stage.forEach(sc=>{
-        // Dedupe per scenario first — a scenario shared across two
-        // difficulties of the *same* playlist (e.g. both Easy and Hard of
-        // "X Benchmarks") must only count once toward that playlist's
-        // total, not once per difficulty entry.
-        const namesInThisScenario = new Set(sc.playlists.map(pl=>pl.playlist));
-        namesInThisScenario.forEach(n=>{ playlistCounts.set(n, (playlistCounts.get(n)||0)+1); });
+        const seen = new Set();
+        sc.playlists.forEach(pl=>{
+          const key = JSON.stringify([pl.playlist, pl.difficulty]);
+          if(seen.has(key)) return; // guard against a literal duplicate row
+          seen.add(key);
+          playlistCounts.set(key, (playlistCounts.get(key)||0)+1);
+        });
       });
-      const playlistNames = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
+      const playlistKeys = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
       if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
       playlistSelect.innerHTML = '<option value="all">All ('+stage.length+')</option>'
-        + playlistNames.map(n=>`<option value="${esc(n)}" ${n===playlistFilter?'selected':''}>${esc(n)} (${playlistCounts.get(n)})</option>`).join('');
+        + playlistKeys.map(k=>{
+            const [pl, diff] = JSON.parse(k);
+            return `<option value="${esc(k)}" ${k===playlistFilter?'selected':''}>${esc(pl)} &middot; ${esc(diff)} (${playlistCounts.get(k)})</option>`;
+          }).join('');
       playlistSelect.value = playlistFilter;
-      if(playlistFilter!=='all') stage = stage.filter(sc=>sc.playlists.some(pl=>pl.playlist===playlistFilter));
+      if(playlistFilter!=='all') stage = stage.filter(sc=>sc.playlists.some(pl=>JSON.stringify([pl.playlist, pl.difficulty])===playlistFilter));
 
       // The min/max playlist dropdowns only offer values that are actually
       // reachable under search + played-state + tags (independent of the
@@ -1476,14 +1481,24 @@
       // Same "recompute what's actually on screen" approach as the tag
       // chips: options reflect the benchmark titles present among cards
       // matching every other active filter.
+      // Each difficulty of the same playlist is its own distinct entry here
+      // (matches the Shared page) — not deduped down to just the playlist
+      // name, so this dropdown alone can pin a specific playlist variant
+      // without needing the separate Desired Difficulty filter.
       const playlistCounts = new Map();
-      items.forEach(u=>{ playlistCounts.set(u.playlist, (playlistCounts.get(u.playlist)||0)+1); });
-      const playlistNames = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
+      items.forEach(u=>{
+        const key = JSON.stringify([u.playlist, u.difficulty]);
+        playlistCounts.set(key, (playlistCounts.get(key)||0)+1);
+      });
+      const playlistKeys = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
       if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
       playlistSelect.innerHTML = '<option value="all">All ('+items.length+')</option>'
-        + playlistNames.map(n=>`<option value="${esc(n)}" ${n===playlistFilter?'selected':''}>${esc(n)} (${playlistCounts.get(n)})</option>`).join('');
+        + playlistKeys.map(k=>{
+            const [pl, diff] = JSON.parse(k);
+            return `<option value="${esc(k)}" ${k===playlistFilter?'selected':''}>${esc(pl)} &middot; ${esc(diff)} (${playlistCounts.get(k)})</option>`;
+          }).join('');
       playlistSelect.value = playlistFilter;
-      if(playlistFilter!=='all') items = items.filter(u=>u.playlist===playlistFilter);
+      if(playlistFilter!=='all') items = items.filter(u=>JSON.stringify([u.playlist, u.difficulty])===playlistFilter);
 
       uniqCount.textContent = items.length+' of '+unique.length+' scenarios';
       renderTagChips(items);
