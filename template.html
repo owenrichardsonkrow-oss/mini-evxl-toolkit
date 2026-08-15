@@ -294,7 +294,9 @@
     <button id="nav-import">Load Your Data</button>
   </nav>
   <div class="spacer"></div>
-  <button id="nav-sync" class="sync-btn" title="Pull your latest scores from KovaaK's own servers (right-click to change username)">&#8635; Sync Scores</button>
+  <button id="nav-sync" class="sync-btn" title="Pull your latest scores from KovaaK's own servers (right-click to change username) — currently unreliable, see tracker notes">&#8635; Sync Scores Online</button>
+  <button id="nav-sync-local" class="sync-btn" title="Read your local KovaaK's stats folder directly — you'll need to pick the folder each time">&#8635; Sync Scores Locally</button>
+  <input type="file" id="local-stats-input" webkitdirectory multiple style="display:none;" />
   <span id="sync-status" class="sync-status"></span>
   <span id="topnav-source"></span>
 </div>
@@ -334,6 +336,8 @@
   const navUnique = document.getElementById('nav-unique');
   const navImport = document.getElementById('nav-import');
   const navSync = document.getElementById('nav-sync');
+  const navSyncLocal = document.getElementById('nav-sync-local');
+  const localStatsInput = document.getElementById('local-stats-input');
   const syncStatus = document.getElementById('sync-status');
 
   function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
@@ -697,6 +701,39 @@
     try{ localStorage.setItem(LIFETIME_RUNS_KEY, String(lifetimeRuns)); }catch(e){}
 
     return { changes, scenariosChecked: scoreMap.size };
+  }
+
+  // Local-folder sync via a plain <input type="file" webkitdirectory">
+  // picker rather than the File System Access API's showDirectoryPicker().
+  // That API's directory-picker hard-blocks any folder under Program
+  // Files/Program Files (x86) (checked against the resolved real path, so
+  // not even a symlink dodges it — confirmed directly) which is exactly
+  // where Steam installs by default. This older input-based mechanism has
+  // no such blocklist and works across more browsers, at the cost of no
+  // persisted handle — the folder has to be re-picked on every sync rather
+  // than remembered.
+  async function runLocalFolderSync(fileList){
+    if(BENCHMARKS.length===0){
+      throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
+    }
+    const files = Array.from(fileList).filter(f=>f.name.toLowerCase().endsWith('.csv'));
+    if(files.length===0) throw new Error("No .csv files found in that folder — make sure you picked your KovaaK's stats folder.");
+
+    const localMap = new Map();
+    for(const file of files){
+      const text = await file.text();
+      const lines = text.split(/\r?\n/);
+      const scoreLine = lines.find(l=>l.startsWith('Score:,'));
+      const scenLine = lines.find(l=>l.startsWith('Scenario:,'));
+      if(scoreLine && scenLine){
+        const score = Math.round(parseFloat(scoreLine.slice('Score:,'.length))*100)/100;
+        const scenario = scenLine.slice('Scenario:,'.length).trim();
+        if(!localMap.has(scenario) || localMap.get(scenario) < score) localMap.set(scenario, score);
+      }
+    }
+
+    const changes = patchScoresFromMap(localMap);
+    return { changes, filesScanned: files.length };
   }
 
   function lerpColor(a,b,t){
@@ -1727,6 +1764,29 @@
       setSyncStatus(d.text, d.ms);
     }finally{
       navSync.disabled = false;
+    }
+  });
+
+  navSyncLocal.addEventListener('click', ()=>{
+    localStatsInput.click();
+  });
+  localStatsInput.addEventListener('change', async ()=>{
+    if(localStatsInput.files.length===0) return;
+    navSyncLocal.disabled = true;
+    setSyncStatus('Syncing…');
+    try{
+      const { changes, filesScanned } = await runLocalFolderSync(localStatsInput.files);
+      if(changes.length>0){
+        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+filesScanned+' files scanned)', 6000);
+        route();
+      } else {
+        setSyncStatus('Up to date ('+filesScanned+' files scanned)', 4000);
+      }
+    }catch(e){
+      setSyncStatus('Error: '+(e && e.message ? e.message : e), 10000);
+    }finally{
+      navSyncLocal.disabled = false;
+      localStatsInput.value = ''; // reset so picking the same folder again still fires 'change'
     }
   });
 
