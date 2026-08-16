@@ -1,7 +1,7 @@
 # mini-evxl-toolkit
 
 The public, genericized version of a personal KovaaK's benchmark tracker.
-`template.html` is a single-file, hash-routed SPA shipping the full 201-playlist
+`template.html` is a single-file, hash-routed SPA shipping the full 252-entry (2026-08-16)
 *structure* (scenario lists, category groupings, tier thresholds) with every score
 zeroed and every rank reset to Unranked. No build step. MIT licensed.
 
@@ -114,8 +114,9 @@ the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
 dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
 `evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
 catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
-`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped` — 111 of 201
-playlists. The other 90 (30 bespoke modes) show the Complete reading only,
+`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped` — 119 of 252
+playlists. The other 133 (bespoke modes; `dm`/`dm-s3`, `aplus-alt`, `vt-energy`,
+`jade-palace` are the big ones) show the Complete reading only,
 flagged `modeSupported:false`; the detail page's Rank label carries a • that says
 so. `rankReq` survives only as a legacy per-entry override.
 
