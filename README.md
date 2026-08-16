@@ -13,16 +13,20 @@ copy, for free, with their own data.
 
 1. Open `template.html` in a browser (double-click it, or serve it with anything
    static — GitHub Pages works too, see below).
-2. Click **⟳ Sync Scores** (top right) and enter your KovaaK's username — this is
-   your in-game display name (Settings → Profile in-game), which is often *not*
-   your Steam name.
+2. Click **⟳ Sync Scores Locally** (top right) and pick your KovaaK's stats folder
+   in the native dialog (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
 
 That's it. `template.html` ships pre-loaded with every evxl-tracked playlist's
 structure — scenario lists, category groupings, tier thresholds — the same
 benchmark metadata for every player, already baked in. Only the scores are yours to
-fill in, and syncing does that directly from KovaaK's own servers. No scraping, no
-JSON file, no AI assistant required for this path. Your data lives only in that
-browser's local storage, never uploaded anywhere.
+fill in, and syncing reads them straight off your own machine. No scraping, no JSON
+file, no AI assistant required for this path. Your data lives only in that browser's
+local storage, never uploaded anywhere.
+
+There's also a **Settings** tab for saving your KovaaK's username, Steam/evxl
+profile links, and your stats folder path as a note — see "Keeping it fresh" below
+for what each is actually used for (only the username does anything functional,
+and only for the online sync method).
 
 ## Two ways to use this
 
