@@ -114,7 +114,7 @@ Sync Scores in the browser first (reads all-time data from KovaaK's servers), th
 **About the rank badge**: it's computed locally from your scores using evxl's own
 rules. Every benchmark on evxl declares how its rank is calculated (a "mode"), and
 this tracker ports those modes one at a time — the six most common are done and
-verified against evxl's real badges, covering 119 of the 252 playlists. For the
+verified against evxl's real badges, covering 119 of the 251 playlists. For the
 rest, the badge shows the stricter "every scenario at that tier" reading, which is
 exactly evxl's "X Complete" rank — accurate, just conservative — and the playlist
 page marks it with a • so you know. Volts isn't shown: it isn't derivable from the

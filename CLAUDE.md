@@ -1,7 +1,7 @@
 # mini-evxl-toolkit
 
 The public, genericized version of a personal KovaaK's benchmark tracker.
-`template.html` is a single-file, hash-routed SPA shipping the full 252-entry (2026-08-16)
+`template.html` is a single-file, hash-routed SPA shipping the full 251-entry (2026-08-16)
 *structure* (scenario lists, category groupings, tier thresholds) with every score
 zeroed and every rank reset to Unranked. No build step. MIT licensed.
 
@@ -114,8 +114,8 @@ the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
 dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
 `evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
 catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
-`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped` — 119 of 252
-playlists. The other 133 (bespoke modes; `dm`/`dm-s3`, `aplus-alt`, `vt-energy`,
+`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped` — 119 of 251
+playlists. The other 132 (bespoke modes; `dm`/`dm-s3`, `aplus-alt`, `vt-energy`,
 `jade-palace` are the big ones) show the Complete reading only,
 flagged `modeSupported:false`; the detail page's Rank label carries a • that says
 so. `rankReq` survives only as a legacy per-entry override.
@@ -130,11 +130,10 @@ scrape" framing nor `docs/SCRAPING_GUIDE.md`'s Rank+Volts extraction step is
 load-bearing anymore. The scrape's only remaining purpose is **structure**
 (scenario names, tier names, thresholds — and, once wired up, `rankReq`).
 
-**Known bad data shipped in `template.html`**: `Black Dawn [Celestial Forge]` holds
-36 rows of "Loading scenario 1..." and parses to zero scenarios. It is **empty at
-the source** — KovaaK's returns no scenarios for that benchmark id, so evxl shows
-the same placeholders. Not a scrape bug; nothing to re-scrape. Pending decision in
-the tracker repo: drop the entry or keep the placeholder.
+**Dropped from the template (2026-08-16)**: `Black Dawn [Celestial Forge]` — it is
+empty at the source (KovaaK's returns no scenarios for that benchmark id, evxl
+shows placeholders), so the entry was removed rather than shipped as a 0-scenario
+card. The template now holds 251 entries / 127 playlists.
 
 ## Rules that are easy to break
 
