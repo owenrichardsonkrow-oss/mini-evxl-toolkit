@@ -52,6 +52,19 @@ $content = $content.Replace(
     "const IS_TOOLKIT_TEMPLATE = true;"
 )
 
+# Strip the maintainer's Steam identity out of the two branches that only ever
+# run on the personal copy. They never render in the template — IS_TOOLKIT_TEMPLATE
+# and usingImported both gate them off — but the strings would still ship in a
+# public repo, so they are replaced rather than left as dead text.
+$content = $content.Replace(
+    "el.innerHTML = '<a class=`"steam-link`" href=`"https://steamcommunity.com/id/sinseriously/`" target=`"_blank`" rel=`"noopener`">sinseriously &#8599;</a>';",
+    "el.innerHTML = '';"
+)
+$content = $content.Replace(
+    "'STEAM: sinseriously &nbsp;&middot;&nbsp; SOURCE DATA evxl.app/u/76561198251208570'",
+    "''"
+)
+
 $content = $content.Replace(
     "<button id=`"nav-import`" style=`"display:none;`">Load Your Data</button>",
     "<button id=`"nav-import`">Load Your Data</button>"

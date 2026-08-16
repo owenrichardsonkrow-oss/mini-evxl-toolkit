@@ -732,7 +732,7 @@
     if(usingImported){
       el.innerHTML = '<a class="steam-link" href="#/import">your data &middot; reset</a>';
     } else if(!IS_TOOLKIT_TEMPLATE && DEFAULT_BENCHMARKS.length>0){
-      el.innerHTML = '<a class="steam-link" href="https://steamcommunity.com/id/sinseriously/" target="_blank" rel="noopener">sinseriously &#8599;</a>';
+      el.innerHTML = '';
     } else if(IS_TOOLKIT_TEMPLATE){
       el.innerHTML = SCORES.size>0
         ? '<a class="steam-link" href="#/import">your scores &middot; synced</a>'
@@ -1373,7 +1373,7 @@
       <div class="eyebrow"><span class="dot"></span> personal benchmark tracker</div>
       <h1>${usingImported ? 'Your KovaaK\'s benchmarks' : (IS_TOOLKIT_TEMPLATE ? 'KovaaK\'s Benchmark Tracker' : 'mini\'s KovaaK\'s benchmarks')}</h1>
       <p class="sub">A self-hosted view of all ${activeCount()} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
-      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : 'STEAM: sinseriously &nbsp;&middot;&nbsp; SOURCE DATA evxl.app/u/76561198251208570')}</div>
+      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : '')}</div>
       ${IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0 ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
       <div class="stats">
         <div class="stat"><div class="val">${lifetimeRunsDisplay}</div><div class="label">Lifetime runs completed</div></div>
