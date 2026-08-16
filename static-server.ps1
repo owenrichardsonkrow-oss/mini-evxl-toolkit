@@ -5,10 +5,13 @@
 #           .\static-server.ps1 -Port 9000
 #
 # If the preferred port is unavailable it automatically tries the next few.
-# Windows can silently reserve whole port ranges for Hyper-V/WSL/Docker
-# (see: netsh int ipv4 show excludedportrange protocol=tcp), which makes a
-# previously-working port start failing with "Access is denied" or "conflicts
-# with an existing registration" - hence the fallback rather than one fixed port.
+# The usual cause is a previous copy of THIS script still running: HttpListener
+# registers with HTTP.SYS, and that registration shows up in
+#   netsh int ipv4 show excludedportrange protocol=tcp
+# and refuses other binds with "Access is denied" / "conflicts with an existing
+# registration" - which looks exactly like a Windows-reserved port. Stop the old
+# server first. Genuine Hyper-V/WSL/Docker reservations exist too, but check for
+# a stray server before blaming Windows.
 
 param(
   [int]$Port = 8744,
@@ -18,11 +21,11 @@ param(
 $root = $PSScriptRoot
 $defaultFile = "/template.html"
 
-# Windows' excluded ranges are DYNAMIC - they move between reboots and even
-# within a session. On 2026-08-16 the reservation shifted from 8743 to 8750
-# while this project was running, so a port pinned in .claude/launch.json
-# became the unbindable one. Reading the list up front turns a confusing
-# "conflicts with an existing registration" into a plain explanation.
+# Reading the excluded list up front turns a confusing "conflicts with an
+# existing registration" into a plain explanation. Note an entry here is
+# usually another static-server.ps1 (HTTP.SYS registration), not Windows -
+# on 2026-08-16 the "reservation" moved 8743 -> 8750 -> 8850 and each one was
+# a server a previous session had left running.
 function Get-ExcludedRanges {
   $ranges = @()
   try {
@@ -42,8 +45,10 @@ function Test-PortExcluded([int]$p, $ranges) {
 $excluded = Get-ExcludedRanges
 if (Test-PortExcluded $Port $excluded) {
   Write-Host ""
-  Write-Host "  Port $Port is reserved by Windows right now - nothing can bind it." -ForegroundColor DarkYellow
-  Write-Host "  (These reservations move; check: netsh interface ipv4 show excludedportrange protocol=tcp)" -ForegroundColor DarkGray
+  Write-Host "  Port $Port is already registered (excluded) - nothing else can bind it." -ForegroundColor DarkYellow
+  Write-Host "  Most likely another static-server.ps1 is still running on it. Check:" -ForegroundColor DarkGray
+  Write-Host "    Get-CimInstance Win32_Process -Filter ""Name='pwsh.exe'"" | ? CommandLine -match static-server" -ForegroundColor DarkGray
+  Write-Host "  or: netsh interface ipv4 show excludedportrange protocol=tcp" -ForegroundColor DarkGray
 }
 
 $mime = @{

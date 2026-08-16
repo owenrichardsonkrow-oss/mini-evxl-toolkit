@@ -48,16 +48,19 @@ This already caused one false "file is corrupted" alarm. Verify with PowerShell/
 byte or codepoint reads instead. `fix-mojibake.ps1` repairs genuine double-encoding
 (UTF-8 bytes reinterpreted as Windows-1252 and re-encoded).
 
-**Windows' excluded TCP port ranges are DYNAMIC on this machine** — the blocked
-port has bounced between 8743 and 8750 within a day, so no port is "permanently"
-bad. A bind failing with "access forbidden by its permissions" while nothing is
-listening means the OS reserved it: check
-`netsh interface ipv4 show excludedportrange protocol=tcp`, don't hunt for a stale
-process. The preview config is **outside the repo, unversioned**, at
-`C:\.claude\launch.json`; this repo is pinned to **9500** there (tracker: 8850). Its
-`-Port` arg and `"port"` field must match — `static-server.ps1` falls back on
-conflict but the harness opens the declared port, so a mismatch is a dead tab. No
-`autoPort`.
+**"Port won't bind" has almost always been our own leftover server.**
+`static-server.ps1` is an `HttpListener` (HTTP.SYS); its registration appears in
+`netsh interface ipv4 show excludedportrange protocol=tcp` and refuses raw binds
+with "access forbidden by its permissions" — indistinguishable from a Windows
+reservation until you look for the process. Verified 2026-08-16: stopping the stray
+server freed the port instantly. **First** check
+`Get-CimInstance Win32_Process -Filter "Name='pwsh.exe'" | ? CommandLine -match static-server`
+and stop it (or `preview_stop`); stop old servers before starting new ones. Only
+a port excluded with no such process is a genuine external reservation. The
+preview config is **outside the repo, unversioned**, at `C:\.claude\launch.json`;
+this repo is **9500** there (tracker: 8850). Its `-Port` arg and `"port"` field must
+match — the script falls back on conflict but the harness opens the declared port,
+so a mismatch is a dead tab. No `autoPort`.
 
 **`javascript_tool` has a ~30s timeout, but the page keeps running** — results land
 in `localStorage` later; poll rather than re-run or you double-execute. Batch long

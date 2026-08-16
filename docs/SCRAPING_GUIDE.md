@@ -20,10 +20,15 @@ no private data, no bypassing anything.
 
 Two shortcuts were evaluated and both fell short, so scraping stays necessary:
 
-- **A hidden data endpoint behind evxl.** There isn't one. Checked from several
-  angles — the raw pre-JavaScript HTML, the script tags, and live network traffic
-  during hydration — and every route returns an empty SvelteKit app shell with no
-  scenario, rank, or volts data anywhere in it.
+- **A data endpoint behind evxl.** There *is* one, but not a documented one:
+  evxl's pages are an empty SvelteKit shell that fetches each table from
+  KovaaK's own backend
+  (`kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark?benchmarkId=…&steamId=…`),
+  plus evxl's own `api.evxl.app` for rank labels. Neither is documented or
+  contractual, and mapping a playlist name to a `benchmarkId` is still unsolved,
+  so the page scrape remains the reference path for now. When kovaaks.com is
+  down, evxl renders tier headers and zero scenario rows — scraping then is
+  pointless.
 - **The creator-maintained Google Sheets some playlists link to.** These are real
   and genuinely fetchable as CSV (`docs.google.com/spreadsheets/d/<ID>/export?format=csv&gid=<GID>`),
   and they carry the true tier-threshold tables. But it's a per-creator choice, not
