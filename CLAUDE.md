@@ -5,8 +5,11 @@ The public, genericized version of a personal KovaaK's benchmark tracker.
 *structure* (scenario lists, category groupings, tier thresholds) with every score
 zeroed and every rank reset to Unranked. No build step. MIT licensed.
 
-This is a git repo with **no remote** — publishing to GitHub (+ Pages, free) has
-been discussed and wanted, but not done. Don't push anywhere without asking.
+Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
+`origin`, branch `master`; first push 2026-08-16). GitHub Pages is meant to serve
+`template.html` from `master` / root — enabled in the repo's Settings → Pages by
+Owen. Pushing is routine now; the personal tracker repo has no remote and stays
+that way (it embeds Owen's own scores).
 
 The personal copy this is generated from lives in the sibling folder
 `../mini-benchmarks-tracker` (`mini_evxl.html`).
