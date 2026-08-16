@@ -112,12 +112,14 @@ Sync Scores in the browser first (reads all-time data from KovaaK's servers), th
 `sync.ps1` going forward for routine updates without opening a browser.
 
 **About the rank badge**: it's computed locally from your scores using evxl's own
-rule (the highest tier where at least N scenarios have reached it). N is
-per-playlist and comes from evxl; where the dataset doesn't carry it yet, the badge
-falls back to the stricter "every scenario at that tier" reading, which is exactly
-evxl's "X Complete" rank — accurate, just conservative. Volts isn't shown: it isn't
-derivable from the tables, so cards show mean scenario completion instead. Neither
-sync method needs to touch evxl for any of this.
+rules. Every benchmark on evxl declares how its rank is calculated (a "mode"), and
+this tracker ports those modes one at a time — the six most common are done and
+verified against evxl's real badges, covering 111 of the 201 playlists. For the
+rest, the badge shows the stricter "every scenario at that tier" reading, which is
+exactly evxl's "X Complete" rank — accurate, just conservative — and the playlist
+page marks it with a • so you know. Volts isn't shown: it isn't derivable from the
+tables, so cards show mean scenario completion instead. Neither sync method needs
+to touch evxl for any of this.
 
 ## How the pieces fit together
 

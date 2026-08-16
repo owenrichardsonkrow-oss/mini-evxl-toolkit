@@ -105,13 +105,16 @@ scenario has nothing to draw a bar against and doesn't render.
 
 ## Rank is computed locally; volts is gone
 
-`benchmarkStanding(items, req)` implements evxl's real rule (from each playlist
-page's "Rank Calc" panel): *the rank is the highest tier where at least N scenarios
-sit at that tier or above*. N is per benchmark+difficulty, stored as the optional
-`rankReq` field on an entry, and **not derivable** — it has to be scraped. With no
-`rankReq` the fallback is N = every scenario, which is exactly evxl's "X Complete"
-rank (verified 19/19), so it's a true but conservative statement. Bare "X" ranks
-show as the Complete rank one tier down until `rankReq` is supplied.
+`benchmarkStanding(items, b)` ports evxl's own engine (read out of its JS bundle;
+the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
+`rankCalculation` mode and the badge is **max(mode rank, "Complete" rank)**. Each
+dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
+`evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
+catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
+`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped` — 111 of 201
+playlists. The other 90 (30 bespoke modes) show the Complete reading only,
+flagged `modeSupported:false`; the detail page's Rank label carries a • that says
+so. `rankReq` survives only as a legacy per-entry override.
 
 Volts was dropped from the UI (not derivable from the tables; no formula anywhere
 client-side). Cards and the detail page show **mean scenario completion**
