@@ -9,8 +9,9 @@ you want playlists that aren't in the pre-loaded template (a private/community
 benchmark, or a fully custom list), or you're maintaining this toolkit itself.
 
 This tracker's dataset is just a JSON array of benchmark playlists, each with its
-scenario table and evxl.app's Rank/Volts badge. evxl.app has no public API — it's a
-client-rendered app — so getting this structural data means visiting pages on
+scenario table (the `rank` and `volts` fields are still in the format but no longer
+drive the UI — rank is computed locally from scores). evxl.app is a client-rendered
+app with no documented public API, so getting this structural data means visiting pages on
 evxl.app and reading what's on screen. This is **only reading public benchmark
 data that evxl already displays to anyone with a profile URL** — no login,
 no private data, no bypassing anything.
@@ -174,4 +175,4 @@ Two ways to use the result, see the main [README](../README.md):
   the empty `[]`), then use `sync.ps1` going forward to keep individual scenario
   scores fresh from your local KovaaK's stats folder without re-scraping evxl.app —
   see the README's "Keeping it fresh" section. Note `sync.ps1` only patches scores;
-  Rank/Volts badges only update by re-running this scrape.
+  new playlists and moved tier thresholds only arrive by re-running this scrape.

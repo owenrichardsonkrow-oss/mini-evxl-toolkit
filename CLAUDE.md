@@ -31,8 +31,9 @@ hand-maintained here and must not be overwritten from the personal copy.
 ## Onboarding design — the point of the whole toolkit
 
 The evxl scrape was only ever needed for benchmark **structure**, which is identical
-for every player. Only scores and Rank/Volts are player-specific, and scores come
-from kovaaks.com's public API by username. So a new user's entire onboarding is:
+for every player. Only scores are player-specific, and scores come from
+kovaaks.com's public API by username; the rank badge is then computed locally from
+those scores (see "Rank is computed locally"), and volts is no longer shown. So a new user's entire onboarding is:
 open the file, click Sync Scores, enter their KovaaK's username. No scrape, no JSON,
 no AI assistant.
 
@@ -47,13 +48,24 @@ This already caused one false "file is corrupted" alarm. Verify with PowerShell/
 byte or codepoint reads instead. `fix-mojibake.ps1` repairs genuine double-encoding
 (UTF-8 bytes reinterpreted as Windows-1252 and re-encoded).
 
-**Port 8743 is permanently unusable on this machine** (Windows administered excluded
-range). This repo's server is pinned to 9500 in `.claude/launch.json`, and
-`static-server.ps1` falls back on conflict. Nothing is listening — don't hunt for a
-stale process.
+**Windows' excluded TCP port ranges are DYNAMIC on this machine** — the blocked
+port has bounced between 8743 and 8750 within a day, so no port is "permanently"
+bad. A bind failing with "access forbidden by its permissions" while nothing is
+listening means the OS reserved it: check
+`netsh interface ipv4 show excludedportrange protocol=tcp`, don't hunt for a stale
+process. The preview config is **outside the repo, unversioned**, at
+`C:\.claude\launch.json`; this repo is pinned to **9500** there (tracker: 8850). Its
+`-Port` arg and `"port"` field must match — `static-server.ps1` falls back on
+conflict but the harness opens the declared port, so a mismatch is a dead tab. No
+`autoPort`.
 
-**`javascript_tool` has a ~30s timeout.** Batch long browser loops across calls,
-persisting progress in `localStorage`.
+**`javascript_tool` has a ~30s timeout, but the page keeps running** — results land
+in `localStorage` later; poll rather than re-run or you double-execute. Batch long
+browser loops across calls, persisting progress in `localStorage`.
+
+**PowerShell traps that give wrong answers, not errors**: unassigned output inside a
+function becomes part of its return value; `.Count` on a single object counts its
+properties (wrap in `@()`); variables are case-insensitive so `$out` clobbers `$Out`.
 
 Serve with `preview_start({name: "mini-evxl-toolkit"})` and open a **fresh tab** —
 preview tabs cache aggressively. `static-server.ps1`'s MIME map must keep
@@ -77,6 +89,31 @@ assigns `index` before filtering so `#/bench/N` links stay stable.
 
 Score-only by design — tier thresholds belong to the playlist, so an orphaned
 scenario has nothing to draw a bar against and doesn't render.
+
+## Rank is computed locally; volts is gone
+
+`benchmarkStanding(items, req)` implements evxl's real rule (from each playlist
+page's "Rank Calc" panel): *the rank is the highest tier where at least N scenarios
+sit at that tier or above*. N is per benchmark+difficulty, stored as the optional
+`rankReq` field on an entry, and **not derivable** — it has to be scraped. With no
+`rankReq` the fallback is N = every scenario, which is exactly evxl's "X Complete"
+rank (verified 19/19), so it's a true but conservative statement. Bare "X" ranks
+show as the Complete rank one tier down until `rankReq` is supplied.
+
+Volts was dropped from the UI (not derivable from the tables; no formula anywhere
+client-side). Cards and the detail page show **mean scenario completion**
+(`scenarioCompletion()`) instead, and the home grid sorts by it. The `volts` field
+stays in the JSON format for compatibility; nothing reads it.
+
+Consequence for the docs: neither `README.md`'s "Rank/Volts only refresh via a
+scrape" framing nor `docs/SCRAPING_GUIDE.md`'s Rank+Volts extraction step is
+load-bearing anymore. The scrape's only remaining purpose is **structure**
+(scenario names, tier names, thresholds — and, once wired up, `rankReq`).
+
+**Known bad data shipped in `template.html`**: `Black Dawn [Celestial Forge]` holds
+36 rows of "Loading scenario 1..." — the source scrape caught the page mid-load, and
+`generate-template.ps1` faithfully propagated it. It parses to zero scenarios. Fixed
+by re-scraping that page in the tracker repo and regenerating.
 
 ## Rules that are easy to break
 
@@ -107,8 +144,9 @@ scenario has nothing to draw a bar against and doesn't render.
   `SYNC_CONCURRENCY = 2`, `SYNC_GAP_MS = 300`, 2500ms backoff, self-abort after 5
   consecutive failures. 4-wide with no gap got a whole IP refused; total request
   volume matters more than concurrency.
-- Neither updates **Rank/Volts** — evxl-sourced only. Deliberately *not* taken from
-  kovaaks.com's `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
+- Both feed the locally computed rank badge automatically (see "Rank is computed
+  locally"). Rank is deliberately *not* taken from kovaaks.com's
+  `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
   non-equivalent rank system and would mix two taxonomies under one UI.
 
 ## Directions already evaluated and closed

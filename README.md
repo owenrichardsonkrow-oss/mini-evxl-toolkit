@@ -80,7 +80,7 @@ It can't reach kovaaks.com at all from inside a sandboxed embedded viewer like a
 Claude Artifact — those block all external network requests. Sync Scores Locally
 doesn't have that problem, since it never makes a network request.
 
-Neither patches per-playlist Rank/Volts — see "What none of these does" below.
+Either way, the per-playlist rank badge recomputes from your scores automatically.
 
 **`sync.ps1`** — a scriptable equivalent to Sync Scores Locally, reading the same
 local stats folder and writing the patched score directly into your tracker HTML on
@@ -98,12 +98,13 @@ your local stats folder has limited retention. For full history in one shot, use
 Sync Scores in the browser first (reads all-time data from KovaaK's servers), then
 `sync.ps1` going forward for routine updates without opening a browser.
 
-**What none of these does**: update the per-playlist Rank/Volts badges. Those are
-evxl's own server-computed composite across a whole playlist, sourced from evxl.app
-specifically (not the kovaaks.com API above — its benchmark catalog and rank tiers
-don't map 1:1 onto evxl's), and only change by re-running the scrape in
-`docs/SCRAPING_GUIDE.md`. Everything else — individual scenario scores and their
-derived tier/progress bars — stays fresh through either sync method alone.
+**About the rank badge**: it's computed locally from your scores using evxl's own
+rule (the highest tier where at least N scenarios have reached it). N is
+per-playlist and comes from evxl; where the dataset doesn't carry it yet, the badge
+falls back to the stricter "every scenario at that tier" reading, which is exactly
+evxl's "X Complete" rank — accurate, just conservative. Volts isn't shown: it isn't
+derivable from the tables, so cards show mean scenario completion instead. Neither
+sync method needs to touch evxl for any of this.
 
 ## How the pieces fit together
 
@@ -128,8 +129,8 @@ Four separable parts, which is worth knowing before changing anything:
 
 Scores (part 4) change constantly, structure (part 2) rarely, and they update through
 completely different mechanisms. Most confusion about this tool comes from expecting
-one to refresh the other — notably, neither sync method touches Rank/Volts, which is
-part of the structure side and only moves when the scrape is re-run.
+one to refresh the other — syncing scores never adds a playlist or moves a tier
+threshold, and re-scraping structure never changes a score.
 
 ## Hosting it for free
 
