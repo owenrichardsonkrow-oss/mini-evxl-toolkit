@@ -338,7 +338,7 @@
     <button id="nav-settings">Settings</button>
   </nav>
   <div class="spacer"></div>
-  <button id="nav-sync" class="sync-btn" title="Pull your latest scores from KovaaK's own servers (right-click to change username) — currently unreliable, see tracker notes">&#8635; Sync Scores Online</button>
+  <button id="nav-sync" class="sync-btn" title="Pull your scores from KovaaK's own servers — checks every scenario you've actually played, so it takes a while. Click again to stop; whatever synced is kept. Right-click to change username.">&#8635; Sync Scores Online</button>
   <button id="nav-sync-local" class="sync-btn" title="Read your local KovaaK's stats folder directly — you'll need to pick the folder each time">&#8635; Sync Scores Locally</button>
   <input type="file" id="local-stats-input" webkitdirectory multiple style="display:none;" />
   <span id="sync-status" class="sync-status"></span>
@@ -911,17 +911,25 @@
   // — a two-day window would fire constantly on any normal plateau.
   const STALE_AFTER_MS = 30*24*60*60*1000;
   function syncResultMessage(res){
-    const { changes, scenariosChecked, newestEpoch } = res;
+    const { changes, scenariosChecked, newestEpoch, deep } = res;
     let msg = changes.length>0
       ? changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)'
       : 'Up to date ('+scenariosChecked+' scenarios checked)';
-    let ms = changes.length>0 ? 6000 : 4000;
-    if(newestEpoch>0){
+    let ms = changes.length>0 ? 7000 : 4000;
+    if(deep && deep.stopped){
+      msg += ' — stopped early, progress kept.';
+      ms = 8000;
+    } else if(deep && deep.aborted){
+      msg += ' — KovaaK\'s stopped responding partway through (they rate-limit bursts). Everything synced before that is saved; run it again to pick up the rest.';
+      ms = 12000;
+    } else if(newestEpoch>0 && (!deep || deep.done===0)){
+      // Only worth mentioning when the deep pass didn't run — once it has,
+      // total-play's staleness no longer determines what got synced.
       const age = Date.now()-newestEpoch;
       if(age > STALE_AFTER_MS){
         const days = Math.floor(age/(24*60*60*1000));
-        msg += ' — heads up: the newest personal best KovaaK\'s has on record for you is '+days+' days old. If you\'ve beaten anything since, their API is lagging (a known issue on their end, not fixable here) — use Sync Scores Locally instead.';
-        ms = 14000;
+        msg += ' — note: the newest personal best KovaaK\'s has on record for you is '+days+' days old.';
+        ms = 12000;
       }
     }
     return { msg, ms };
@@ -962,15 +970,118 @@
     return changes;
   }
 
-  async function runKovaaksSync(forcePrompt){
+  // ---- deep sync ------------------------------------------------------
+  // total-play alone is not just stale, it is incomplete: for a real account
+  // it listed 263 scenarios where all-played listed 1,137, so it was missing
+  // 77% of the player's history outright. Two other endpoints close the gap,
+  // both found by reading the JS bundles of a saved kovaaks.com profile page:
+  //
+  //   user/scenarios/all-played   — every scenario ever played (names + ids),
+  //                                 but no scores. One cheap request.
+  //   user/scenario/last-scores/by-name — recent runs for ONE scenario, and
+  //                                 genuinely current (verified against a run
+  //                                 from minutes earlier that total-play had
+  //                                 no record of). One request per scenario.
+  //
+  // Endpoints that look useful and are not: user/scenario/top ignores both
+  // `page` and `max` and always returns the same 10 rows, and
+  // last-scores/by-id needs authentication (401), unlike by-name.
+  //
+  // So a deep sync costs one request per played scenario. That is bounded by
+  // what's actually in the loaded dataset, and blanks are done first so the
+  // guaranteed-missing scores land even if the run is cut short. Every phase
+  // funnels into the same append-only score store, which only ever takes the
+  // max — so a partial sync is always safe, never wrong, and resumable.
+  const KOVAAKS_BASE = 'https://kovaaks.com/webapp-backend';
+  let syncAbort = false;
+
+  async function fetchAllPlayed(username){
+    const r = await fetch(KOVAAKS_BASE+'/user/scenarios/all-played?username='+encodeURIComponent(username));
+    if(!r.ok) return null;
+    const j = await r.json();
+    if(!Array.isArray(j)) return null;
+    const set = new Set();
+    j.forEach(d=>{ const n = String(d && d.scenarioName || '').trim(); if(n) set.add(n); });
+    return set;
+  }
+
+  // Best score across the recent runs this endpoint returns. It reports recent
+  // runs rather than an all-time best, so this can legitimately come back lower
+  // than a stored score — recordScores() never lowers, so that resolves itself.
+  async function fetchScenarioBest(username, name){
+    const r = await fetch(KOVAAKS_BASE+'/user/scenario/last-scores/by-name?username='
+      +encodeURIComponent(username)+'&scenarioName='+encodeURIComponent(name));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    if(!Array.isArray(j)) return 0;
+    let best = 0;
+    j.forEach(e=>{ const s = Number(e && e.score); if(Number.isFinite(s) && s > best) best = s; });
+    return best;
+  }
+
+  // Small fixed concurrency, not a flood. kovaaks.com starts refusing
+  // connections at the TCP level under burst load, and a dead socket is
+  // indistinguishable from a real error — so consecutive failures abort the
+  // run rather than grinding through hundreds of doomed requests.
+  async function deepSync(username, candidates, onProgress){
+    const CONCURRENCY = 4;
+    const found = new Map();
+    let done = 0, consecutiveFailures = 0, aborted = false;
+    let cursor = 0;
+    async function worker(){
+      while(cursor < candidates.length && !syncAbort && !aborted){
+        const name = candidates[cursor++];
+        try{
+          const best = await fetchScenarioBest(username, name);
+          consecutiveFailures = 0;
+          if(best > 0) found.set(name, best);
+        }catch(e){
+          if(++consecutiveFailures >= 8){ aborted = true; break; }
+        }
+        done++;
+        if(onProgress && done % 5 === 0) onProgress(done, candidates.length);
+      }
+    }
+    const workers = [];
+    for(let i=0;i<CONCURRENCY;i++) workers.push(worker());
+    await Promise.all(workers);
+    if(onProgress) onProgress(done, candidates.length);
+    return { found, done, aborted, stopped: syncAbort };
+  }
+
+  async function runKovaaksSync(forcePrompt, onProgress){
     if(BENCHMARKS.length===0){
       throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
     }
     const username = getKovaaksUsername(forcePrompt);
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
+    syncAbort = false;
+
+    // Phase 1 — total-play. Cheap (3 paginated requests), incomplete, and the
+    // only source for play counts, which the Lifetime runs stat needs.
     const { scoreMap, playsMap, newestEpoch } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
-    const changes = patchScoresFromMap(scoreMap);
+    let changes = patchScoresFromMap(scoreMap);
+
+    // Phase 2 — everything total-play missed, one request per scenario.
+    let deep = null;
+    if(!syncAbort){
+      const played = await fetchAllPlayed(username);
+      if(played){
+        const current = new Map();
+        getParsedBenchmarks().forEach(({items})=>items.forEach(it=>{
+          if(!current.has(it.name) || current.get(it.name) < it.score) current.set(it.name, it.score);
+        }));
+        const candidates = [...current.keys()].filter(n=>played.has(n));
+        // Scenarios with no score at all first: those are guaranteed gaps,
+        // whereas the rest are only possibly stale.
+        candidates.sort((a,b)=> (current.get(a)>0?1:0) - (current.get(b)>0?1:0));
+        if(candidates.length>0){
+          deep = await deepSync(username, candidates, onProgress);
+          changes = changes.concat(patchScoresFromMap(deep.found));
+        }
+      }
+    }
 
     // "Lifetime runs completed" scoped to evxl's scenario set: sum play
     // counts only for names that actually appear somewhere in this
@@ -980,7 +1091,12 @@
     playsMap.forEach((plays, name)=>{ if(ourNames.has(name)) lifetimeRuns += plays; });
     try{ localStorage.setItem(LIFETIME_RUNS_KEY, String(lifetimeRuns)); }catch(e){}
 
-    return { changes, scenariosChecked: scoreMap.size, newestEpoch };
+    return {
+      changes,
+      scenariosChecked: scoreMap.size + (deep ? deep.done : 0),
+      newestEpoch,
+      deep
+    };
   }
 
   // Local-folder sync via a plain <input type="file" webkitdirectory">
@@ -2209,11 +2325,25 @@
     }
     return { text:'Error: '+msg, ms:10000 };
   }
-  navSync.addEventListener('click', async ()=>{
-    navSync.disabled = true;
+  // The deep pass makes a sync long-running (one request per played scenario),
+  // so the button doubles as a stop control rather than sitting disabled for
+  // minutes. Stopping is safe at any point: scores are persisted as they come
+  // in, and the store never lowers a value.
+  let syncRunning = false;
+  const navSyncLabel = navSync.innerHTML;
+  async function doSync(forcePrompt){
+    if(syncRunning){
+      syncAbort = true;
+      setSyncStatus('Stopping…');
+      return;
+    }
+    syncRunning = true;
+    navSync.innerHTML = '&#9632; Stop sync';
     setSyncStatus('Syncing…');
     try{
-      const res = await runKovaaksSync(false);
+      const res = await runKovaaksSync(forcePrompt, (done,total)=>{
+        setSyncStatus('Syncing '+done+' / '+total+'…');
+      });
       const { msg, ms } = syncResultMessage(res);
       setSyncStatus(msg, ms);
       if(res.changes.length>0) route();
@@ -2221,27 +2351,15 @@
       const d = describeSyncError(e);
       setSyncStatus(d.text, d.ms);
     }finally{
-      navSync.disabled = false;
+      syncRunning = false;
+      syncAbort = false;
+      navSync.innerHTML = navSyncLabel;
     }
-  });
+  }
+  navSync.addEventListener('click', ()=>{ doSync(false); });
   // Right-click (or long-press context menu) re-prompts for a different
   // KovaaK's username — handy if the wrong one got entered the first time.
-  navSync.addEventListener('contextmenu', async (e)=>{
-    e.preventDefault();
-    navSync.disabled = true;
-    setSyncStatus('Syncing…');
-    try{
-      const res = await runKovaaksSync(true);
-      const { msg, ms } = syncResultMessage(res);
-      setSyncStatus(msg, ms);
-      if(res.changes.length>0) route();
-    }catch(e){
-      const d = describeSyncError(e);
-      setSyncStatus(d.text, d.ms);
-    }finally{
-      navSync.disabled = false;
-    }
-  });
+  navSync.addEventListener('contextmenu', (e)=>{ e.preventDefault(); doSync(true); });
 
   navSyncLocal.addEventListener('click', ()=>{
     localStatsInput.click();

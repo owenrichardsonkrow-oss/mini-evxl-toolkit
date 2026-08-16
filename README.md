@@ -56,20 +56,29 @@ in more browsers, at the cost of no persisted handle — you re-pick the folder 
 time rather than it being remembered. This is the **reliable** option: it reads
 files directly off your own disk, nothing else in the loop.
 
-**"Sync Scores Online"** — reads your best score per scenario from KovaaK's own
-official backend (`kovaaks.com/webapp-backend`), a real public API confirmed
-reachable with a plain cross-origin `fetch()`. First click asks for your KovaaK's
-username (Settings → Profile in-game — your in-game display name, often *not* your
-Steam name); right-click to change it. **Currently unreliable** — verified directly
-against a real account (cross-checked against local files and against the account's
-own official kovaaks.com profile page, not just this tool) that the specific
-endpoint this depends on can sit stale for hours despite the player actively
-playing, while KovaaK's *does* correctly record those same plays in real time
-elsewhere on their own site. This is a bug on KovaaK's end, not something fixable
-here — treat this button as a bonus that works when it works, not something to
-depend on. It also can't reach kovaaks.com at all from inside a sandboxed embedded
-viewer like a Claude Artifact (those block all external network requests) — Sync
-Scores Locally doesn't have that problem, since it never makes a network request.
+**"Sync Scores Online"** — reads your scores from KovaaK's own official backend
+(`kovaaks.com/webapp-backend`), a real public API reachable with a plain
+cross-origin `fetch()`. First click asks for your KovaaK's username (Settings →
+Profile in-game — your in-game display name, often *not* your Steam name);
+right-click to change it.
+
+It works in two passes. The first is a quick paginated read of your best scores.
+That endpoint alone turned out to be badly incomplete — on a real account it listed
+263 scenarios where the player had actually played 1,137, and it can sit days behind
+your recent sessions — so a second pass asks KovaaK's which scenarios you've ever
+played, then fetches each one individually from an endpoint that *is* current
+(verified against a run from minutes earlier that the first endpoint had no record
+of). Scenarios you have no score for yet are done first.
+
+That second pass costs one request per played scenario, so a full sync takes a
+while and the button turns into **Stop sync**. Stopping is safe at any point:
+scores are saved as they arrive and a sync never lowers a score, so a partial run
+is just a shorter one — run it again later to pick up the rest. If KovaaK's starts
+refusing requests (they rate-limit bursts), the sync stops itself and tells you.
+
+It can't reach kovaaks.com at all from inside a sandboxed embedded viewer like a
+Claude Artifact — those block all external network requests. Sync Scores Locally
+doesn't have that problem, since it never makes a network request.
 
 Neither patches per-playlist Rank/Volts — see "What none of these does" below.
 

@@ -97,10 +97,14 @@ scenario has nothing to draw a bar against and doesn't render.
   was tried and abandoned: it hard-blocks any folder under `Program Files`, which is
   exactly where Steam installs KovaaK's, checked against the resolved real path so
   junctions don't help.
-- **Sync Scores Online** — kovaaks.com public API. Genuinely unreliable: the
-  `user/scenario/total-play` endpoint sits stale for hours, confirmed against the
-  account's own official kovaaks.com profile page. A backend bug, not fixable here.
-  The UI labels say so on purpose.
+- **Sync Scores Online** — kovaaks.com public API, two passes: `total-play` for a
+  quick baseline, then `all-played` + `last-scores/by-name` per scenario for what it
+  missed. **`total-play` is incomplete, not just stale** — 263 scenarios against
+  1,137 actually played — so never build on it alone. `last-scores/by-name` is
+  current and auth-free; `last-scores/by-id` 401s and `user/scenario/top` ignores
+  `page`/`max`, returning the same 10 rows forever. kovaaks.com rate-limits bursts
+  by refusing TCP connections, hence concurrency 4 and a self-abort after 8
+  consecutive failures.
 - Neither updates **Rank/Volts** — evxl-sourced only. Deliberately *not* taken from
   kovaaks.com's `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
   non-equivalent rank system and would mix two taxonomies under one UI.
