@@ -18,7 +18,12 @@ zeroes scores, resets rank/volts, and flips `IS_TOOLKIT_TEMPLATE` to `true`.
 
 **App-behavior changes belong in the personal copy first, then regenerate.**
 Hand-editing `template.html` directly means the next regeneration silently discards
-the work. `static-server.ps1` and `sync.ps1` *are* intentionally divergent from
+the work.
+
+**Run `generate-template.ps1` from this directory.** Both `$src` and `$dst` are
+relative paths, so running it from anywhere else silently writes `template.html`
+into the wrong folder and reports success. Verify afterwards that the toolkit's
+own `template.html` actually changed. `static-server.ps1` and `sync.ps1` *are* intentionally divergent from
 their personal-copy counterparts (port 8744/9500, `$PSScriptRoot` instead of a
 hardcoded root, config-driven `trackerHtml`, first-run guidance) — those two are
 hand-maintained here and must not be overwritten from the personal copy.
@@ -53,6 +58,25 @@ persisting progress in `localStorage`.
 Serve with `preview_start({name: "mini-evxl-toolkit"})` and open a **fresh tab** —
 preview tabs cache aggressively. `static-server.ps1`'s MIME map must keep
 `; charset=utf-8` on html/css/js/json or non-ASCII renders as mojibake.
+
+## Data model — three independent stores
+
+1. **Playlist structure** — `BENCHMARKS`, replaced wholesale by an upload.
+2. **Scenario scores** — `SCORES` (`localStorage['mini-evxl-scenario-scores']`),
+   an **append-only** name→score map. `recordScores()` never lowers a value, so
+   the template's zeroed rows can't wipe a synced score, and an upload that
+   drops playlists never destroys their scores. Cleared only by an explicit
+   reset.
+3. **Exclusions** — `EXCLUDED` (`localStorage['mini-evxl-excluded-playlists']`),
+   a set of `JSON.stringify([name, difficulty])` keys that survives uploads.
+
+Everything derives from one rule: **a scenario renders iff at least one present,
+non-excluded playlist references it.** `getParsedBenchmarks()` implements it, so
+orphaning and exclusion are the same mechanism and neither touches scores. It
+assigns `index` before filtering so `#/bench/N` links stay stable.
+
+Score-only by design — tier thresholds belong to the playlist, so an orphaned
+scenario has nothing to draw a bar against and doesn't render.
 
 ## Rules that are easy to break
 

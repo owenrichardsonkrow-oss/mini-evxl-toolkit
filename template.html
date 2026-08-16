@@ -293,6 +293,38 @@
 
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   @media (prefers-reduced-motion: no-preference) { .card, .stat { transition: background-color .15s ease; } }
+  .excl-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:20px 0 10px; }
+  .excl-toolbar input[type=text] {
+    flex:1; min-width:220px; padding:9px 12px; border-radius:8px;
+    border:1px solid var(--border); background:var(--panel); color:var(--text);
+    font-family:inherit; font-size:13px;
+  }
+  .excl-toolbar input[type=text]:focus { outline:none; border-color:var(--accent); }
+  .excl-bulk {
+    padding:8px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--panel); color:var(--text-dim); font-family:inherit;
+    font-size:12px; cursor:pointer; white-space:nowrap;
+  }
+  .excl-bulk:hover { color:var(--text); border-color:var(--accent); }
+  .excl-summary { font-size:12.5px; color:var(--text-dim); margin:6px 0 14px; }
+  .excl-summary strong { color:var(--text); font-weight:600; }
+  .excl-list { display:flex; flex-direction:column; gap:2px; max-height:60vh; overflow-y:auto; padding-right:4px; }
+  .excl-row {
+    display:flex; align-items:center; gap:10px; padding:8px 10px;
+    border-radius:8px; border:1px solid transparent; cursor:pointer;
+  }
+  .excl-row:hover { background:var(--panel); border-color:var(--border); }
+  .excl-row input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; cursor:pointer; flex:none; }
+  .excl-row .excl-name { flex:1; font-size:13px; }
+  .excl-row.is-excluded .excl-name { color:var(--text-faint); text-decoration:line-through; }
+  .excl-row .excl-diff {
+    font-family:ui-monospace,monospace; font-size:10.5px; letter-spacing:.03em;
+    padding:2px 7px; border-radius:99px; background:var(--accent-soft);
+    color:var(--accent-text); flex:none;
+  }
+  .excl-row .excl-count { font-family:ui-monospace,monospace; font-size:11px; color:var(--text-faint); flex:none; }
+  .excl-actions { display:flex; align-items:center; gap:12px; margin-top:18px; }
+  .excl-empty { color:var(--text-faint); font-size:13px; padding:18px 4px; }
 </style>
 
 <div class="topnav">
@@ -302,6 +334,7 @@
     <button id="nav-shared">Shared Scenarios</button>
     <button id="nav-unique">Unique Scenarios</button>
     <button id="nav-import">Load Your Data</button>
+    <button id="nav-exclude">Exclude Benchmarks</button>
     <button id="nav-settings">Settings</button>
   </nav>
   <div class="spacer"></div>
@@ -341,11 +374,84 @@
       }
     }
   }catch(e){}
+  // ---- Scenario score store -------------------------------------------
+  // Scores used to live only inside each playlist's own table rows, which
+  // meant removing a playlist destroyed its scores along with it. They now
+  // live here instead, keyed by scenario name and independent of any
+  // playlist: an append-only record that a dataset upload never shrinks.
+  // Playlist rows still carry their originally-scraped score (sync.ps1
+  // patches those on disk, and they seed this store on first load), but the
+  // store takes precedence wherever the two disagree.
+  //
+  // Deliberately score-only. Tier thresholds are a property of the playlist,
+  // not of the score, so a scenario no active playlist references simply
+  // doesn't render — there's nothing to draw a bar against, and re-uploading
+  // its playlist restores the correct thresholds along with it.
+  const SCORES_KEY = 'mini-evxl-scenario-scores';
+  const SCORES = new Map();
+  try{
+    const rawScores = localStorage.getItem(SCORES_KEY);
+    if(rawScores){
+      const obj = JSON.parse(rawScores);
+      Object.keys(obj).forEach(k=>{
+        const v = Number(obj[k]);
+        if(Number.isFinite(v)) SCORES.set(k, v);
+      });
+    }
+  }catch(e){}
+  function persistScores(){
+    try{
+      const obj = {};
+      SCORES.forEach((v,k)=>{ obj[k]=v; });
+      localStorage.setItem(SCORES_KEY, JSON.stringify(obj));
+    }catch(e){}
+  }
+  // Never lowers a stored score — a playlist whose embedded rows are stale
+  // (or zeroed, as in the toolkit template) can't clobber a real result.
+  function recordScores(map){
+    let changed = 0;
+    map.forEach((v,k)=>{
+      if(!Number.isFinite(v) || v<=0) return;
+      if(!SCORES.has(k) || SCORES.get(k) < v){ SCORES.set(k, v); changed++; }
+    });
+    if(changed) persistScores();
+    return changed;
+  }
+
+  // ---- Excluded playlists ---------------------------------------------
+  // Benchmarks the user has opted out of. Held as a set of stable
+  // name+difficulty keys so exclusions survive a dataset re-upload, and
+  // JSON-encoded rather than joined with a delimiter character — a literal
+  // separator byte in a composite key has bitten this file before.
+  const EXCLUDE_KEY = 'mini-evxl-excluded-playlists';
+  const EXCLUDED = new Set();
+  function benchKey(b){ return JSON.stringify([b.name, b.difficulty]); }
+  try{
+    const rawExcl = localStorage.getItem(EXCLUDE_KEY);
+    if(rawExcl){
+      const arr = JSON.parse(rawExcl);
+      if(Array.isArray(arr)) arr.forEach(k=>{ if(typeof k==='string') EXCLUDED.add(k); });
+    }
+  }catch(e){}
+  function persistExcluded(){
+    try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify([...EXCLUDED])); }catch(e){}
+  }
+  // The visible benchmark pool: loaded, minus excluded. Everything the site
+  // renders derives from this — so a scenario disappears from the site when
+  // no playlist in the pool references it, whether that's because its
+  // playlist was excluded or because an upload no longer contains it. Both
+  // cases are the same condition, and neither touches the score store.
+  function activeBenchmarks(){
+    return BENCHMARKS.filter(b=>!EXCLUDED.has(benchKey(b)));
+  }
+  function activeCount(){ return activeBenchmarks().length; }
+
   const app = document.getElementById('app');
   const navHome = document.getElementById('nav-home');
   const navShared = document.getElementById('nav-shared');
   const navUnique = document.getElementById('nav-unique');
   const navImport = document.getElementById('nav-import');
+  const navExclude = document.getElementById('nav-exclude');
   const navSettings = document.getElementById('nav-settings');
   const navSync = document.getElementById('nav-sync');
   const navSyncLocal = document.getElementById('nav-sync-local');
@@ -400,7 +506,20 @@
   let _parsedCache = null;
   function getParsedBenchmarks(){
     if(_parsedCache) return _parsedCache;
-    _parsedCache = BENCHMARKS.map((b,i)=>({ index:i, benchmark:b, items: parseTable(b.hdrs, b.rows) }));
+    // Index is the position in the full BENCHMARKS array, assigned before
+    // the exclusion filter — #/bench/N links must keep pointing at the same
+    // playlist whether or not anything is excluded.
+    _parsedCache = BENCHMARKS
+      .map((b,i)=>({
+        index: i,
+        benchmark: b,
+        items: parseTable(b.hdrs, b.rows).map(it=>(
+          SCORES.has(it.name) && SCORES.get(it.name) > it.score
+            ? Object.assign({}, it, { score: SCORES.get(it.name) })
+            : it
+        ))
+      }))
+      .filter(e=>!EXCLUDED.has(benchKey(e.benchmark)));
     return _parsedCache;
   }
 
@@ -516,6 +635,10 @@
     BENCHMARKS = arr;
     usingImported = true;
     invalidateCaches();
+    // Absorb the incoming dataset's own scores before anything renders. An
+    // upload adds to the score store and never subtracts from it, so
+    // dropping playlists here doesn't lose their scores.
+    seedScoresFromData(arr);
     try{ localStorage.setItem(IMPORT_KEY, rawJsonString); }catch(e){}
     // The cached "lifetime runs" number is only valid for the scenario set
     // it was computed against — clear it here so a plain import (not a
@@ -528,7 +651,15 @@
   function resetToDefault(){
     BENCHMARKS = DEFAULT_BENCHMARKS;
     usingImported = false;
+    // An explicit "reset to demo data" is the one place the score store is
+    // cleared. Every other path only ever adds to it — removing a playlist
+    // must never destroy a score, but a deliberate reset should leave no
+    // synced data behind, or the demo would still be showing your results.
+    // Exclusions survive: they're a preference, not data.
+    SCORES.clear();
+    try{ localStorage.removeItem(SCORES_KEY); }catch(e){}
     invalidateCaches();
+    seedScoresFromData(BENCHMARKS);
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
     try{ localStorage.removeItem(LIFETIME_RUNS_KEY); }catch(e){}
     updateTopnavSource();
@@ -541,7 +672,9 @@
     } else if(!IS_TOOLKIT_TEMPLATE && DEFAULT_BENCHMARKS.length>0){
       el.innerHTML = '<a class="steam-link" href="https://steamcommunity.com/id/sinseriously/" target="_blank" rel="noopener">sinseriously &#8599;</a>';
     } else if(IS_TOOLKIT_TEMPLATE){
-      el.innerHTML = '<a class="steam-link" href="#/import">blank template &middot; sync yours</a>';
+      el.innerHTML = SCORES.size>0
+        ? '<a class="steam-link" href="#/import">your scores &middot; synced</a>'
+        : '<a class="steam-link" href="#/import">blank template &middot; sync yours</a>';
     } else {
       el.innerHTML = '<a class="steam-link" href="#/import">no data loaded &#8599;</a>';
     }
@@ -620,8 +753,20 @@
   // tracked here).
   function collectOurScenarioNames(){
     const names = new Set();
-    forEachScenarioRow(BENCHMARKS, (scenario)=>{ names.add(scenario); });
+    getParsedBenchmarks().forEach(({items})=>{ items.forEach(it=>names.add(it.name)); });
     return names;
+  }
+
+  // Lift whatever scores a dataset's own rows carry into the score store.
+  // Run on first load and on every import, so switching datasets can only
+  // ever add to the store — an upload that drops playlists keeps their
+  // scores, and re-uploading them later shows those scores again.
+  function seedScoresFromData(data){
+    const found = new Map();
+    forEachScenarioRow(data, (scenario, score)=>{
+      if(score>0 && (!found.has(scenario) || found.get(scenario)<score)) found.set(scenario, score);
+    });
+    return recordScores(found);
   }
 
   // Unique scenarios "cleared" — score > 0 in at least one playlist that
@@ -630,9 +775,16 @@
   // is currently loaded, so it needs no sync/cache and can't go stale.
   function computeUniqueScenariosCleared(){
     const cleared = new Set();
-    forEachScenarioRow(BENCHMARKS, (scenario, score)=>{ if(score>0) cleared.add(scenario); });
+    getParsedBenchmarks().forEach(({items})=>{
+      items.forEach(it=>{ if(it.score>0) cleared.add(it.name); });
+    });
     return cleared.size;
   }
+
+  // Seed once at startup from whatever dataset ended up loaded above. Runs
+  // here rather than beside the store's declaration because it depends on
+  // forEachScenarioRow's PCT_RE, which is only initialized by this point.
+  seedScoresFromData(BENCHMARKS);
 
   const LIFETIME_RUNS_KEY = 'mini-evxl-lifetime-runs';
 
@@ -665,6 +817,12 @@
     // is the only source for that number).
     const scoreMap = new Map();
     const playsMap = new Map();
+    // Newest run KovaaK's has actually recorded for this player, taken from
+    // each entry's attributes.epoch. This endpoint has been observed sitting
+    // days behind real play (their bug, not ours) while reporting a healthy
+    // scenario count — without this, a stale sync is indistinguishable from
+    // an up-to-date one, which is exactly how it reads as "doing nothing".
+    let newestEpoch = 0;
     allData.forEach(d=>{
       const name = String(d.scenarioName||'').trim();
       if(!name) return;
@@ -672,27 +830,72 @@
       if(Number.isFinite(score) && (!scoreMap.has(name) || scoreMap.get(name) < score)) scoreMap.set(name, score);
       const plays = Number(d.counts && d.counts.plays) || 0;
       playsMap.set(name, (playsMap.get(name)||0) + plays);
+      const ep = Number(d.attributes && d.attributes.epoch);
+      if(Number.isFinite(ep) && ep > newestEpoch) newestEpoch = ep;
     });
-    return { scoreMap, playsMap };
+    return { scoreMap, playsMap, newestEpoch };
   }
 
-  function patchScoresFromMap(scoreMap){
-    // Clone before patching — BENCHMARKS may currently just be a reference to
-    // DEFAULT_BENCHMARKS, and mutating rows in place would silently corrupt
-    // the pristine copy resetToDefault() relies on.
-    const working = JSON.parse(JSON.stringify(BENCHMARKS));
-    const changes = [];
-    forEachScenarioRow(working, (scenario, currentScore, b, row, p)=>{
-      if(scoreMap.has(scenario)){
-        const newScore = scoreMap.get(scenario);
-        if(newScore > currentScore){
-          changes.push({ benchmark:b.name, difficulty:b.difficulty, scenario, oldScore:row[p-1], newScore:formatScoreJs(newScore) });
-          row[p-1] = formatScoreJs(newScore);
-        }
+  // Turns a sync result into the status-bar line, plus a staleness warning
+  // when the API's data looks frozen.
+  //
+  // The only timestamp this endpoint exposes is attributes.epoch, which is
+  // when each scenario's *record* run happened — not the last time it was
+  // played. So the newest epoch across every scenario means "your most
+  // recent personal best, as far as KovaaK's knows". A long gap there is
+  // suggestive rather than conclusive: it's either stale data or a genuine
+  // plateau, and the wording below says exactly that instead of claiming
+  // more than the data supports. The threshold is correspondingly generous
+  // — a two-day window would fire constantly on any normal plateau.
+  const STALE_AFTER_MS = 30*24*60*60*1000;
+  function syncResultMessage(res){
+    const { changes, scenariosChecked, newestEpoch } = res;
+    let msg = changes.length>0
+      ? changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)'
+      : 'Up to date ('+scenariosChecked+' scenarios checked)';
+    let ms = changes.length>0 ? 6000 : 4000;
+    if(newestEpoch>0){
+      const age = Date.now()-newestEpoch;
+      if(age > STALE_AFTER_MS){
+        const days = Math.floor(age/(24*60*60*1000));
+        msg += ' — heads up: the newest personal best KovaaK\'s has on record for you is '+days+' days old. If you\'ve beaten anything since, their API is lagging (a known issue on their end, not fixable here) — use Sync Scores Locally instead.';
+        ms = 14000;
       }
+    }
+    return { msg, ms };
+  }
+
+  // Writes into the scenario score store rather than into playlist rows, so
+  // BENCHMARKS is never mutated and DEFAULT_BENCHMARKS stays pristine for
+  // resetToDefault() without needing a defensive clone.
+  //
+  // Scoped to the visible benchmark pool on purpose: only scenarios reachable
+  // from a loaded, non-excluded playlist are checked and updated. A scenario
+  // whose playlist was excluded or dropped keeps whatever score it already
+  // had, frozen, until a playlist that carries it comes back.
+  function patchScoresFromMap(scoreMap){
+    const changes = [];
+    const updates = new Map();
+    getParsedBenchmarks().forEach(({benchmark, items})=>{
+      items.forEach(it=>{
+        if(!scoreMap.has(it.name)) return;
+        const newScore = scoreMap.get(it.name);
+        if(newScore > it.score){
+          changes.push({
+            benchmark: benchmark.name,
+            difficulty: benchmark.difficulty,
+            scenario: it.name,
+            oldScore: formatScoreJs(it.score),
+            newScore: formatScoreJs(newScore)
+          });
+          if(!updates.has(it.name) || updates.get(it.name) < newScore) updates.set(it.name, newScore);
+        }
+      });
     });
-    if(changes.length>0){
-      loadBenchmarks(working, JSON.stringify(working));
+    if(updates.size > 0){
+      recordScores(updates);
+      invalidateCaches();
+      updateTopnavSource();
     }
     return changes;
   }
@@ -703,7 +906,7 @@
     }
     const username = getKovaaksUsername(forcePrompt);
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
-    const { scoreMap, playsMap } = await fetchKovaaksScores(username);
+    const { scoreMap, playsMap, newestEpoch } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
     const changes = patchScoresFromMap(scoreMap);
 
@@ -715,7 +918,7 @@
     playsMap.forEach((plays, name)=>{ if(ourNames.has(name)) lifetimeRuns += plays; });
     try{ localStorage.setItem(LIFETIME_RUNS_KEY, String(lifetimeRuns)); }catch(e){}
 
-    return { changes, scenariosChecked: scoreMap.size };
+    return { changes, scenariosChecked: scoreMap.size, newestEpoch };
   }
 
   // Local-folder sync via a plain <input type="file" webkitdirectory">
@@ -956,6 +1159,7 @@
     navShared.classList.toggle('active', route==='shared');
     navUnique.classList.toggle('active', route==='unique');
     navImport.classList.toggle('active', route==='import');
+    navExclude.classList.toggle('active', route==='exclude');
     navSettings.classList.toggle('active', route==='settings');
   }
 
@@ -990,12 +1194,12 @@
     wrap.innerHTML = `
       <div class="eyebrow"><span class="dot"></span> personal benchmark tracker</div>
       <h1>${usingImported ? 'Your KovaaK\'s benchmarks' : (IS_TOOLKIT_TEMPLATE ? 'KovaaK\'s Benchmark Tracker' : 'mini\'s KovaaK\'s benchmarks')}</h1>
-      <p class="sub">A self-hosted view of all ${BENCHMARKS.length} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
+      <p class="sub">A self-hosted view of all ${activeCount()} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
       <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : 'STEAM: sinseriously &nbsp;&middot;&nbsp; SOURCE DATA evxl.app/u/76561198251208570')}</div>
-      ${IS_TOOLKIT_TEMPLATE && !usingImported ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
+      ${IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0 ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
       <div class="stats">
         <div class="stat"><div class="val">${lifetimeRunsDisplay}</div><div class="label">Lifetime runs completed</div></div>
-        <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${BENCHMARKS.length}</span></div><div class="label">Benchmarks played</div></div>
+        <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${activeCount()}</span></div><div class="label">Benchmarks played</div></div>
         <div class="stat"><div class="val">${clearedCount}</div><div class="label">Scenario clears</div></div>
         <div class="stat"><div class="val">${sharedCount}</div><div class="label">Shared scenarios</div></div>
       </div>
@@ -1144,9 +1348,9 @@
     const wrap = document.createElement('div');
     wrap.className='wrap narrow';
     wrap.innerHTML = `
-      <div class="eyebrow"><span class="dot"></span> shared-scenario overlap &middot; all ${BENCHMARKS.length} playlists</div>
+      <div class="eyebrow"><span class="dot"></span> shared-scenario overlap &middot; all ${activeCount()} playlists</div>
       <h1>Cross-playlist XP bars</h1>
-      <p class="sub">${shared.length} scenarios appear in more than one of the ${BENCHMARKS.length} benchmark playlists &mdash; ${unplayedCount} of them you haven't touched yet. Sorted by how many playlists each one unlocks, so the top of this list is where practice pays off the most.</p>
+      <p class="sub">${shared.length} scenarios appear in more than one of the ${activeCount()} benchmark playlists &mdash; ${unplayedCount} of them you haven't touched yet. Sorted by how many playlists each one unlocks, so the top of this list is where practice pays off the most.</p>
       <div class="meta">ONE BAR PER SCENARIO &middot; EQUAL-WIDTH STEPS BY RANK, NOT BY POINT GAP</div>
       <div class="searchbar">
         <input id="shared-search" type="text" placeholder="Search scenarios or benchmark names..." value="${esc(filter)}" />
@@ -1425,7 +1629,7 @@
     const wrap = document.createElement('div');
     wrap.className='wrap narrow';
     wrap.innerHTML = `
-      <div class="eyebrow"><span class="dot"></span> unique scenarios &middot; found in exactly one of ${BENCHMARKS.length} playlists</div>
+      <div class="eyebrow"><span class="dot"></span> unique scenarios &middot; found in exactly one of ${activeCount()} playlists</div>
       <h1>Scenarios not shared with any other playlist</h1>
       <p class="sub">${unique.length} scenarios belong to only one benchmark playlist &mdash; ${unplayedCount} of them you haven't touched yet. Click a card to jump to its playlist.</p>
       <div class="searchbar">
@@ -1700,6 +1904,141 @@
     }
   }
 
+  // Excluding a benchmark deletes nothing. It drops the playlist out of the
+  // visible pool, which in turn drops any scenario no remaining playlist
+  // carries — the same condition that hides a scenario whose playlist simply
+  // isn't in the uploaded dataset. Scores live in the scenario score store
+  // regardless, so re-including a benchmark brings its cards back unchanged.
+  function renderExclude(){
+    const wrap = document.createElement('div');
+    wrap.className = 'wrap narrow';
+
+    if(BENCHMARKS.length===0){
+      wrap.innerHTML = `
+        <div class="eyebrow"><span class="dot"></span> exclude benchmarks</div>
+        <h1>Exclude benchmarks</h1>
+        <p class="sub">No dataset is loaded yet, so there's nothing to exclude &mdash; <a href="#/import">load your data</a> first.</p>`;
+      app.innerHTML=''; app.appendChild(wrap);
+      return;
+    }
+
+    // Pending selection, applied only on Save. Toggling straight into
+    // EXCLUDED would re-render the whole site once per checkbox, which makes
+    // bulk selection unusable on a 200-playlist list.
+    const pending = new Set(EXCLUDED);
+
+    wrap.innerHTML = `
+      <div class="eyebrow"><span class="dot"></span> exclude benchmarks</div>
+      <h1>Exclude benchmarks</h1>
+      <p class="sub">Benchmarks you don't intend to play. Excluding one takes it off the home grid and removes its scenarios from Shared and Unique &mdash; unless a benchmark you still play also carries them, in which case they stay. Nothing is deleted: your scores are kept, and re-including a benchmark brings it all back exactly as it was.</p>
+      <div class="excl-toolbar">
+        <input type="text" id="excl-search" placeholder="Search by name, pack, or difficulty&hellip;" autocomplete="off" />
+        <button class="excl-bulk" id="excl-all">Exclude shown</button>
+        <button class="excl-bulk" id="excl-none">Include shown</button>
+      </div>
+      <div class="excl-summary" id="excl-summary"></div>
+      <div class="excl-list" id="excl-list"></div>
+      <div class="excl-actions">
+        <button class="import-btn" id="excl-save">Save preferences</button>
+        <span class="settings-saved" id="excl-saved">Saved</span>
+      </div>`;
+    app.innerHTML=''; app.appendChild(wrap);
+
+    const searchEl  = wrap.querySelector('#excl-search');
+    const listEl    = wrap.querySelector('#excl-list');
+    const summaryEl = wrap.querySelector('#excl-summary');
+    const saveBtn   = wrap.querySelector('#excl-save');
+    const savedEl   = wrap.querySelector('#excl-saved');
+
+    // Scenario counts are taken off the raw table rather than
+    // getParsedBenchmarks(), which is already exclusion-filtered — this list
+    // has to show every benchmark, excluded ones included.
+    const scenCount = new Map();
+    BENCHMARKS.forEach(b=>{ scenCount.set(benchKey(b), parseTable(b.hdrs, b.rows).length); });
+
+    function visibleBenchmarks(){
+      const q = searchEl.value.trim().toLowerCase();
+      if(!q) return BENCHMARKS.slice();
+      return BENCHMARKS.filter(b=>
+        String(b.name||'').toLowerCase().includes(q) ||
+        String(b.pack||'').toLowerCase().includes(q) ||
+        String(b.difficulty||'').toLowerCase().includes(q)
+      );
+    }
+
+    function isDirty(){
+      if(pending.size !== EXCLUDED.size) return true;
+      for(const k of pending){ if(!EXCLUDED.has(k)) return true; }
+      return false;
+    }
+
+    function paintSummary(){
+      const kept = BENCHMARKS.length - pending.size;
+      const dirty = isDirty();
+      summaryEl.innerHTML =
+        '<strong>'+kept+'</strong> of '+BENCHMARKS.length+' benchmarks in the pool &middot; <strong>'+pending.size+'</strong> excluded'
+        + (dirty ? ' &middot; <span style="color:var(--accent-text);">unsaved changes</span>' : '');
+      saveBtn.disabled = !dirty;
+      saveBtn.style.opacity = dirty ? '1' : '.45';
+      saveBtn.style.cursor  = dirty ? 'pointer' : 'default';
+    }
+
+    function paintList(){
+      const items = visibleBenchmarks();
+      if(items.length===0){
+        listEl.innerHTML = '<div class="excl-empty">No benchmarks match that search.</div>';
+        return;
+      }
+      // data-key holds a JSON array string, so it contains double quotes —
+      // this relies on esc() escaping them. It didn't always.
+      listEl.innerHTML = items.map(b=>{
+        const k = benchKey(b);
+        const on = pending.has(k);
+        return '<label class="excl-row'+(on?' is-excluded':'')+'" data-key="'+esc(k)+'">'
+          + '<input type="checkbox"'+(on?' checked':'')+' />'
+          + '<span class="excl-name">'+esc(b.name)+'</span>'
+          + '<span class="excl-diff">'+esc(b.difficulty||'—')+'</span>'
+          + '<span class="excl-count">'+(scenCount.get(k)||0)+' scen</span>'
+          + '</label>';
+      }).join('');
+    }
+
+    listEl.addEventListener('change', e=>{
+      const row = e.target.closest('.excl-row');
+      if(!row) return;
+      const k = row.dataset.key;
+      if(e.target.checked){ pending.add(k); row.classList.add('is-excluded'); }
+      else { pending.delete(k); row.classList.remove('is-excluded'); }
+      paintSummary();
+    });
+
+    searchEl.addEventListener('input', ()=>{ paintList(); });
+
+    wrap.querySelector('#excl-all').addEventListener('click', ()=>{
+      visibleBenchmarks().forEach(b=>pending.add(benchKey(b)));
+      paintList(); paintSummary();
+    });
+    wrap.querySelector('#excl-none').addEventListener('click', ()=>{
+      visibleBenchmarks().forEach(b=>pending.delete(benchKey(b)));
+      paintList(); paintSummary();
+    });
+
+    saveBtn.addEventListener('click', ()=>{
+      if(!isDirty()) return;
+      EXCLUDED.clear();
+      pending.forEach(k=>EXCLUDED.add(k));
+      persistExcluded();
+      invalidateCaches();
+      updateTopnavSource();
+      paintSummary();
+      savedEl.classList.add('show');
+      setTimeout(()=>savedEl.classList.remove('show'), 1800);
+    });
+
+    paintList();
+    paintSummary();
+  }
+
   function renderSettings(){
     const wrap = document.createElement('div');
     wrap.className = 'wrap narrow';
@@ -1763,6 +2102,8 @@
       renderUnique();
     } else if(hash==='import'){
       renderImport();
+    } else if(hash==='exclude'){
+      renderExclude();
     } else if(hash==='settings'){
       renderSettings();
     } else {
@@ -1775,6 +2116,7 @@
   navShared.addEventListener('click', ()=>{ location.hash='#/shared'; });
   navUnique.addEventListener('click', ()=>{ location.hash='#/unique'; });
   navImport.addEventListener('click', ()=>{ location.hash='#/import'; });
+  navExclude.addEventListener('click', ()=>{ location.hash='#/exclude'; });
   navSettings.addEventListener('click', ()=>{ location.hash='#/settings'; });
   document.getElementById('brand-home').addEventListener('click', ()=>{ location.hash='#/'; });
   window.addEventListener('hashchange', route);
@@ -1802,13 +2144,10 @@
     navSync.disabled = true;
     setSyncStatus('Syncing…');
     try{
-      const { changes, scenariosChecked } = await runKovaaksSync(false);
-      if(changes.length>0){
-        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)', 6000);
-        route();
-      } else {
-        setSyncStatus('Up to date ('+scenariosChecked+' scenarios checked)', 4000);
-      }
+      const res = await runKovaaksSync(false);
+      const { msg, ms } = syncResultMessage(res);
+      setSyncStatus(msg, ms);
+      if(res.changes.length>0) route();
     }catch(e){
       const d = describeSyncError(e);
       setSyncStatus(d.text, d.ms);
@@ -1823,13 +2162,10 @@
     navSync.disabled = true;
     setSyncStatus('Syncing…');
     try{
-      const { changes, scenariosChecked } = await runKovaaksSync(true);
-      if(changes.length>0){
-        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)', 6000);
-        route();
-      } else {
-        setSyncStatus('Up to date ('+scenariosChecked+' scenarios checked)', 4000);
-      }
+      const res = await runKovaaksSync(true);
+      const { msg, ms } = syncResultMessage(res);
+      setSyncStatus(msg, ms);
+      if(res.changes.length>0) route();
     }catch(e){
       const d = describeSyncError(e);
       setSyncStatus(d.text, d.ms);
