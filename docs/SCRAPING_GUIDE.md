@@ -10,25 +10,41 @@ benchmark, or a fully custom list), or you're maintaining this toolkit itself.
 
 This tracker's dataset is just a JSON array of benchmark playlists, each with its
 scenario table (the `rank` and `volts` fields are still in the format but no longer
-drive the UI — rank is computed locally from scores). evxl.app is a client-rendered
-app with no documented public API, so getting this structural data means visiting pages on
-evxl.app and reading what's on screen. This is **only reading public benchmark
-data that evxl already displays to anyone with a profile URL** — no login,
-no private data, no bypassing anything.
+drive the UI — rank is computed locally from scores). Getting this structural data
+means reading what evxl.app shows to anyone with a profile URL — no login, no
+private data, no bypassing anything. There are two ways to do it.
 
-### Why there isn't an easier way
+### The easier way (2026-08-16): evxl's catalog + KovaaK's benchmark endpoint
 
-Two shortcuts were evaluated and both fell short, so scraping stays necessary:
+evxl's pages are an empty SvelteKit shell that render each table from data you can
+fetch yourself:
 
-- **A data endpoint behind evxl.** There *is* one, but not a documented one:
-  evxl's pages are an empty SvelteKit shell that fetches each table from
-  KovaaK's own backend
-  (`kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark?benchmarkId=…&steamId=…`),
-  plus evxl's own `api.evxl.app` for rank labels. Neither is documented or
-  contractual, and mapping a playlist name to a `benchmarkId` is still unsolved,
-  so the page scrape remains the reference path for now. When kovaaks.com is
-  down, evxl renders tier headers and zero scenario rows — scraping then is
-  pointless.
+1. **evxl's own JS bundle ships its whole benchmark catalog** as a JSON literal —
+   every benchmark's name, its `rankCalculation` mode, and for each difficulty the
+   `kovaaksBenchmarkId`, tier names (`rankColors`), and category/subcategory layout
+   (`categories[].subcategories[].scenarioCount`). Load any playlist page, list the
+   loaded `_app/immutable/chunks/*.js` (their names are content hashes and change
+   on deploy), and grep for `"benchmarkName"`; the literal starts with
+   `[{"benchmarkName"`. The maintainer's extracted copy lives in the tracker repo
+   as `dev/evxl-bundle-catalog.json`.
+2. **KovaaK's backend serves the table for a benchmark id**:
+   `https://kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark?benchmarkId=<id>&steamId=<your steamid64>`
+   → `{ranks:[{name}], categories:{<kovaaks category>:{scenarios:{<name>:{score, rank_maxes, scenario_rank, …}}}}}`.
+   `rank_maxes` are the tier thresholds; `score` is your score ×100. Public, no
+   login; rate-limits bursts (space requests out).
+3. **Table order** = the API's scenarios flattened in order, then sliced by the
+   catalog's subcategory counts (that's what evxl's own renderer does). The tracker
+   repo's `rebuild-entry-from-kovaaks.ps1` is a working reference for turning one
+   API response into this dataset's `hdrs`/`rows`.
+
+Caveats: neither endpoint is documented or contractual; the page scrape below stays
+as the fallback and as the way to verify the API when they disagree. When
+kovaaks.com is down, both this path and the page scrape are dead (evxl renders tier
+headers and zero rows). Routine-based benchmarks (`kovaaksBenchmarkId: -1`) embed
+their scenarios and thresholds directly in the bundle catalog instead.
+
+### Why the other shortcut wasn't adopted
+
 - **The creator-maintained Google Sheets some playlists link to.** These are real
   and genuinely fetchable as CSV (`docs.google.com/spreadsheets/d/<ID>/export?format=csv&gid=<GID>`),
   and they carry the true tier-threshold tables. But it's a per-creator choice, not
@@ -38,6 +54,8 @@ Two shortcuts were evaluated and both fell short, so scraping stays necessary:
   actually a spreadsheet. The full playlist→sheet map is in
   [`sheet-scope.json`](sheet-scope.json). Since sheets can't cover the whole
   dataset, they were dropped rather than maintained as a partial second path.
+
+## The page scrape (fallback / verification path)
 
 There is no plain-JavaScript/Node scraper script here (see the README for why), so
 this guide documents the exact technique in enough detail that either:
@@ -133,36 +151,22 @@ pair from Step 2, and on each page run:
   const rows = [...table.querySelectorAll('tbody tr')]
     .map(tr=>[...tr.children].map(c=>c.textContent.trim()));
 
-  // --- Rank + Volts badge ---
-  // Format-agnostic: plain ranks have a trailing "N%", "Complete" ranks don't;
-  // zero-volts pages have no digit between the rank and the word "Volts" at all.
-  // A validation loop guards against the benchmark's own name recurring later on
-  // the page (e.g. in a "Global Rank Distributions" section, or when a difficulty
-  // tab's label happens to equal the playlist's own name).
-  const txt = document.querySelector('main').textContent.replace(/\s+/g,' ');
-  let searchFrom = 0, rank = 'Unranked', volts = 0;
-  while(true){
-    const idx = txt.indexOf(name, searchFrom);
-    if(idx===-1) break;
-    const after = txt.slice(idx+name.length, idx+name.length+200);
-    const rankMatch = after.match(/^\s*([^\d]*?)(?=\d|Volts)/);
-    const cand = rankMatch ? rankMatch[1].trim() : '';
-    const voltsMatch = after.match(/Volts\s*([\d,]+)/);
-    if(voltsMatch && cand.length<=40){
-      rank = cand || 'Unranked';
-      volts = parseInt(voltsMatch[1].replace(/,/g,''));
-      break;
-    }
-    searchFrom = idx+name.length;
-  }
-
-  return JSON.stringify({ name, pack: name, difficulty: 'FILL_IN', rank, volts, hdrs, rows });
+  // rank/volts are kept in the format for compatibility but nothing reads them
+  // any more (the rank badge is computed locally). Leave them as below.
+  return JSON.stringify({ name, pack: name, difficulty: 'FILL_IN', rank: 'Unranked', volts: 0, hdrs, rows });
 })();
 ```
 
 Fill in the actual `difficulty` for that page (it isn't reliably recoverable from
 the DOM alone — track it from the URL you navigated to), collect one JSON object per
-page, and concatenate them into the final array.
+page, and concatenate them into the final array. If a table shows
+"Loading scenario 1..." rows, KovaaK's had no data for that benchmark at that moment
+(or ever — one evxl entry is empty at the source); don't keep those rows.
+
+Optional but recommended afterwards: run the tracker repo's `apply-evxl-catalog.ps1`
+against your file so each entry also carries evxl's rank-calculation mode and
+subcategory layout — that's what lets the rank badge use the benchmark's real rule
+instead of the conservative "Complete" reading.
 
 If you're batching many pages (a full profile is often 150–250 playlist/difficulty
 pages), doing this by hand gets old fast — this is exactly the kind of repetitive,

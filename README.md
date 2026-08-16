@@ -185,15 +185,34 @@ A JSON array, one entry per playlist+difficulty:
   "name": "playlist name",
   "pack": "cosmetic group label (optional, falls back to name)",
   "difficulty": "difficulty label",
-  "rank": "evxl's rank badge for this playlist (optional, falls back to \"Unranked\")",
+  "rank": "legacy: evxl's badge at scrape time (optional; nothing reads it now)",
   "volts": 0,
   "hdrs": ["evxl's scenario table header cells"],
-  "rows": [["one array per scenario row, matching hdrs"]]
+  "rows": [["one array per scenario row, matching hdrs"]],
+
+  "rankCalc": "evxl's rank-calculation mode, e.g. \"basic\" (optional)",
+  "evxlId": 829,
+  "subcats": [["Category", "Subcategory", 3]],
+  "evxlTiers": ["tier names in order"],
+  "evxlRankOffset": 0,
+  "rankReq": 6
 }
 ```
 
 `hdrs`/`rows` mirror evxl's own table exactly — see the scraping guide for how
-they're read off the page. This is the same shape `sync.ps1` reads and writes.
+they're read off the page. This is the same shape `sync.ps1` and `apply-scores.ps1`
+read and write. The second block is optional rank metadata, stamped by
+`apply-evxl-catalog.ps1` from evxl's catalog: `rankCalc` picks the rank rule,
+`evxlId` is KovaaK's benchmark id, `subcats` is the category/subcategory layout in
+table order (used by the `basic` rule), `evxlTiers` the tier names,
+`evxlRankOffset` the ladder offset the energy rules need, and `rankReq` a legacy
+per-entry "N scenarios at a tier" override. Without them the badge falls back to
+the "Complete" reading.
+
+Other things worth knowing about the page itself: filters, sort, tags and the
+search box are all kept in the URL, so a filtered view can be bookmarked or
+shared; Home has a sort menu; the theme button (top right) cycles
+system → light → dark.
 
 ## Privacy
 

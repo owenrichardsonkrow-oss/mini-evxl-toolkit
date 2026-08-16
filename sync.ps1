@@ -5,9 +5,10 @@
 # dataset where the new local score beats what's stored (compared at
 # 2-decimal precision to ignore float noise), and advances the sync marker.
 #
-# Does NOT touch per-playlist Rank/Volts badges — those are evxl.app's own
-# server-computed composite across the whole playlist and can only be
-# refreshed by re-visiting evxl.app itself. See docs/SCRAPING_GUIDE.md.
+# Scores only. Playlist structure (scenarios, tiers) is a separate concern — see
+# docs/SCRAPING_GUIDE.md — and the rank badge is computed in the page from your
+# scores, so nothing else needs patching here. For scores you synced in the
+# browser (Sync Scores Online), use apply-scores.ps1 with a Settings-page export.
 #
 # First run: copy sync-state.example.json to sync-state.json next to this
 # script, fill in your statsDir and trackerHtml path, and run once with a

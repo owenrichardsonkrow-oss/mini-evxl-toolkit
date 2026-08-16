@@ -130,9 +130,10 @@ load-bearing anymore. The scrape's only remaining purpose is **structure**
 (scenario names, tier names, thresholds — and, once wired up, `rankReq`).
 
 **Known bad data shipped in `template.html`**: `Black Dawn [Celestial Forge]` holds
-36 rows of "Loading scenario 1..." — the source scrape caught the page mid-load, and
-`generate-template.ps1` faithfully propagated it. It parses to zero scenarios. Fixed
-by re-scraping that page in the tracker repo and regenerating.
+36 rows of "Loading scenario 1..." and parses to zero scenarios. It is **empty at
+the source** — KovaaK's returns no scenarios for that benchmark id, so evxl shows
+the same placeholders. Not a scrape bug; nothing to re-scrape. Pending decision in
+the tracker repo: drop the entry or keep the placeholder.
 
 ## Rules that are easy to break
 
