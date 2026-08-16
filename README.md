@@ -38,26 +38,41 @@ not just scores.
 
 ## Keeping it fresh
 
-**In the browser — click "Sync Scores"**. This reads your best score per scenario
-directly from KovaaK's own official backend (`kovaaks.com/webapp-backend`) — a real,
-public, no-login-required API confirmed by testing a plain cross-origin `fetch()`
-against it. The first click asks for your KovaaK's username (Settings → Profile
-in-game — this is your in-game display name, often *not* your Steam name);
-right-click the button any time to change it. Because this reads KovaaK's own
-server-side record rather than local files, it survives reinstalling the game
-entirely, works in any modern browser (no Chromium requirement), and even works
-through an embedded viewer like a Claude Artifact — none of which was true of an
-earlier local-folder-based version of this feature. Results are kept in that
-browser's local storage, same as *Load Your Data*.
+There are three ways to pull scores in, in the order you should actually reach for
+them:
 
-Note this only patches individual scenario scores — see "What it doesn't do" below
-for per-playlist Rank/Volts.
+**"Sync Scores Locally"** — click it, pick your KovaaK's stats folder
+(`...\FPSAimTrainer\FPSAimTrainer\stats\`) in the native picker, done. Uses a plain
+`<input type="file" webkitdirectory>` rather than the more modern File System
+Access API on purpose — that API hard-blocks picking any folder under `Program
+Files`/`Program Files (x86)`, which is exactly where Steam installs by default, with
+no workaround (confirmed directly, even a symlink to the real folder gets resolved
+and blocked the same way). This older mechanism has no such restriction and works
+in more browsers, at the cost of no persisted handle — you re-pick the folder every
+time rather than it being remembered. This is the **reliable** option: it reads
+files directly off your own disk, nothing else in the loop.
 
-**`sync.ps1`** — an alternative that reads your local KovaaK's stats folder instead
-(`...\FPSAimTrainer\FPSAimTrainer\stats\`, one CSV per attempt) and writes the
-patched score directly into your tracker HTML on disk. Useful if you want a
-permanent copy that updates without relying on browser local storage, or want it in
-an automated/scheduled workflow:
+**"Sync Scores Online"** — reads your best score per scenario from KovaaK's own
+official backend (`kovaaks.com/webapp-backend`), a real public API confirmed
+reachable with a plain cross-origin `fetch()`. First click asks for your KovaaK's
+username (Settings → Profile in-game — your in-game display name, often *not* your
+Steam name); right-click to change it. **Currently unreliable** — verified directly
+against a real account (cross-checked against local files and against the account's
+own official kovaaks.com profile page, not just this tool) that the specific
+endpoint this depends on can sit stale for hours despite the player actively
+playing, while KovaaK's *does* correctly record those same plays in real time
+elsewhere on their own site. This is a bug on KovaaK's end, not something fixable
+here — treat this button as a bonus that works when it works, not something to
+depend on. It also can't reach kovaaks.com at all from inside a sandboxed embedded
+viewer like a Claude Artifact (those block all external network requests) — Sync
+Scores Locally doesn't have that problem, since it never makes a network request.
+
+Neither patches per-playlist Rank/Volts — see "What none of these does" below.
+
+**`sync.ps1`** — a scriptable equivalent to Sync Scores Locally, reading the same
+local stats folder and writing the patched score directly into your tracker HTML on
+disk instead of browser storage. Useful for a permanent on-disk copy or an
+automated/scheduled workflow:
 1. Make your own copy of `template.html` (e.g. `my-benchmarks.html`) so `sync.ps1`
    isn't repeatedly rewriting the shared template file.
 2. Copy `sync-state.example.json` to `sync-state.json` next to `sync.ps1`.
@@ -70,7 +85,7 @@ your local stats folder has limited retention. For full history in one shot, use
 Sync Scores in the browser first (reads all-time data from KovaaK's servers), then
 `sync.ps1` going forward for routine updates without opening a browser.
 
-**What neither of these does**: update the per-playlist Rank/Volts badges. Those are
+**What none of these does**: update the per-playlist Rank/Volts badges. Those are
 evxl's own server-computed composite across a whole playlist, sourced from evxl.app
 specifically (not the kovaaks.com API above — its benchmark catalog and rank tiers
 don't map 1:1 onto evxl's), and only change by re-running the scrape in

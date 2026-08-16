@@ -266,6 +266,16 @@
     color:var(--text); font-family:ui-monospace,monospace; font-size:12px; padding:12px;
   }
   .import-textarea:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .settings-field { margin-bottom:18px; max-width:560px; }
+  .settings-field label { display:block; font-size:12.5px; color:var(--text-dim); margin-bottom:6px; }
+  .settings-field .hint { display:block; font-size:11.5px; color:var(--text-faint); margin-top:5px; }
+  .settings-field input[type="text"] {
+    width:100%; box-sizing:border-box; background:var(--surface); border:1px solid var(--border);
+    border-radius:8px; color:var(--text); font-family:ui-monospace,monospace; font-size:12.5px; padding:10px 12px;
+  }
+  .settings-field input[type="text"]:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .settings-saved { font-size:11.5px; color:var(--accent-text); margin-left:10px; opacity:0; transition:opacity .2s ease; }
+  .settings-saved.show { opacity:1; }
   .import-actions { display:flex; gap:10px; margin-top:14px; flex-wrap:wrap; }
   .import-btn {
     font-family:ui-monospace,monospace; font-size:12.5px; padding:9px 16px; border-radius:7px; cursor:pointer;
@@ -292,6 +302,7 @@
     <button id="nav-shared">Shared Scenarios</button>
     <button id="nav-unique">Unique Scenarios</button>
     <button id="nav-import">Load Your Data</button>
+    <button id="nav-settings">Settings</button>
   </nav>
   <div class="spacer"></div>
   <button id="nav-sync" class="sync-btn" title="Pull your latest scores from KovaaK's own servers (right-click to change username) — currently unreliable, see tracker notes">&#8635; Sync Scores Online</button>
@@ -335,6 +346,7 @@
   const navShared = document.getElementById('nav-shared');
   const navUnique = document.getElementById('nav-unique');
   const navImport = document.getElementById('nav-import');
+  const navSettings = document.getElementById('nav-settings');
   const navSync = document.getElementById('nav-sync');
   const navSyncLocal = document.getElementById('nav-sync-local');
   const localStatsInput = document.getElementById('local-stats-input');
@@ -555,6 +567,9 @@
   // on this page.
   const KOVAAKS_USERNAME_KEY = 'mini-evxl-kovaaks-username';
   const DEFAULT_KOVAAKS_USERNAME = '';
+  const STEAM_LINK_KEY = 'mini-evxl-steam-link';
+  const EVXL_LINK_KEY = 'mini-evxl-evxl-link';
+  const STATS_FOLDER_NOTE_KEY = 'mini-evxl-stats-folder-note';
 
   function formatScoreJs(n){
     if(n===Math.floor(n)) return n.toLocaleString(undefined,{maximumFractionDigits:0});
@@ -941,6 +956,7 @@
     navShared.classList.toggle('active', route==='shared');
     navUnique.classList.toggle('active', route==='unique');
     navImport.classList.toggle('active', route==='import');
+    navSettings.classList.toggle('active', route==='settings');
   }
 
   function renderHome(filter){
@@ -1684,6 +1700,58 @@
     }
   }
 
+  function renderSettings(){
+    const wrap = document.createElement('div');
+    wrap.className = 'wrap narrow';
+    wrap.innerHTML = `
+      <div class="eyebrow"><span class="dot"></span> settings</div>
+      <h1>Your info</h1>
+      <p class="sub">Saved only in this browser's local storage — nothing here is ever sent anywhere except the KovaaK's username, which is used solely to look up your own scores when you click Sync Scores Online.</p>
+
+      <div class="settings-field">
+        <label for="settings-kovaaks">KovaaK's username <span class="settings-saved" id="saved-kovaaks">Saved</span></label>
+        <input type="text" id="settings-kovaaks" placeholder="e.g. Owen" />
+        <span class="hint">Settings → Profile in-game. Often different from your Steam name. Used by Sync Scores Online.</span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-steam">Steam Community link <span class="settings-saved" id="saved-steam">Saved</span></label>
+        <input type="text" id="settings-steam" placeholder="https://steamcommunity.com/id/yourname/" />
+        <span class="hint">Just kept for reference — nothing on this page reads it back.</span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-evxl">evxl.app profile link <span class="settings-saved" id="saved-evxl">Saved</span></label>
+        <input type="text" id="settings-evxl" placeholder="https://evxl.app/u/&lt;your steamid64&gt;" />
+        <span class="hint">Reference only, same as above.</span>
+      </div>
+
+      <div class="settings-field">
+        <label for="settings-stats-folder">Local KovaaK's stats folder <span class="settings-saved" id="saved-stats-folder">Saved</span></label>
+        <input type="text" id="settings-stats-folder" placeholder="C:\\Program Files (x86)\\Steam\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\stats" />
+        <span class="hint">Browsers won't let a page open this automatically — Sync Scores Locally always needs you to pick it in the native dialog. This is just a saved note so the path is easy to copy, whether that's for finding the folder faster or pasting into sync.ps1's sync-state.json.</span>
+      </div>
+    `;
+    app.innerHTML=''; app.appendChild(wrap);
+
+    function bindField(inputId, savedId, key){
+      const input = wrap.querySelector('#'+inputId);
+      const saved = wrap.querySelector('#'+savedId);
+      input.value = localStorage.getItem(key) || '';
+      let t = null;
+      input.addEventListener('input', ()=>{
+        try{ localStorage.setItem(key, input.value); }catch(e){}
+        saved.classList.add('show');
+        if(t) clearTimeout(t);
+        t = setTimeout(()=>saved.classList.remove('show'), 1500);
+      });
+    }
+    bindField('settings-kovaaks', 'saved-kovaaks', KOVAAKS_USERNAME_KEY);
+    bindField('settings-steam', 'saved-steam', STEAM_LINK_KEY);
+    bindField('settings-evxl', 'saved-evxl', EVXL_LINK_KEY);
+    bindField('settings-stats-folder', 'saved-stats-folder', STATS_FOLDER_NOTE_KEY);
+  }
+
   function route(){
     const hash = location.hash.replace(/^#\/?/, '');
     setActiveNav(hash.startsWith('bench/') ? hash : hash);
@@ -1695,6 +1763,8 @@
       renderUnique();
     } else if(hash==='import'){
       renderImport();
+    } else if(hash==='settings'){
+      renderSettings();
     } else {
       renderHome();
     }
@@ -1705,6 +1775,7 @@
   navShared.addEventListener('click', ()=>{ location.hash='#/shared'; });
   navUnique.addEventListener('click', ()=>{ location.hash='#/unique'; });
   navImport.addEventListener('click', ()=>{ location.hash='#/import'; });
+  navSettings.addEventListener('click', ()=>{ location.hash='#/settings'; });
   document.getElementById('brand-home').addEventListener('click', ()=>{ location.hash='#/'; });
   window.addEventListener('hashchange', route);
 
