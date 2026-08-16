@@ -103,8 +103,10 @@ scenario has nothing to draw a bar against and doesn't render.
   1,137 actually played — so never build on it alone. `last-scores/by-name` is
   current and auth-free; `last-scores/by-id` 401s and `user/scenario/top` ignores
   `page`/`max`, returning the same 10 rows forever. kovaaks.com rate-limits bursts
-  by refusing TCP connections, hence concurrency 4 and a self-abort after 8
-  consecutive failures.
+  (timeouts = throttle; connection *refused* = genuine outage), hence
+  `SYNC_CONCURRENCY = 2`, `SYNC_GAP_MS = 300`, 2500ms backoff, self-abort after 5
+  consecutive failures. 4-wide with no gap got a whole IP refused; total request
+  volume matters more than concurrency.
 - Neither updates **Rank/Volts** — evxl-sourced only. Deliberately *not* taken from
   kovaaks.com's `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
   non-equivalent rank system and would mix two taxonomies under one UI.
@@ -117,8 +119,13 @@ scenario has nothing to draw a bar against and doesn't render.
   playlists: only 65% (130/201 entries) are backed by a publicly fetchable sheet, 30%
   have none, 5% link an unreadable one. Full map in `docs/sheet-scope.json`. Sheets
   can never cover the dataset, so a scrape path stays necessary.
-- **evxl.app has no fetchable data endpoint** — confirmed from several angles. It
-  returns an empty SvelteKit shell; reading it means driving the real JS app.
+- **evxl.app serves an empty SvelteKit shell** — but the earlier "no fetchable data
+  endpoint" conclusion was **overturned**: its tables come from
+  `kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark?benchmarkId=&steamId=`,
+  and evxl runs its own `api.evxl.app` (`/rank-counts`, `/scenario-rank-counts`).
+  See the tracker repo's CLAUDE.md ("Scraping may be unnecessary" and "API vs
+  scraper") for the endpoints, the open `benchmarkId` mapping blocker, and the four
+  cases where a scraper still beats an API.
 
 ## Scraping technique that works
 
