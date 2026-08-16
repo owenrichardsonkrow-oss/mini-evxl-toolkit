@@ -96,6 +96,32 @@ don't map 1:1 onto evxl's), and only change by re-running the scrape in
 `docs/SCRAPING_GUIDE.md`. Everything else — individual scenario scores and their
 derived tier/progress bars — stays fresh through either sync method alone.
 
+## How the pieces fit together
+
+Four separable parts, which is worth knowing before changing anything:
+
+1. **The site itself** — the home grid plus the Shared and Unique Scenarios pages.
+   Entirely *derived*: tag associations, shared-scenario grouping, and the To Max/To
+   2nd/To Next bars all recompute from the dataset on every render. Nothing is
+   cached in a way that can drift out of sync with the data behind it.
+2. **The benchmark structure** — the playlist list, scenario names, category labels,
+   and tier thresholds. This is **the same for every player**; it's what
+   `template.html` ships pre-loaded, and the only thing the scrape in
+   [`docs/SCRAPING_GUIDE.md`](docs/SCRAPING_GUIDE.md) actually produces. (Some
+   playlists' thresholds also live in a creator-maintained public Google Sheet —
+   only about 65% of them, which is why that wasn't adopted as an update path. The
+   scraping guide explains the survey.)
+3. **Your own info** — KovaaK's username, Steam and evxl profile links, stats folder
+   note. All under **Settings**, all in your browser's local storage. Only the
+   username does anything functional.
+4. **Getting scores in** — online (kovaaks.com's API, by username) or locally (your
+   own stats folder). See "Keeping it fresh" above for which to trust.
+
+Scores (part 4) change constantly, structure (part 2) rarely, and they update through
+completely different mechanisms. Most confusion about this tool comes from expecting
+one to refresh the other — notably, neither sync method touches Rank/Volts, which is
+part of the structure side and only moves when the scrape is re-run.
+
 ## Hosting it for free
 
 **GitHub Pages** (recommended if you forked/cloned this): in your repo's Settings →

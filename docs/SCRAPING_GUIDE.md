@@ -15,6 +15,24 @@ evxl.app and reading what's on screen. This is **only reading public benchmark
 data that evxl already displays to anyone with a profile URL** — no login,
 no private data, no bypassing anything.
 
+### Why there isn't an easier way
+
+Two shortcuts were evaluated and both fell short, so scraping stays necessary:
+
+- **A hidden data endpoint behind evxl.** There isn't one. Checked from several
+  angles — the raw pre-JavaScript HTML, the script tags, and live network traffic
+  during hydration — and every route returns an empty SvelteKit app shell with no
+  scenario, rank, or volts data anywhere in it.
+- **The creator-maintained Google Sheets some playlists link to.** These are real
+  and genuinely fetchable as CSV (`docs.google.com/spreadsheets/d/<ID>/export?format=csv&gid=<GID>`),
+  and they carry the true tier-threshold tables. But it's a per-creator choice, not
+  a platform feature: a survey of all 118 unique playlists found only **65%**
+  (130 of 201 playlist+difficulty entries) backed by a readable sheet — 30% have no
+  sheet at all, and a further 5% link one that's gone, non-exportable, or not
+  actually a spreadsheet. The full playlist→sheet map is in
+  [`sheet-scope.json`](sheet-scope.json). Since sheets can't cover the whole
+  dataset, they were dropped rather than maintained as a partial second path.
+
 There is no plain-JavaScript/Node scraper script here (see the README for why), so
 this guide documents the exact technique in enough detail that either:
 
