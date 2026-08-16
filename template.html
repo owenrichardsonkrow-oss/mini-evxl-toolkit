@@ -502,6 +502,68 @@
     return idx;
   }
 
+  // Same, but ignores zero/missing thresholds. A ragged scraped row can leave
+  // a 0 in a tier column, which achievedIndex would treat as "cleared" for any
+  // score. The rank rule below has to be exact, so it uses this instead.
+  function achievedIndexStrict(score, tiers){
+    let idx=-1;
+    for(let i=0;i<tiers.length;i++){ const t=tiers[i][1]; if(t>0 && score>=t) idx=i; }
+    return idx;
+  }
+
+  // How far one scenario is through its own tier ladder, 0..1. Each tier is an
+  // equal step (same reasoning as the merged bars: rank order, not raw point
+  // magnitude), with linear interpolation inside the current step.
+  function scenarioCompletion(score, tiers){
+    const th = tiers.map(t=>t[1]).filter(v=>v>0);
+    const n = th.length;
+    if(n===0) return 0;
+    let idx=-1;
+    for(let i=0;i<n;i++){ if(score>=th[i]) idx=i; }
+    if(idx===n-1) return 1;
+    if(idx<0) return th[0]>0 ? Math.max(0, Math.min(1, score/th[0]))/n : 0;
+    const lower=th[idx], upper=th[idx+1];
+    const frac = upper>lower ? (score-lower)/(upper-lower) : 0;
+    return (idx+1+frac)/n;
+  }
+
+  // Playlist-level standing, computed entirely from tier thresholds and your
+  // own scores — no evxl, no server.
+  //
+  // `floor` is the highest tier EVERY scenario has reached. That is exactly
+  // what evxl means by an "X Complete" rank: verified against all 19 of the
+  // Complete-ranked playlists in the source dataset, 19/19 with no misses.
+  // evxl's bare "X" ranks (no "Complete") come from a separate per-category
+  // Energy system that isn't in the scraped tables, and no simple aggregate
+  // reproduces them — median was the best at 17/43 — so those aren't inferred
+  // here rather than being shown as a guess.
+  //
+  // `pct` is the continuous companion: mean scenario completion across the
+  // playlist. The floor tier alone is a poor progress signal because a single
+  // weak scenario pins the whole playlist (166 of 201 playlists floor below
+  // their lowest tier), whereas the mean moves whenever any scenario improves.
+  function benchmarkStanding(items){
+    if(!items || items.length===0) return { pct:0, floorIdx:-1, floorName:null, blockers:0, total:0 };
+    let sum=0, floorIdx=Infinity;
+    items.forEach(it=>{
+      sum += scenarioCompletion(it.score, it.tiers);
+      const ai = achievedIndexStrict(it.score, it.tiers);
+      if(ai < floorIdx) floorIdx = ai;
+    });
+    if(!isFinite(floorIdx)) floorIdx = -1;
+    const ref = items.find(it=>it.tiers && it.tiers.length>0);
+    const tierCount = ref ? ref.tiers.length : 0;
+    const floorName = (floorIdx>=0 && ref && ref.tiers[floorIdx]) ? ref.tiers[floorIdx][0] : null;
+    const blockers = items.filter(it=>achievedIndexStrict(it.score, it.tiers) <= floorIdx).length;
+    // When the floor IS the top tier, every scenario is maxed — the same count
+    // means the opposite thing, so callers label it differently.
+    const maxed = floorIdx>=0 && tierCount>0 && floorIdx===tierCount-1;
+    return { pct: sum/items.length, floorIdx, floorName, blockers, total: items.length, tierCount, maxed };
+  }
+
+  function standingLabel(st){ return st.floorName ? st.floorName+' Complete' : 'Unranked'; }
+  function pctLabel(p){ return (p*100).toFixed(p>=0.995?0:1)+'%'; }
+
   // Parsed scenario items per benchmark, computed once and cached.
   let _parsedCache = null;
   function getParsedBenchmarks(){
@@ -1217,8 +1279,13 @@
     app.appendChild(wrap);
 
     const grid = wrap.querySelector('#bench-grid');
-    const withMeta = parsed.map(({benchmark,items,index})=>({ b:benchmark, idx:index, played: isPlayed(benchmark, items) }));
-    const sorted = [...withMeta].sort((a,b)=>b.b.volts-a.b.volts);
+    const withMeta = parsed.map(({benchmark,items,index})=>({
+      b:benchmark, idx:index, played: isPlayed(benchmark, items), st: benchmarkStanding(items)
+    }));
+    // Sorted by how complete each playlist is, replacing the old sort by
+    // evxl's volts — which was a scraped snapshot that never moved when you
+    // improved, while this recomputes from live scores.
+    const sorted = [...withMeta].sort((a,b)=> b.st.pct - a.st.pct || a.b.name.localeCompare(b.b.name));
     let playedMode = 'all';
     function draw(list){
       grid.innerHTML='';
@@ -1226,7 +1293,7 @@
         grid.innerHTML = '<div class="empty-note">No benchmarks match that search.</div>';
         return;
       }
-      list.forEach(({b,idx,played})=>{
+      list.forEach(({b,idx,played,st})=>{
         const card=document.createElement('div');
         card.className='card'+(played?'':' card-unplayed'); card.tabIndex=0; card.setAttribute('role','button');
         card.innerHTML = `
@@ -1235,8 +1302,8 @@
             <div class="cpack">${esc(b.pack)} &middot; ${esc(b.difficulty)}</div>
           </div>
           <div class="crow">
-            <span class="chip ${rankChipClass(b.rank)}">${esc(b.rank)}</span>
-            <span class="cvolts"><b>${fmt(b.volts)}</b> volts</span>
+            <span class="chip ${rankChipClass(standingLabel(st))}">${esc(standingLabel(st))}</span>
+            <span class="cvolts"><b>${pctLabel(st.pct)}</b> complete</span>
           </div>
         `;
         card.addEventListener('click', ()=>{ location.hash = '#/bench/'+idx; });
@@ -1284,6 +1351,7 @@
       g.items.push(it);
     });
 
+    const _st = benchmarkStanding(items);
     wrap.innerHTML = `
       <button class="back-link" id="back-btn">&larr; all benchmarks</button>
       <div class="detail-head">
@@ -1292,8 +1360,9 @@
           <h2 class="pagehead">${esc(b.name)}</h2>
         </div>
         <div class="detail-stats">
-          <div class="dstat"><div class="val"><span class="chip ${rankChipClass(b.rank)}">${esc(b.rank)}</span></div><div class="label">Rank</div></div>
-          <div class="dstat"><div class="val">${fmt(b.volts)}</div><div class="label">Volts</div></div>
+          <div class="dstat"><div class="val"><span class="chip ${rankChipClass(standingLabel(_st))}">${esc(standingLabel(_st))}</span></div><div class="label">Rank</div></div>
+          <div class="dstat"><div class="val">${pctLabel(_st.pct)}</div><div class="label">Complete</div></div>
+          <div class="dstat"><div class="val">${_st.blockers} <span style="color:var(--text-faint);font-size:14px;">/ ${_st.total}</span></div><div class="label">${_st.maxed ? 'At top tier' : (_st.floorName ? 'Holding the floor' : 'Below first tier')}</div></div>
           <div class="dstat"><div class="val">${items.length}</div><div class="label">Scenarios</div></div>
         </div>
       </div>
