@@ -1,3 +1,6 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>KovaaK's Benchmark Tracker</title>
 <style>
   :root {
@@ -61,6 +64,8 @@
   .sync-btn:hover { background:color-mix(in srgb, var(--accent) 22%, var(--accent-soft)); }
   .sync-btn:disabled { opacity:.55; cursor:default; }
   .sync-status { font-family:ui-monospace,monospace; font-size:11px; color:var(--text-faint); margin-right:14px; max-width:220px; }
+  .theme-btn { margin-left:12px; width:30px; height:30px; border-radius:7px; border:1px solid var(--border); background:transparent; color:var(--text-faint); cursor:pointer; font-size:15px; line-height:1; }
+  .theme-btn:hover { color:var(--text); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
 
   .wrap { max-width: 1000px; margin:0 auto; padding: 36px 24px 90px; }
   .wrap.narrow { max-width: 900px; }
@@ -181,6 +186,7 @@
   .scen-row:last-child { border-bottom:none; }
   .scen-top { display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
   .scen-title { font-weight:600; font-size:14px; }
+  .blocker-tag { display:inline-block; margin-left:8px; vertical-align:middle; font-family:ui-monospace,monospace; font-size:10px; font-weight:600; letter-spacing:.04em; text-transform:uppercase; padding:1px 7px; border-radius:100px; background:var(--danger-soft); color:var(--danger-text); border:1px solid color-mix(in srgb, var(--danger) 30%, transparent); }
   .scen-right { display:flex; align-items:center; gap:10px; }
   .scen-score { font-family:ui-monospace,monospace; font-variant-numeric:tabular-nums; color:var(--marker); font-size:13px; font-weight:600; }
 
@@ -296,13 +302,13 @@
   .excl-toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:20px 0 10px; }
   .excl-toolbar input[type=text] {
     flex:1; min-width:220px; padding:9px 12px; border-radius:8px;
-    border:1px solid var(--border); background:var(--panel); color:var(--text);
+    border:1px solid var(--border); background:var(--surface); color:var(--text);
     font-family:inherit; font-size:13px;
   }
   .excl-toolbar input[type=text]:focus { outline:none; border-color:var(--accent); }
   .excl-bulk {
     padding:8px 12px; border-radius:8px; border:1px solid var(--border);
-    background:var(--panel); color:var(--text-dim); font-family:inherit;
+    background:var(--surface); color:var(--text-dim); font-family:inherit;
     font-size:12px; cursor:pointer; white-space:nowrap;
   }
   .excl-bulk:hover { color:var(--text); border-color:var(--accent); }
@@ -313,7 +319,7 @@
     display:flex; align-items:center; gap:10px; padding:8px 10px;
     border-radius:8px; border:1px solid transparent; cursor:pointer;
   }
-  .excl-row:hover { background:var(--panel); border-color:var(--border); }
+  .excl-row:hover { background:var(--surface); border-color:var(--border); }
   .excl-row input[type=checkbox] { accent-color:var(--accent); width:15px; height:15px; cursor:pointer; flex:none; }
   .excl-row .excl-name { flex:1; font-size:13px; }
   .excl-row.is-excluded .excl-name { color:var(--text-faint); text-decoration:line-through; }
@@ -343,6 +349,7 @@
   <input type="file" id="local-stats-input" webkitdirectory multiple style="display:none;" />
   <span id="sync-status" class="sync-status"></span>
   <span id="topnav-source"></span>
+  <button id="theme-toggle" class="theme-btn" type="button" title="Theme: follows your system. Click to force light or dark." aria-label="Toggle theme">&#9681;</button>
 </div>
 
 <div id="app"></div>
@@ -416,6 +423,32 @@
     });
     if(changed) persistScores();
     return changed;
+  }
+
+  // Export/import of the store. The file is the store's escape hatch: it is
+  // per-browser and per-origin (localhost:8850, file://, a GitHub Pages URL
+  // and the artifact are four separate stores), so without this a deep sync's
+  // results could never reach the on-disk file, another copy, or a backup.
+  // apply-scores.ps1 reads the same file and bakes it into the HTML rows.
+  const SCORES_EXPORT_FORMAT = 'mini-evxl-scores';
+  function exportScoresPayload(){
+    const scores = {};
+    [...SCORES.keys()].sort((a,b)=>a.localeCompare(b)).forEach(k=>{ scores[k]=SCORES.get(k); });
+    return { format: SCORES_EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(), count: SCORES.size, scores };
+  }
+  // Accepts our export, or a bare {name: score} object. Max-merge, never lowers.
+  function importScoresText(text){
+    let parsed;
+    try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Not valid JSON: '+e.message); }
+    const obj = parsed && typeof parsed==='object' && parsed.scores && typeof parsed.scores==='object' ? parsed.scores : parsed;
+    if(!obj || typeof obj!=='object' || Array.isArray(obj)) throw new Error('Expected a scores export ({"scores": {name: score}}) or a plain {name: score} object.');
+    const map = new Map();
+    let ignored = 0;
+    Object.keys(obj).forEach(k=>{ const v = Number(obj[k]); if(k && Number.isFinite(v) && v>0) map.set(k.trim(), v); else ignored++; });
+    if(map.size===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
+    const raised = recordScores(map);
+    if(raised>0) invalidateCaches();
+    return { raised, unchanged: map.size - raised, ignored };
   }
 
   // ---- Excluded playlists ---------------------------------------------
@@ -496,16 +529,12 @@
     return items;
   }
 
+  // Highest tier index the score has reached. A zero/blank threshold is
+  // unusable — either a scrape gap or a tier evxl lists with no real value —
+  // and is skipped, so it can never read as "cleared". This is the ONE rule
+  // for bars, labels and the rank engine alike (they used to disagree: the
+  // rank engine skipped zeros while the bars treated them as cleared).
   function achievedIndex(score, tiers){
-    let idx=-1;
-    for(let i=0;i<tiers.length;i++){ if(score>=tiers[i][1]) idx=i; }
-    return idx;
-  }
-
-  // Same, but ignores zero/missing thresholds. A ragged scraped row can leave
-  // a 0 in a tier column, which achievedIndex would treat as "cleared" for any
-  // score. The rank rule below has to be exact, so it uses this instead.
-  function achievedIndexStrict(score, tiers){
     let idx=-1;
     for(let i=0;i<tiers.length;i++){ const t=tiers[i][1]; if(t>0 && score>=t) idx=i; }
     return idx;
@@ -565,7 +594,7 @@
     let sum=0;
     const achieved = items.map(it=>{
       sum += scenarioCompletion(it.score, it.tiers);
-      return achievedIndexStrict(it.score, it.tiers);
+      return achievedIndex(it.score, it.tiers);
     });
 
     // Highest tier reached by at least `need` scenarios, and separately by all of
@@ -593,6 +622,18 @@
   }
   function pctLabel(p){ return (p*100).toFixed(p>=0.995?0:1)+'%'; }
 
+  // One benchmark's scenario items with the score store overlaid on the row
+  // scores. EVERY place that shows a score must go through this (or through
+  // getParsedBenchmarks, which uses it) — the detail page once parsed rows
+  // directly and showed pre-sync scores while the cards showed synced ones.
+  function parsedItemsFor(b){
+    return parseTable(b.hdrs, b.rows).map(it=>(
+      SCORES.has(it.name) && SCORES.get(it.name) > it.score
+        ? Object.assign({}, it, { score: SCORES.get(it.name) })
+        : it
+    ));
+  }
+
   // Parsed scenario items per benchmark, computed once and cached.
   let _parsedCache = null;
   function getParsedBenchmarks(){
@@ -601,21 +642,13 @@
     // the exclusion filter — #/bench/N links must keep pointing at the same
     // playlist whether or not anything is excluded.
     _parsedCache = BENCHMARKS
-      .map((b,i)=>({
-        index: i,
-        benchmark: b,
-        items: parseTable(b.hdrs, b.rows).map(it=>(
-          SCORES.has(it.name) && SCORES.get(it.name) > it.score
-            ? Object.assign({}, it, { score: SCORES.get(it.name) })
-            : it
-        ))
-      }))
+      .map((b,i)=>({ index: i, benchmark: b, items: parsedItemsFor(b) }))
       .filter(e=>!EXCLUDED.has(benchKey(e.benchmark)));
     return _parsedCache;
   }
 
   function isPlayed(b, items){
-    items = items || parseTable(b.hdrs, b.rows);
+    items = items || parsedItemsFor(b);
     return items.some(it => it.score > 0);
   }
 
@@ -680,9 +713,13 @@
     byName.forEach((entries, name)=>{
       if(entries.length !== 1) return;
       const e = entries[0];
+      // Same shape as a shared entry (a one-element `playlists` array) so the
+      // one scenario-list renderer draws both pages through identical code —
+      // the card-parity rule holds by construction rather than by discipline.
       unique.push({
         name, score: e.score, tiers: e.tiers, tags: e.tags||[],
         benchIndex: e.benchIndex, playlist: e.playlist, pack: e.pack, difficulty: e.difficulty,
+        playlists: [e],
         diff: classifyDifficulty(name, [e.difficulty])
       });
     });
@@ -734,12 +771,10 @@
     // dropping playlists here doesn't lose their scores.
     seedScoresFromData(arr);
     try{ localStorage.setItem(IMPORT_KEY, rawJsonString); }catch(e){}
-    // The cached "lifetime runs" number is only valid for the scenario set
-    // it was computed against — clear it here so a plain import (not a
-    // sync) never shows a stale figure for a different dataset. A sync that
-    // reaches this via patchScoresFromMap immediately re-sets it right
-    // after, with the freshly computed value.
-    try{ localStorage.removeItem(LIFETIME_RUNS_KEY); }catch(e){}
+    // The "tracked" half of the played stat is only valid for the scenario
+    // set it was computed against — clear it so a plain import never shows a
+    // stale figure for a different dataset; the next sync re-sets it.
+    try{ localStorage.removeItem(PLAYED_KEY); }catch(e){}
     updateTopnavSource();
   }
   function resetToDefault(){
@@ -755,7 +790,8 @@
     invalidateCaches();
     seedScoresFromData(BENCHMARKS);
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
-    try{ localStorage.removeItem(LIFETIME_RUNS_KEY); }catch(e){}
+    try{ localStorage.removeItem(PLAYED_KEY); }catch(e){}
+    try{ localStorage.removeItem(LOCAL_SYNC_MARK_KEY); }catch(e){}
     updateTopnavSource();
   }
   function updateTopnavSource(){
@@ -839,18 +875,6 @@
     });
   }
 
-  // Unique scenario names appearing anywhere in the loaded dataset (played
-  // or not) — used to scope KovaaK's-API-sourced stats down to "scenarios
-  // that are actually part of this tracker's playlists," per the standing
-  // rule that home-page stats reflect evxl's scenario set, not a player's
-  // whole KovaaK's history (which includes scenarios never in any playlist
-  // tracked here).
-  function collectOurScenarioNames(){
-    const names = new Set();
-    getParsedBenchmarks().forEach(({items})=>{ items.forEach(it=>names.add(it.name)); });
-    return names;
-  }
-
   // Lift whatever scores a dataset's own rows carry into the score store.
   // Run on first load and on every import, so switching datasets can only
   // ever add to the store — an upload that drops playlists keeps their
@@ -880,7 +904,16 @@
   // forEachScenarioRow's PCT_RE, which is only initialized by this point.
   seedScoresFromData(BENCHMARKS);
 
-  const LIFETIME_RUNS_KEY = 'mini-evxl-lifetime-runs';
+  // {total, tracked, at} from the last online sync's all-played response.
+  const PLAYED_KEY = 'mini-evxl-kovaaks-played';
+  // The stat this replaced. Clear the old key once so it doesn't linger.
+  try{ localStorage.removeItem('mini-evxl-lifetime-runs'); }catch(e){}
+  function readPlayedStat(){
+    try{
+      const o = JSON.parse(localStorage.getItem(PLAYED_KEY)||'null');
+      return o && Number.isFinite(Number(o.total)) ? o : null;
+    }catch(e){ return null; }
+  }
 
   async function fetchKovaaksScores(username){
     const base = 'https://kovaaks.com/webapp-backend/user/scenario/total-play';
@@ -898,19 +931,19 @@
     const restRequests = [];
     for(let p=1; p<pageCount; p++){
       restRequests.push(
-        fetch(base+'?username='+encodeURIComponent(username)+'&page='+p+'&max=100&sort_param[]=count').then(r=>r.json())
+        fetch(base+'?username='+encodeURIComponent(username)+'&page='+p+'&max=100&sort_param[]=count')
+          .then(r=>{ if(!r.ok) throw new Error('KovaaK\'s API returned an error (status '+r.status+') on page '+p+'.'); return r.json(); })
       );
     }
     (await Promise.all(restRequests)).forEach(body=>{
       if(body && Array.isArray(body.data)) allData.push(...body.data);
     });
 
-    // scoreMap drives the actual score patch; playsMap only feeds the
-    // "Lifetime runs completed" stat (KovaaK's tracks total attempts per
-    // scenario — evxl's own tables never carry a play count at all, so this
-    // is the only source for that number).
+    // scoreMap drives the actual score patch. (This endpoint also carries a
+    // per-scenario play count, which used to feed a "Lifetime runs" stat —
+    // dropped, because total-play is missing most of a player's history and
+    // the sum was a systematic undercount presented as a fact.)
     const scoreMap = new Map();
-    const playsMap = new Map();
     // Newest run KovaaK's has actually recorded for this player, taken from
     // each entry's attributes.epoch. This endpoint has been observed sitting
     // days behind real play (their bug, not ours) while reporting a healthy
@@ -922,12 +955,10 @@
       if(!name) return;
       const score = Number(d.score);
       if(Number.isFinite(score) && (!scoreMap.has(name) || scoreMap.get(name) < score)) scoreMap.set(name, score);
-      const plays = Number(d.counts && d.counts.plays) || 0;
-      playsMap.set(name, (playsMap.get(name)||0) + plays);
       const ep = Number(d.attributes && d.attributes.epoch);
       if(Number.isFinite(ep) && ep > newestEpoch) newestEpoch = ep;
     });
-    return { scoreMap, playsMap, newestEpoch };
+    return { scoreMap, newestEpoch };
   }
 
   // Turns a sync result into the status-bar line, plus a staleness warning
@@ -944,8 +975,9 @@
   const STALE_AFTER_MS = 30*24*60*60*1000;
   function syncResultMessage(res){
     const { changes, scenariosChecked, newestEpoch, deep } = res;
-    let msg = changes.length>0
-      ? changes.length+' score'+(changes.length===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)'
+    const n = countScenarios(changes);
+    let msg = n>0
+      ? n+' score'+(n===1?'':'s')+' updated ('+scenariosChecked+' scenarios checked)'
       : 'Up to date ('+scenariosChecked+' scenarios checked)';
     let ms = changes.length>0 ? 7000 : 4000;
     if(deep && deep.stopped){
@@ -1102,9 +1134,8 @@
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
     syncAbort = false;
 
-    // Phase 1 — total-play. Cheap (3 paginated requests), incomplete, and the
-    // only source for play counts, which the Lifetime runs stat needs.
-    const { scoreMap, playsMap, newestEpoch } = await fetchKovaaksScores(username);
+    // Phase 1 — total-play. Cheap (3 paginated requests) but incomplete.
+    const { scoreMap, newestEpoch } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
     let changes = patchScoresFromMap(scoreMap);
 
@@ -1118,6 +1149,12 @@
           if(!current.has(it.name) || current.get(it.name) < it.score) current.set(it.name, it.score);
         }));
         const candidates = [...current.keys()].filter(n=>played.has(n));
+        // all-played is complete where total-play is not, so it is the one
+        // honest source for "how many scenarios have I played" — the whole
+        // account, plus how many of those this tracker's playlists cover.
+        try{
+          localStorage.setItem(PLAYED_KEY, JSON.stringify({ total: played.size, tracked: candidates.length, at: Date.now() }));
+        }catch(e){}
         // Scenarios with no score at all first: those are guaranteed gaps,
         // whereas the rest are only possibly stale.
         candidates.sort((a,b)=> (current.get(a)>0?1:0) - (current.get(b)>0?1:0));
@@ -1127,14 +1164,6 @@
         }
       }
     }
-
-    // "Lifetime runs completed" scoped to evxl's scenario set: sum play
-    // counts only for names that actually appear somewhere in this
-    // tracker's playlists, not the player's whole KovaaK's history.
-    const ourNames = collectOurScenarioNames();
-    let lifetimeRuns = 0;
-    playsMap.forEach((plays, name)=>{ if(ourNames.has(name)) lifetimeRuns += plays; });
-    try{ localStorage.setItem(LIFETIME_RUNS_KEY, String(lifetimeRuns)); }catch(e){}
 
     return {
       changes,
@@ -1153,15 +1182,26 @@
   // no such blocklist and works across more browsers, at the cost of no
   // persisted handle — the folder has to be re-picked on every sync rather
   // than remembered.
+  // Files older than the newest one read on a previous local sync are skipped
+  // without being opened — the folder is re-picked (and fully enumerated)
+  // every time, but only what's new needs reading. Safe because the store is
+  // append-only: re-reading old files could never change anything anyway.
+  // The marker is cleared by reset-to-demo along with the store itself.
+  const LOCAL_SYNC_MARK_KEY = 'mini-evxl-local-sync-newest-ms';
   async function runLocalFolderSync(fileList){
     if(BENCHMARKS.length===0){
       throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
     }
-    const files = Array.from(fileList).filter(f=>f.name.toLowerCase().endsWith('.csv'));
-    if(files.length===0) throw new Error("No .csv files found in that folder — make sure you picked your KovaaK's stats folder.");
+    const allCsv = Array.from(fileList).filter(f=>f.name.toLowerCase().endsWith('.csv'));
+    if(allCsv.length===0) throw new Error("No .csv files found in that folder — make sure you picked your KovaaK's stats folder.");
+    const mark = Number(localStorage.getItem(LOCAL_SYNC_MARK_KEY)) || 0;
+    const files = allCsv.filter(f=>f.lastModified > mark);
+    const skipped = allCsv.length - files.length;
+    let newest = mark;
 
     const localMap = new Map();
     for(const file of files){
+      if(file.lastModified > newest) newest = file.lastModified;
       const text = await file.text();
       const lines = text.split(/\r?\n/);
       const scoreLine = lines.find(l=>l.startsWith('Score:,'));
@@ -1174,8 +1214,13 @@
     }
 
     const changes = patchScoresFromMap(localMap);
-    return { changes, filesScanned: files.length };
+    if(newest > mark){ try{ localStorage.setItem(LOCAL_SYNC_MARK_KEY, String(newest)); }catch(e){} }
+    return { changes, filesScanned: files.length, filesSkipped: skipped };
   }
+
+  // Sync results report per (playlist, scenario) row, but "N scores updated"
+  // should mean N scenarios — a scenario shared by 5 playlists is one score.
+  function countScenarios(changes){ return new Set(changes.map(c=>c.scenario)).size; }
 
   function lerpColor(a,b,t){
     const pa=a.match(/\w\w/g).map(h=>parseInt(h,16));
@@ -1386,8 +1431,10 @@
     navSettings.classList.toggle('active', route==='settings');
   }
 
-  function renderHome(filter){
-    filter = (filter||'').toLowerCase();
+  function renderHome(params){
+    params = params || new URLSearchParams();
+    const filter = params.get('q') || '';
+    let playedMode = ['all','played','unplayed'].includes(params.get('mode')) ? params.get('mode') : 'all';
     if(BENCHMARKS.length===0){
       const wrap = document.createElement('div');
       wrap.className='wrap';
@@ -1409,8 +1456,13 @@
     });
     const sharedCount = computeSharedScenarios().length;
     const clearedCount = computeUniqueScenariosCleared();
-    const lifetimeRunsRaw = localStorage.getItem(LIFETIME_RUNS_KEY);
-    const lifetimeRunsDisplay = lifetimeRunsRaw!==null ? fmt(Number(lifetimeRunsRaw)) : '—';
+    const playedStat = readPlayedStat();
+    const playedDisplay = playedStat ? fmt(playedStat.total) : '—';
+    const playedTitle = playedStat
+      ? 'Distinct scenarios KovaaK\'s has on record for this account (any scenario, not just benchmark ones)'
+        + (Number.isFinite(Number(playedStat.tracked)) ? ' — '+fmt(playedStat.tracked)+' of them are in this tracker\'s playlists' : '')
+        + '. From the last Sync Scores Online.'
+      : 'Filled in by Sync Scores Online.';
 
     const wrap = document.createElement('div');
     wrap.className='wrap';
@@ -1421,7 +1473,7 @@
       <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : '')}</div>
       ${IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0 ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
       <div class="stats">
-        <div class="stat"><div class="val">${lifetimeRunsDisplay}</div><div class="label">Lifetime runs completed</div></div>
+        <div class="stat" title="${esc(playedTitle)}"><div class="val">${playedDisplay}</div><div class="label">Scenarios played on KovaaK's</div></div>
         <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${activeCount()}</span></div><div class="label">Benchmarks played</div></div>
         <div class="stat"><div class="val">${clearedCount}</div><div class="label">Scenario clears</div></div>
         <div class="stat"><div class="val">${sharedCount}</div><div class="label">Shared scenarios</div></div>
@@ -1429,10 +1481,17 @@
       <div class="searchbar">
         <input id="search-input" type="text" placeholder="Search benchmarks by name or pack..." value="${esc(filter)}" />
         <div class="filter-toggle" id="played-toggle" role="group" aria-label="Filter by played status">
-          <button type="button" class="ft-btn active" data-mode="all">All</button>
-          <button type="button" class="ft-btn" data-mode="played">Played</button>
-          <button type="button" class="ft-btn" data-mode="unplayed">Unplayed</button>
+          <button type="button" class="ft-btn${playedMode==='all'?' active':''}" data-mode="all">All</button>
+          <button type="button" class="ft-btn${playedMode==='played'?' active':''}" data-mode="played">Played</button>
+          <button type="button" class="ft-btn${playedMode==='unplayed'?' active':''}" data-mode="unplayed">Unplayed</button>
         </div>
+        <select id="home-sort" class="sort-select" aria-label="Sort benchmarks">
+          <option value="pct">Sort: most complete first</option>
+          <option value="pct-asc">Sort: least complete first</option>
+          <option value="rank">Sort: highest rank first</option>
+          <option value="name">Sort: name A-Z</option>
+          <option value="pack">Sort: pack A-Z</option>
+        </select>
       </div>
       <div class="grid" id="bench-grid"></div>
     `;
@@ -1443,11 +1502,29 @@
     const withMeta = parsed.map(({benchmark,items,index})=>({
       b:benchmark, idx:index, played: isPlayed(benchmark, items), st: benchmarkStanding(items, benchmark.rankReq)
     }));
-    // Sorted by how complete each playlist is, replacing the old sort by
-    // evxl's volts — which was a scraped snapshot that never moved when you
-    // improved, while this recomputes from live scores.
-    const sorted = [...withMeta].sort((a,b)=> b.st.pct - a.st.pct || a.b.name.localeCompare(b.b.name));
-    let playedMode = 'all';
+    // Default sort is how complete each playlist is (replacing the old sort by
+    // evxl's volts — a scraped snapshot that never moved when you improved,
+    // while this recomputes from live scores). Rank sort compares tier index
+    // then completeness; playlists with different tier ladders can't be
+    // compared exactly, so it's an approximation, but a useful one.
+    const byName = (a,b)=> a.b.name.localeCompare(b.b.name) || a.b.difficulty.localeCompare(b.b.difficulty);
+    const homeSorters = {
+      'pct':     (a,b)=> b.st.pct - a.st.pct || byName(a,b),
+      'pct-asc': (a,b)=> a.st.pct - b.st.pct || byName(a,b),
+      'rank':    (a,b)=> (b.st.rankIdx - a.st.rankIdx) || ((b.st.complete?1:0)-(a.st.complete?1:0)) || (b.st.pct - a.st.pct) || byName(a,b),
+      'name':    byName,
+      'pack':    (a,b)=> a.b.pack.localeCompare(b.b.pack) || byName(a,b)
+    };
+    let sortMode = homeSorters[params.get('sort')] ? params.get('sort') : 'pct';
+    const homeSort = wrap.querySelector('#home-sort');
+    homeSort.value = sortMode;
+    function syncUrl(){
+      const p = new URLSearchParams();
+      if(input.value) p.set('q', input.value);
+      if(playedMode!=='all') p.set('mode', playedMode);
+      if(sortMode!=='pct') p.set('sort', sortMode);
+      writeHashParams('', p);
+    }
     function draw(list){
       grid.innerHTML='';
       if(list.length===0){
@@ -1474,14 +1551,16 @@
     }
     function applyFilters(){
       const q = input.value.toLowerCase();
-      let list = sorted.filter(x => x.b.name.toLowerCase().includes(q) || x.b.pack.toLowerCase().includes(q));
+      let list = withMeta.filter(x => x.b.name.toLowerCase().includes(q) || x.b.pack.toLowerCase().includes(q));
       if(playedMode==='played') list = list.filter(x=>x.played);
       if(playedMode==='unplayed') list = list.filter(x=>!x.played);
-      draw(list);
+      draw(list.sort(homeSorters[sortMode]));
+      syncUrl();
     }
 
     const input = wrap.querySelector('#search-input');
-    input.addEventListener('input', applyFilters);
+    input.addEventListener('input', debounce(applyFilters, SEARCH_DEBOUNCE_MS));
+    homeSort.addEventListener('change', ()=>{ sortMode = homeSort.value; applyFilters(); });
     wrap.querySelectorAll('.ft-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         wrap.querySelectorAll('.ft-btn').forEach(b=>b.classList.remove('active'));
@@ -1504,7 +1583,9 @@
       wrap.querySelector('#back-btn').addEventListener('click', ()=>{ location.hash='#/'; });
       return;
     }
-    const items = parseTable(b.hdrs, b.rows);
+    // Not getParsedBenchmarks(): that list is exclusion-filtered, and a direct
+    // #/bench/N link to an excluded playlist should still open. Same overlay.
+    const items = parsedItemsFor(b);
     const groups = [];
     items.forEach(it=>{
       let g = groups.find(x=>x.name===it.group);
@@ -1513,6 +1594,10 @@
     });
 
     const _st = benchmarkStanding(items, b.rankReq);
+    // Scenarios holding the playlist at its current floor (or, when every
+    // scenario is at the top tier, all of them). Named on the page so the
+    // "what do I practice to move this rank" question answers itself.
+    const floorSet = new Set(items.filter(it=>achievedIndex(it.score, it.tiers)<=_st.floorIdx).map(it=>it.name));
     wrap.innerHTML = `
       <button class="back-link" id="back-btn">&larr; all benchmarks</button>
       <div class="detail-head">
@@ -1546,9 +1631,10 @@
         const idx = achievedIndex(it.score, it.tiers);
         const isFull = idx===it.tiers.length-1;
         const label = idx<0 ? 'Unranked' : it.tiers[idx][0]+' &middot; '+(idx+1)+' / '+it.tiers.length+(isFull?' (full clear)':'');
+        const isBlocker = !_st.maxed && floorSet.has(it.name);
         row.innerHTML = `
           <div class="scen-top">
-            <span class="scen-title">${esc(it.name)}</span>
+            <span class="scen-title">${esc(it.name)}${isBlocker ? ' <span class="blocker-tag" title="This scenario is at the playlist\'s floor tier — it is what holds the rank where it is.">holding rank</span>' : ''}</span>
             <span class="scen-right">
               <span class="scen-score mono">${fmt(it.score)}</span>
               <span class="pl-result ${isFull?'res-full':idx<0?'res-low':'res-mid'} mono">${label}</span>
@@ -1562,192 +1648,300 @@
     });
   }
 
-  function renderShared(filter){
-    filter = (filter||'').toLowerCase();
-    const shared = computeSharedScenarios();
-    shared.forEach(sc=>{ if(!sc._prog) sc._prog = mergedProgress(sc.playlists, sc.score); });
-    const unplayedCount = shared.filter(sc=>sc.score===0).length;
-    const maxPl = shared.reduce((m,sc)=>Math.max(m,sc.playlists.length), 2);
-    const defaultMinPl = 2;
-    const defaultMaxPl = Math.min(10, maxPl);
+  // ---- URL state, debounce, chunked drawing -----------------------------
+  // Filter state lives in the hash query (#/shared?q=..&mode=..) so it
+  // survives back/forward, survives the re-render a finished sync triggers,
+  // and can be shared as a link. Written with replaceState so typing never
+  // spams history and never fires hashchange (which would re-route).
+  function readHash(){
+    const raw = location.hash.replace(/^#\/?/, '');
+    const qi = raw.indexOf('?');
+    return qi<0
+      ? { route: raw, params: new URLSearchParams() }
+      : { route: raw.slice(0,qi), params: new URLSearchParams(raw.slice(qi+1)) };
+  }
+  function writeHashParams(route, params){
+    const qs = params.toString();
+    const next = '#/'+route+(qs ? '?'+qs : '');
+    if(location.hash !== next) history.replaceState(null, '', next);
+  }
+  function debounce(fn, ms){
+    let t=null;
+    return function(){ const args=arguments; if(t) clearTimeout(t); t=setTimeout(()=>{ t=null; fn.apply(null, args); }, ms); };
+  }
+  const SEARCH_DEBOUNCE_MS = 120;
+
+  // Draws a long list without freezing the page: the first chunk lands
+  // synchronously so the screen responds at once, the rest follow in
+  // background chunks. A newer draw on the same container cancels the older
+  // one's pending chunks (each container carries a draw token). The Unique
+  // page is ~2,000 cards / 70k DOM nodes — rebuilding all of it per keystroke
+  // was the single biggest cost on the site.
+  const CHUNK_FIRST = 60, CHUNK_NEXT = 120;
+  function drawChunked(container, items, makeNode){
+    const token = (container._drawToken = (container._drawToken||0)+1);
+    container.innerHTML='';
+    let i=0;
+    function pump(n){
+      if(container._drawToken !== token) return;
+      const frag = document.createDocumentFragment();
+      const end = Math.min(items.length, i+n);
+      for(; i<end; i++) frag.appendChild(makeNode(items[i]));
+      container.appendChild(frag);
+      if(i<items.length) setTimeout(()=>pump(CHUNK_NEXT), 0);
+    }
+    pump(CHUNK_FIRST);
+  }
+
+  // ---- Shared / Unique scenario lists: one renderer ----------------------
+  // Both pages are the same list of scenario cards over the same filters.
+  // The differences are copy, the default sort, and two shared-only pieces
+  // (the "N playlists" chip and the min/max playlist range). Everything else
+  // — card layout, legend, merged bar, To Max/2nd/Next, tags, difficulty,
+  // In Playlist, sort — is literally the same code, which is what keeps the
+  // two card formats identical (a standing rule; it used to rest on two
+  // hand-kept copies of ~250 lines each).
+  const SCEN_LIST = {
+    shared: {
+      compute: computeSharedScenarios,
+      defaultSort: 'shared',
+      sortOptions: [['shared','Sort: most shared playlists'],['name','Sort: name A-Z']],
+      eyebrow: n => 'shared-scenario overlap &middot; all '+n+' playlists',
+      title: 'Cross-playlist XP bars',
+      sub: (list, unplayed, n) => list.length+' scenarios appear in more than one of the '+n+' benchmark playlists &mdash; '+unplayed+' of them you haven\'t touched yet. Sorted by how many playlists each one unlocks, so the top of this list is where practice pays off the most.',
+      meta: 'ONE BAR PER SCENARIO &middot; EQUAL-WIDTH STEPS BY RANK, NOT BY POINT GAP',
+      footnote: '<p><strong>How this bar works:</strong> every tier threshold from every playlist that shares this scenario is merged into one sorted ruler, then drawn as equal-width steps &mdash; a 1-point gap and a 20-point gap take up the same space, so the bar reads as rank order, not raw magnitude. There\'s one marker, because it\'s one score. Tick color shows which playlist that step belongs to (see the legend on each card).</p>',
+      showRange: true, countChip: true, clickable: false,
+      empty: 'No shared scenarios match that search.'
+    },
+    unique: {
+      compute: computeUniqueScenarios,
+      defaultSort: 'name',
+      sortOptions: [['name','Sort: name A-Z']],
+      eyebrow: n => 'unique scenarios &middot; found in exactly one of '+n+' playlists',
+      title: 'Scenarios not shared with any other playlist',
+      sub: (list, unplayed) => list.length+' scenarios belong to only one benchmark playlist &mdash; '+unplayed+' of them you haven\'t touched yet. Click a card to jump to its playlist.',
+      meta: '',
+      footnote: '',
+      showRange: false, countChip: false, clickable: true,
+      empty: 'No unique scenarios match that search.'
+    }
+  };
+  const PROG_SORTS = [
+    ['tomax-asc','Sort: lowest To Max first'], ['tomax-desc','Sort: highest To Max first'],
+    ['to2nd-asc','Sort: lowest To 2nd first'], ['to2nd-desc','Sort: highest To 2nd first'],
+    ['tonext-asc','Sort: lowest To Next first'], ['tonext-desc','Sort: highest To Next first']
+  ];
+  const DIFF_VALUES = ['Easy','Intermediate','Hard'];
+
+  function renderScenarioList(kind, params){
+    const cfg = SCEN_LIST[kind];
+    const all = cfg.compute();
+    // Progress stats are per scenario and only depend on its own score and
+    // tiers, so cache them on the entry (the entry cache is rebuilt whenever
+    // data changes, which drops these with it).
+    all.forEach(sc=>{ if(!sc._prog) sc._prog = mergedProgress(sc.playlists, sc.score); });
+    const unplayedCount = all.filter(sc=>sc.score===0).length;
+    const maxPl = all.reduce((m,sc)=>Math.max(m,sc.playlists.length), 2);
+    const sortOptions = cfg.sortOptions.concat(PROG_SORTS);
+    const sortValues = sortOptions.map(o=>o[0]);
+
+    // ---- state, seeded from the URL ------------------------------------
+    const numOrNull = v => { const n=Number(v); return v!==null && Number.isFinite(n) && n>0 ? n : null; };
+    const st = {
+      q:    params.get('q') || '',
+      mode: ['all','played','unplayed'].includes(params.get('mode')) ? params.get('mode') : 'all',
+      unranked: params.get('unr')==='1',
+      sort: sortValues.includes(params.get('sort')) ? params.get('sort') : cfg.defaultSort,
+      diff: DIFF_VALUES.includes(params.get('diff')) ? params.get('diff') : 'all',
+      pl:   params.get('pl') || 'all',
+      tags: new Set(params.getAll('tag')),
+      // null = "not touched": tracks the bottom/top of whatever range is
+      // currently available, so e.g. switching Unplayed -> All snaps max
+      // back up instead of staying stuck where Unplayed clamped it.
+      min:  cfg.showRange ? numOrNull(params.get('min')) : null,
+      max:  cfg.showRange ? numOrNull(params.get('max')) : null
+    };
+    if(st.mode!=='played') st.unranked = false;
+    function syncUrl(){
+      const p = new URLSearchParams();
+      if(st.q) p.set('q', st.q);
+      if(st.mode!=='all') p.set('mode', st.mode);
+      if(st.unranked) p.set('unr','1');
+      if(st.sort!==cfg.defaultSort) p.set('sort', st.sort);
+      if(st.diff!=='all') p.set('diff', st.diff);
+      if(st.pl!=='all') p.set('pl', st.pl);
+      st.tags.forEach(t=>p.append('tag', t));
+      if(st.min!==null) p.set('min', String(st.min));
+      if(st.max!==null) p.set('max', String(st.max));
+      writeHashParams(kind, p);
+    }
+
     function plOptions(lo, hi, selected){
       let out='';
-      for(let i=lo;i<=hi;i++) out += `<option value="${i}" ${i===selected?'selected':''}>${i}</option>`;
+      for(let i=lo;i<=hi;i++) out += '<option value="'+i+'"'+(i===selected?' selected':'')+'>'+i+'</option>';
       return out;
     }
+
+    // ---- shell -----------------------------------------------------------
     const wrap = document.createElement('div');
     wrap.className='wrap narrow';
     wrap.innerHTML = `
-      <div class="eyebrow"><span class="dot"></span> shared-scenario overlap &middot; all ${activeCount()} playlists</div>
-      <h1>Cross-playlist XP bars</h1>
-      <p class="sub">${shared.length} scenarios appear in more than one of the ${activeCount()} benchmark playlists &mdash; ${unplayedCount} of them you haven't touched yet. Sorted by how many playlists each one unlocks, so the top of this list is where practice pays off the most.</p>
-      <div class="meta">ONE BAR PER SCENARIO &middot; EQUAL-WIDTH STEPS BY RANK, NOT BY POINT GAP</div>
+      <div class="eyebrow"><span class="dot"></span> ${cfg.eyebrow(activeCount())}</div>
+      <h1>${cfg.title}</h1>
+      <p class="sub">${cfg.sub(all, unplayedCount, activeCount())}</p>
+      ${cfg.meta ? '<div class="meta">'+cfg.meta+'</div>' : ''}
       <div class="searchbar">
-        <input id="shared-search" type="text" placeholder="Search scenarios or benchmark names..." value="${esc(filter)}" />
-        <div class="filter-toggle" id="shared-toggle" role="group" aria-label="Filter by played status">
-          <button type="button" class="ft-btn active" data-mode="all">All</button>
-          <button type="button" class="ft-btn" data-mode="unplayed">Unplayed</button>
-          <button type="button" class="ft-btn" data-mode="played">Played</button>
+        <input id="sl-search" type="text" placeholder="Search scenarios or benchmark names..." value="${esc(st.q)}" />
+        <div class="filter-toggle" id="sl-toggle" role="group" aria-label="Filter by played status">
+          <button type="button" class="ft-btn${st.mode==='all'?' active':''}" data-mode="all">All</button>
+          <button type="button" class="ft-btn${st.mode==='unplayed'?' active':''}" data-mode="unplayed">Unplayed</button>
+          <button type="button" class="ft-btn${st.mode==='played'?' active':''}" data-mode="played">Played</button>
         </div>
-        <label class="unranked-check" id="shared-unranked-wrap" style="display:none;">
-          <input type="checkbox" id="shared-unranked-cb" /> UNRANKED? :(
+        <label class="unranked-check" id="sl-unranked-wrap" style="${st.mode==='played'?'':'display:none;'}">
+          <input type="checkbox" id="sl-unranked-cb"${st.unranked?' checked':''} /> UNRANKED? :(
         </label>
-        <select id="shared-sort" class="sort-select" aria-label="Sort scenarios">
-          <option value="shared">Sort: most shared playlists</option>
-          <option value="tomax-asc">Sort: lowest To Max first</option>
-          <option value="tomax-desc">Sort: highest To Max first</option>
-          <option value="to2nd-asc">Sort: lowest To 2nd first</option>
-          <option value="to2nd-desc">Sort: highest To 2nd first</option>
-          <option value="tonext-asc">Sort: lowest To Next first</option>
-          <option value="tonext-desc">Sort: highest To Next first</option>
+        <select id="sl-sort" class="sort-select" aria-label="Sort scenarios">
+          ${sortOptions.map(([v,l])=>'<option value="'+v+'"'+(v===st.sort?' selected':'')+'>'+l+'</option>').join('')}
         </select>
       </div>
       <div class="pl-range-row">
-        <label for="shared-diff-select">Desired Difficulty:
-          <select id="shared-diff-select" class="sort-select">
+        <label for="sl-diff-select">Desired Difficulty:
+          <select id="sl-diff-select" class="sort-select">
             <option value="all">All</option>
-            <option value="Easy">Easy</option>
-            <option value="Intermediate">Intermediate</option>
-            <option value="Hard">Hard</option>
+            ${DIFF_VALUES.map(d=>'<option value="'+d+'"'+(d===st.diff?' selected':'')+'>'+d+'</option>').join('')}
           </select>
         </label>
-        <label for="shared-playlist-select">In Playlist:
-          <select id="shared-playlist-select" class="sort-select"></select>
+        <label for="sl-playlist-select">In Playlist:
+          <select id="sl-playlist-select" class="sort-select"></select>
         </label>
+        ${cfg.showRange ? '' : '<span class="pl-range-count" id="sl-count"></span>'}
       </div>
+      ${cfg.showRange ? `
       <div class="pl-range-row">
-        <label for="min-pl-select">Min shared playlists:
-          <select id="min-pl-select">${plOptions(2, maxPl, defaultMinPl)}</select>
+        <label for="sl-min-select">Min shared playlists:
+          <select id="sl-min-select">${plOptions(2, maxPl, st.min||2)}</select>
         </label>
-        <label for="max-pl-select">Max shared playlists:
-          <select id="max-pl-select">${plOptions(2, maxPl, defaultMaxPl)}</select>
+        <label for="sl-max-select">Max shared playlists:
+          <select id="sl-max-select">${plOptions(2, maxPl, st.max||Math.min(10,maxPl))}</select>
         </label>
-        <span class="pl-range-count" id="pl-range-count"></span>
-      </div>
+        <span class="pl-range-count" id="sl-count"></span>
+      </div>` : ''}
       <div class="tag-row">
         <div class="tag-row-top">
           <span class="tag-row-label">Tags (from each playlist's own category/subcategory labels)</span>
-          <button type="button" class="tag-clear" id="tag-clear" style="display:none;">Clear</button>
+          <button type="button" class="tag-clear" id="sl-tag-clear" style="display:none;">Clear</button>
         </div>
-        <div class="tag-chips" id="tag-chips"></div>
+        <div class="tag-chips" id="sl-tag-chips"></div>
       </div>
-      <div id="shared-list" style="margin-top:22px;"></div>
-      <div class="footnote">
-        <p><strong>How this bar works:</strong> every tier threshold from every playlist that shares this scenario is merged into one sorted ruler, then drawn as equal-width steps &mdash; a 1-point gap and a 20-point gap take up the same space, so the bar reads as rank order, not raw magnitude. There's one marker, because it's one score. Tick color shows which playlist that step belongs to (see the legend on each card).</p>
-      </div>
+      <div id="sl-list" style="margin-top:${cfg.showRange?22:18}px;"></div>
+      ${cfg.footnote ? '<div class="footnote">'+cfg.footnote+'</div>' : ''}
     `;
     app.innerHTML=''; app.appendChild(wrap);
-    const list = wrap.querySelector('#shared-list');
 
-    function draw(items){
-      list.innerHTML='';
-      if(items.length===0){ list.innerHTML='<div class="empty-note">No shared scenarios match that search.</div>'; return; }
-      items.forEach(sc=>{
-        const card=document.createElement('div');
-        card.className='scen-card';
-        const head=document.createElement('div');
-        head.className='scen-head2';
-        const prog = sc._prog;
-        head.innerHTML = '<span class="scen-name2">'+esc(sc.name)+'</span>'
-          + '<span class="scen-count mono">'+sc.playlists.length+' playlists</span>'
-          + '<span class="chip '+diffChipClass(sc.diff)+'">'+esc(sc.diff)+'</span>'
-          + '<span class="scen-score2 mono">'+fmt(sc.score)+'</span>'
-          + '<span class="scen-tomax mono">'+(prog.toMax*100).toFixed(1)+'%</span>'
-          + '<span class="scen-to2nd mono">'+(prog.to2nd*100).toFixed(1)+'%</span>'
-          + '<span class="scen-tonext mono">'+(prog.maxed ? 'Maxed' : (prog.toNext*100).toFixed(1)+'%')+'</span>';
-        card.appendChild(head);
+    const list = wrap.querySelector('#sl-list');
+    const input = wrap.querySelector('#sl-search');
+    const sortSelect = wrap.querySelector('#sl-sort');
+    const diffSelect = wrap.querySelector('#sl-diff-select');
+    const playlistSelect = wrap.querySelector('#sl-playlist-select');
+    const unrankedWrap = wrap.querySelector('#sl-unranked-wrap');
+    const unrankedCb = wrap.querySelector('#sl-unranked-cb');
+    const tagChips = wrap.querySelector('#sl-tag-chips');
+    const tagClearBtn = wrap.querySelector('#sl-tag-clear');
+    const countEl = wrap.querySelector('#sl-count');
+    const minSelect = wrap.querySelector('#sl-min-select');
+    const maxSelect = wrap.querySelector('#sl-max-select');
 
-        const legend = document.createElement('div');
-        legend.className = 'pl-legend';
-        sc.playlists.forEach((pl,pi)=>{
-          const idx = achievedIndex(sc.score, pl.tiers);
-          const total = pl.tiers.length;
-          const isFull = idx===total-1;
-          const label = idx<0 ? 'Unranked' : pl.tiers[idx][0]+' &middot; '+(idx+1)+'/'+total+(isFull?' full clear':'');
-          const item = document.createElement('div');
-          item.className = 'pl-legend-item';
-          item.innerHTML = `
-            <span class="pl-legend-dot pl-dot-${pi%8}"></span>
-            <span class="pl-legend-text">
-              <span class="pl-name">${esc(pl.playlist)} <span class="dim">&middot; ${esc(pl.difficulty)}</span></span>
-              <span class="pl-result ${isFull?'res-full':idx<0?'res-low':'res-mid'} mono">${label}</span>
-            </span>
-          `;
-          legend.appendChild(item);
-        });
-        card.appendChild(legend);
+    // ---- one card ------------------------------------------------------
+    // Identical for both pages: name, [N playlists chip], difficulty chip,
+    // score, To Max / To 2nd / To Next, per-playlist legend, merged bar.
+    function makeCard(sc){
+      const card=document.createElement('div');
+      card.className='scen-card'+(cfg.clickable?' clickable':'');
+      const prog = sc._prog;
+      const head=document.createElement('div');
+      head.className='scen-head2';
+      head.innerHTML = '<span class="scen-name2">'+esc(sc.name)+'</span>'
+        + (cfg.countChip ? '<span class="scen-count mono">'+sc.playlists.length+' playlists</span>' : '')
+        + '<span class="chip '+diffChipClass(sc.diff)+'">'+esc(sc.diff)+'</span>'
+        + '<span class="scen-score2 mono">'+fmt(sc.score)+'</span>'
+        + '<span class="scen-tomax mono">'+(prog.toMax*100).toFixed(1)+'%</span>'
+        + '<span class="scen-to2nd mono">'+(prog.to2nd*100).toFixed(1)+'%</span>'
+        + '<span class="scen-tonext mono">'+(prog.maxed ? 'Maxed' : (prog.toNext*100).toFixed(1)+'%')+'</span>';
+      card.appendChild(head);
 
-        const barWrap = document.createElement('div');
-        barWrap.className = 'merged-bar-wrap';
-        barWrap.appendChild(buildMergedEqualBar(sc.playlists, sc.score));
-        card.appendChild(barWrap);
+      const legend = document.createElement('div');
+      legend.className = 'pl-legend';
+      legend.innerHTML = sc.playlists.map((pl,pi)=>{
+        const idx = achievedIndex(sc.score, pl.tiers);
+        const total = pl.tiers.length;
+        const isFull = idx===total-1;
+        const label = idx<0 ? 'Unranked' : pl.tiers[idx][0]+' &middot; '+(idx+1)+'/'+total+(isFull?' full clear':'');
+        return '<div class="pl-legend-item">'
+          + '<span class="pl-legend-dot pl-dot-'+(pi%8)+'"></span>'
+          + '<span class="pl-legend-text">'
+          +   '<span class="pl-name">'+esc(pl.playlist)+' <span class="dim">&middot; '+esc(pl.difficulty)+'</span></span>'
+          +   '<span class="pl-result '+(isFull?'res-full':idx<0?'res-low':'res-mid')+' mono">'+label+'</span>'
+          + '</span></div>';
+      }).join('');
+      card.appendChild(legend);
 
-        list.appendChild(card);
-      });
+      const barWrap = document.createElement('div');
+      barWrap.className = 'merged-bar-wrap';
+      barWrap.appendChild(buildMergedEqualBar(sc.playlists, sc.score));
+      card.appendChild(barWrap);
+
+      if(cfg.clickable) card.addEventListener('click', ()=>{ location.hash='#/bench/'+sc.benchIndex; });
+      return card;
     }
 
-    let mode = 'all';
-    let unrankedOnly = false;
-    let minPl = defaultMinPl;
-    let maxPlSel = defaultMaxPl;
-    // Once the user explicitly picks a min/max value it's respected (and only
-    // clamped if later filters rule it out entirely). Until then, the value
-    // just tracks the bottom/top of whatever range is currently available,
-    // so e.g. switching Unplayed -> All snaps max back up to 10, not stuck at
-    // whatever Unplayed happened to clamp it to.
-    let minPlTouched = false, maxPlTouched = false;
-    let sortMode = 'shared';
-    let diffFilter = 'all';
-    let playlistFilter = 'all';
-    const selectedTags = new Set();
-    const input = wrap.querySelector('#shared-search');
-    const minPlSelect = wrap.querySelector('#min-pl-select');
-    const maxPlSelect = wrap.querySelector('#max-pl-select');
-    const plRangeCount = wrap.querySelector('#pl-range-count');
-    const sortSelect = wrap.querySelector('#shared-sort');
-    const diffSelect = wrap.querySelector('#shared-diff-select');
-    const playlistSelect = wrap.querySelector('#shared-playlist-select');
-    const unrankedWrap = wrap.querySelector('#shared-unranked-wrap');
-    const unrankedCb = wrap.querySelector('#shared-unranked-cb');
-    const tagChips = wrap.querySelector('#tag-chips');
-    const tagClearBtn = wrap.querySelector('#tag-clear');
     // Tag chip counts reflect the exact set of cards currently on screen —
     // recomputed after every filter change, so a tag with zero matches in
-    // the current view (search + played state + playlist range + other
-    // selected tags) simply isn't offered anymore.
+    // the current view simply isn't offered anymore.
     function renderTagChips(items){
       const counts = new Map();
       items.forEach(sc=>{ sc.tags.forEach(t=>{ counts.set(t, (counts.get(t)||0)+1); }); });
       const tagList = [...counts.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0]));
       tagChips.innerHTML = tagList.map(([t,c])=>
-        `<button type="button" class="tag-chip${selectedTags.has(t)?' active':''}" data-tag="${esc(t)}">${esc(t)} <span class="tag-count">${c}</span></button>`
+        '<button type="button" class="tag-chip'+(st.tags.has(t)?' active':'')+'" data-tag="'+esc(t)+'">'+esc(t)+' <span class="tag-count">'+c+'</span></button>'
       ).join('');
-      tagClearBtn.style.display = selectedTags.size>0 ? '' : 'none';
+      tagClearBtn.style.display = st.tags.size>0 ? '' : 'none';
     }
+
+    const sorters = {
+      'shared':      (a,b)=> b.playlists.length - a.playlists.length || a.name.localeCompare(b.name),
+      'name':        (a,b)=> a.name.localeCompare(b.name),
+      'tomax-asc':   (a,b)=> a._prog.toMax-b._prog.toMax,
+      'tomax-desc':  (a,b)=> b._prog.toMax-a._prog.toMax,
+      'to2nd-asc':   (a,b)=> a._prog.to2nd-b._prog.to2nd,
+      'to2nd-desc':  (a,b)=> b._prog.to2nd-a._prog.to2nd,
+      'tonext-asc':  (a,b)=> a._prog.toNext-b._prog.toNext,
+      'tonext-desc': (a,b)=> b._prog.toNext-a._prog.toNext
+    };
+
     function applyFilters(){
-      const q = input.value.toLowerCase();
-      let stage = shared.filter(sc =>
+      const q = st.q.toLowerCase();
+      let stage = all.filter(sc =>
         sc.name.toLowerCase().includes(q) ||
         sc.playlists.some(pl=>pl.playlist.toLowerCase().includes(q))
       );
-      if(mode==='played') stage = stage.filter(sc=>sc.score>0);
-      if(mode==='unplayed') stage = stage.filter(sc=>sc.score===0);
-      // Unranked-but-played: score cleared none of this scenario's tiers in
-      // any playlist it belongs to (having a rank in even one playlist means
-      // it doesn't count).
-      if(mode==='played' && unrankedOnly){
+      if(st.mode==='played') stage = stage.filter(sc=>sc.score>0);
+      if(st.mode==='unplayed') stage = stage.filter(sc=>sc.score===0);
+      // Unranked-but-played: the score cleared none of this scenario's tiers
+      // in any playlist it belongs to (a rank in even one playlist means it
+      // doesn't count).
+      if(st.mode==='played' && st.unranked){
         stage = stage.filter(sc=>sc.score>0 && !sc.playlists.some(pl=>achievedIndex(sc.score,pl.tiers)>=0));
       }
       // Tag filter is OR: a scenario matches if it carries ANY selected tag.
-      if(selectedTags.size>0) stage = stage.filter(sc=>sc.tags.some(t=>selectedTags.has(t)));
-      if(diffFilter!=='all') stage = stage.filter(sc=>sc.diff===diffFilter);
+      if(st.tags.size>0) stage = stage.filter(sc=>sc.tags.some(t=>st.tags.has(t)));
+      if(st.diff!=='all') stage = stage.filter(sc=>sc.diff===st.diff);
 
       // "In Playlist" options reflect exactly the playlist+difficulty pairs
       // present among the cards matching every other active filter — same
-      // idea as the tag chips. Each difficulty of the same playlist (e.g.
-      // Easy vs Hard of "X Benchmarks") is its own distinct entry here on
-      // purpose, so this dropdown alone can pin down a specific playlist
-      // variant without needing the separate Desired Difficulty filter.
+      // idea as the tag chips. Each difficulty of the same playlist is its
+      // own entry on purpose, so this dropdown alone can pin down a specific
+      // playlist variant without the separate Desired Difficulty filter.
       const playlistCounts = new Map();
       stage.forEach(sc=>{
         const seen = new Set();
@@ -1759,299 +1953,67 @@
         });
       });
       const playlistKeys = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
-      if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
+      if(st.pl!=='all' && !playlistCounts.has(st.pl)) st.pl = 'all';
       playlistSelect.innerHTML = '<option value="all">All ('+stage.length+')</option>'
         + playlistKeys.map(k=>{
             const [pl, diff] = JSON.parse(k);
-            return `<option value="${esc(k)}" ${k===playlistFilter?'selected':''}>${esc(pl)} &middot; ${esc(diff)} (${playlistCounts.get(k)})</option>`;
+            return '<option value="'+esc(k)+'"'+(k===st.pl?' selected':'')+'>'+esc(pl)+' &middot; '+esc(diff)+' ('+playlistCounts.get(k)+')</option>';
           }).join('');
-      playlistSelect.value = playlistFilter;
-      if(playlistFilter!=='all') stage = stage.filter(sc=>sc.playlists.some(pl=>JSON.stringify([pl.playlist, pl.difficulty])===playlistFilter));
+      playlistSelect.value = st.pl;
+      if(st.pl!=='all') stage = stage.filter(sc=>sc.playlists.some(pl=>JSON.stringify([pl.playlist, pl.difficulty])===st.pl));
 
-      // The min/max playlist dropdowns only offer values that are actually
-      // reachable under search + played-state + tags (independent of the
-      // current range picks), so re-derive that range and clamp/rebuild the
-      // selects before applying the range filter itself.
-      let minAvail = 2, maxAvail = 2;
-      if(stage.length>0){
-        minAvail = stage.reduce((m,sc)=>Math.min(m,sc.playlists.length), Infinity);
-        maxAvail = stage.reduce((m,sc)=>Math.max(m,sc.playlists.length), 2);
+      let items = stage;
+      if(cfg.showRange){
+        // The min/max dropdowns only offer values actually reachable under
+        // the other filters, so re-derive that range and clamp/rebuild the
+        // selects before applying the range filter itself.
+        let minAvail = 2, maxAvail = 2;
+        if(stage.length>0){
+          minAvail = stage.reduce((m,sc)=>Math.min(m,sc.playlists.length), Infinity);
+          maxAvail = stage.reduce((m,sc)=>Math.max(m,sc.playlists.length), 2);
+        }
+        const clamp = v => Math.min(Math.max(v, minAvail), maxAvail);
+        let lo = st.min!==null ? clamp(st.min) : minAvail;
+        let hi = st.max!==null ? clamp(st.max) : maxAvail;
+        if(lo>hi) lo = hi;
+        minSelect.innerHTML = plOptions(minAvail, maxAvail, lo);
+        maxSelect.innerHTML = plOptions(minAvail, maxAvail, hi);
+        items = stage.filter(sc=>sc.playlists.length>=lo && sc.playlists.length<=hi);
       }
-      minPl = minPlTouched ? Math.min(Math.max(minPl, minAvail), maxAvail) : minAvail;
-      maxPlSel = maxPlTouched ? Math.min(Math.max(maxPlSel, minAvail), maxAvail) : maxAvail;
-      if(minPl>maxPlSel) minPl = maxPlSel;
-      minPlSelect.innerHTML = plOptions(minAvail, maxAvail, minPl);
-      maxPlSelect.innerHTML = plOptions(minAvail, maxAvail, maxPlSel);
-
-      const items = stage.filter(sc=>sc.playlists.length>=minPl && sc.playlists.length<=maxPlSel);
-      plRangeCount.textContent = items.length+' of '+shared.length+' scenarios';
+      countEl.textContent = items.length+' of '+all.length+' scenarios';
       renderTagChips(items);
-      let sorted = items;
-      if(sortMode==='tomax-asc') sorted = [...items].sort((a,b)=>a._prog.toMax-b._prog.toMax);
-      else if(sortMode==='tomax-desc') sorted = [...items].sort((a,b)=>b._prog.toMax-a._prog.toMax);
-      else if(sortMode==='to2nd-asc') sorted = [...items].sort((a,b)=>a._prog.to2nd-b._prog.to2nd);
-      else if(sortMode==='to2nd-desc') sorted = [...items].sort((a,b)=>b._prog.to2nd-a._prog.to2nd);
-      else if(sortMode==='tonext-asc') sorted = [...items].sort((a,b)=>a._prog.toNext-b._prog.toNext);
-      else if(sortMode==='tonext-desc') sorted = [...items].sort((a,b)=>b._prog.toNext-a._prog.toNext);
-      draw(sorted);
+      const sorted = [...items].sort(sorters[st.sort]);
+      drawChunked(list, sorted, makeCard);
+      if(sorted.length===0) list.innerHTML='<div class="empty-note">'+cfg.empty+'</div>';
+      syncUrl();
     }
-    input.addEventListener('input', applyFilters);
+
+    // ---- wiring ----------------------------------------------------------
+    input.addEventListener('input', debounce(()=>{ st.q = input.value; applyFilters(); }, SEARCH_DEBOUNCE_MS));
     wrap.querySelectorAll('.ft-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         wrap.querySelectorAll('.ft-btn').forEach(b=>b.classList.remove('active'));
         btn.classList.add('active');
-        mode = btn.dataset.mode;
-        unrankedWrap.style.display = mode==='played' ? '' : 'none';
-        if(mode!=='played' && unrankedOnly){ unrankedOnly=false; unrankedCb.checked=false; }
+        st.mode = btn.dataset.mode;
+        unrankedWrap.style.display = st.mode==='played' ? '' : 'none';
+        if(st.mode!=='played' && st.unranked){ st.unranked=false; unrankedCb.checked=false; }
         applyFilters();
       });
     });
-    minPlSelect.addEventListener('change', ()=>{
-      minPlTouched = true;
-      minPl = Number(minPlSelect.value);
-      applyFilters();
-    });
-    maxPlSelect.addEventListener('change', ()=>{
-      maxPlTouched = true;
-      maxPlSel = Number(maxPlSelect.value);
-      applyFilters();
-    });
-    sortSelect.addEventListener('change', ()=>{
-      sortMode = sortSelect.value;
-      applyFilters();
-    });
-    diffSelect.addEventListener("change", ()=>{
-      diffFilter = diffSelect.value;
-      applyFilters();
-    });
-    playlistSelect.addEventListener('change', ()=>{
-      playlistFilter = playlistSelect.value;
-      applyFilters();
-    });
-    unrankedCb.addEventListener('change', ()=>{
-      unrankedOnly = unrankedCb.checked;
-      applyFilters();
-    });
+    if(minSelect) minSelect.addEventListener('change', ()=>{ st.min = Number(minSelect.value); applyFilters(); });
+    if(maxSelect) maxSelect.addEventListener('change', ()=>{ st.max = Number(maxSelect.value); applyFilters(); });
+    sortSelect.addEventListener('change', ()=>{ st.sort = sortSelect.value; applyFilters(); });
+    diffSelect.addEventListener('change', ()=>{ st.diff = diffSelect.value; applyFilters(); });
+    playlistSelect.addEventListener('change', ()=>{ st.pl = playlistSelect.value; applyFilters(); });
+    unrankedCb.addEventListener('change', ()=>{ st.unranked = unrankedCb.checked; applyFilters(); });
     tagChips.addEventListener('click', (e)=>{
       const chip = e.target.closest('.tag-chip');
       if(!chip) return;
       const t = chip.dataset.tag;
-      if(selectedTags.has(t)) selectedTags.delete(t); else selectedTags.add(t);
+      if(st.tags.has(t)) st.tags.delete(t); else st.tags.add(t);
       applyFilters();
     });
-    tagClearBtn.addEventListener('click', ()=>{
-      selectedTags.clear();
-      applyFilters();
-    });
-    applyFilters();
-  }
-
-  function renderUnique(filter){
-    filter = (filter||'').toLowerCase();
-    const unique = computeUniqueScenarios();
-    // Same mergedProgress used on the shared page, just fed a single-entry
-    // "playlists" array — keeps the card format identical between the two
-    // pages, and means a scenario that later gains a second playlist (next
-    // scrape) slots into the shared page with no format change at all.
-    unique.forEach(u=>{ if(!u._prog) u._prog = mergedProgress([{tiers: u.tiers}], u.score); });
-    const unplayedCount = unique.filter(u=>u.score===0).length;
-
-    const wrap = document.createElement('div');
-    wrap.className='wrap narrow';
-    wrap.innerHTML = `
-      <div class="eyebrow"><span class="dot"></span> unique scenarios &middot; found in exactly one of ${activeCount()} playlists</div>
-      <h1>Scenarios not shared with any other playlist</h1>
-      <p class="sub">${unique.length} scenarios belong to only one benchmark playlist &mdash; ${unplayedCount} of them you haven't touched yet. Click a card to jump to its playlist.</p>
-      <div class="searchbar">
-        <input id="uniq-search" type="text" placeholder="Search scenarios or benchmark names..." value="${esc(filter)}" />
-        <div class="filter-toggle" id="uniq-toggle" role="group" aria-label="Filter by played status">
-          <button type="button" class="ft-btn active" data-mode="all">All</button>
-          <button type="button" class="ft-btn" data-mode="unplayed">Unplayed</button>
-          <button type="button" class="ft-btn" data-mode="played">Played</button>
-        </div>
-        <label class="unranked-check" id="uniq-unranked-wrap" style="display:none;">
-          <input type="checkbox" id="uniq-unranked-cb" /> UNRANKED? :(
-        </label>
-        <select id="uniq-sort" class="sort-select" aria-label="Sort scenarios">
-          <option value="name">Sort: name A-Z</option>
-          <option value="tomax-asc">Sort: lowest To Max first</option>
-          <option value="tomax-desc">Sort: highest To Max first</option>
-          <option value="to2nd-asc">Sort: lowest To 2nd first</option>
-          <option value="to2nd-desc">Sort: highest To 2nd first</option>
-          <option value="tonext-asc">Sort: lowest To Next first</option>
-          <option value="tonext-desc">Sort: highest To Next first</option>
-        </select>
-      </div>
-      <div class="pl-range-row">
-        <label for="uniq-diff-select">Desired Difficulty:
-          <select id="uniq-diff-select" class="sort-select">
-            <option value="all">All</option>
-            <option value="Easy">Easy</option>
-            <option value="Intermediate">Intermediate</option>
-            <option value="Hard">Hard</option>
-          </select>
-        </label>
-        <label for="uniq-playlist-select">In Playlist:
-          <select id="uniq-playlist-select" class="sort-select"></select>
-        </label>
-      </div>
-      <div class="tag-row">
-        <div class="tag-row-top">
-          <span class="tag-row-label">Tags (from each playlist's own category/subcategory labels)</span>
-          <button type="button" class="tag-clear" id="uniq-tag-clear" style="display:none;">Clear</button>
-        </div>
-        <div class="tag-chips" id="uniq-tag-chips"></div>
-      </div>
-      <div class="pl-range-row"><span class="pl-range-count" id="uniq-count"></span></div>
-      <div id="uniq-list" style="margin-top:18px;"></div>
-    `;
-    app.innerHTML=''; app.appendChild(wrap);
-    const list = wrap.querySelector('#uniq-list');
-
-    function draw(items){
-      list.innerHTML='';
-      if(items.length===0){ list.innerHTML='<div class="empty-note">No unique scenarios match that search.</div>'; return; }
-      items.forEach(u=>{
-        const card=document.createElement('div');
-        card.className='scen-card clickable';
-        const idx = achievedIndex(u.score, u.tiers);
-        const isFull = idx===u.tiers.length-1;
-        const label = idx<0 ? 'Unranked' : u.tiers[idx][0]+' &middot; '+(idx+1)+'/'+u.tiers.length+(isFull?' full clear':'');
-        const prog = u._prog;
-        card.innerHTML = `
-          <div class="scen-head2">
-            <span class="scen-name2">${esc(u.name)}</span>
-            <span class="chip ${diffChipClass(u.diff)}">${esc(u.diff)}</span>
-            <span class="scen-score2 mono">${fmt(u.score)}</span>
-            <span class="scen-tomax mono">${(prog.toMax*100).toFixed(1)}%</span>
-            <span class="scen-to2nd mono">${(prog.to2nd*100).toFixed(1)}%</span>
-            <span class="scen-tonext mono">${prog.maxed ? 'Maxed' : (prog.toNext*100).toFixed(1)+'%'}</span>
-          </div>
-          <div class="pl-legend">
-            <div class="pl-legend-item">
-              <span class="pl-legend-dot pl-dot-0"></span>
-              <span class="pl-legend-text">
-                <span class="pl-name">${esc(u.playlist)} <span class="dim">&middot; ${esc(u.difficulty)}</span></span>
-                <span class="pl-result ${isFull?'res-full':idx<0?'res-low':'res-mid'} mono">${label}</span>
-              </span>
-            </div>
-          </div>
-          <div class="merged-bar-wrap"></div>
-        `;
-        card.querySelector('.merged-bar-wrap').appendChild(buildMergedEqualBar([{tiers: u.tiers}], u.score));
-        card.addEventListener('click', ()=>{ location.hash='#/bench/'+u.benchIndex; });
-        list.appendChild(card);
-      });
-    }
-
-    let mode = 'all';
-    let unrankedOnly = false;
-    let sortMode = 'name';
-    let diffFilter = 'all';
-    let playlistFilter = 'all';
-    const selectedTags = new Set();
-    const input = wrap.querySelector('#uniq-search');
-    const uniqCount = wrap.querySelector('#uniq-count');
-    const sortSelect = wrap.querySelector('#uniq-sort');
-    const diffSelect = wrap.querySelector('#uniq-diff-select');
-    const playlistSelect = wrap.querySelector('#uniq-playlist-select');
-    const unrankedWrap = wrap.querySelector('#uniq-unranked-wrap');
-    const unrankedCb = wrap.querySelector('#uniq-unranked-cb');
-    const tagChips = wrap.querySelector('#uniq-tag-chips');
-    const tagClearBtn = wrap.querySelector('#uniq-tag-clear');
-    function renderTagChips(items){
-      const counts = new Map();
-      items.forEach(u=>{ u.tags.forEach(t=>{ counts.set(t, (counts.get(t)||0)+1); }); });
-      const tagList = [...counts.entries()].sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0]));
-      tagChips.innerHTML = tagList.map(([t,c])=>
-        `<button type="button" class="tag-chip${selectedTags.has(t)?' active':''}" data-tag="${esc(t)}">${esc(t)} <span class="tag-count">${c}</span></button>`
-      ).join('');
-      tagClearBtn.style.display = selectedTags.size>0 ? '' : 'none';
-    }
-    function applyFilters(){
-      const q = input.value.toLowerCase();
-      let items = unique.filter(u =>
-        u.name.toLowerCase().includes(q) ||
-        u.playlist.toLowerCase().includes(q)
-      );
-      if(mode==='played') items = items.filter(u=>u.score>0);
-      if(mode==='unplayed') items = items.filter(u=>u.score===0);
-      if(mode==='played' && unrankedOnly) items = items.filter(u=>u.score>0 && achievedIndex(u.score,u.tiers)<0);
-      if(selectedTags.size>0) items = items.filter(u=>u.tags.some(t=>selectedTags.has(t)));
-      if(diffFilter!=='all') items = items.filter(u=>u.diff===diffFilter);
-
-      // Same "recompute what's actually on screen" approach as the tag
-      // chips: options reflect the benchmark titles present among cards
-      // matching every other active filter.
-      // Each difficulty of the same playlist is its own distinct entry here
-      // (matches the Shared page) — not deduped down to just the playlist
-      // name, so this dropdown alone can pin a specific playlist variant
-      // without needing the separate Desired Difficulty filter.
-      const playlistCounts = new Map();
-      items.forEach(u=>{
-        const key = JSON.stringify([u.playlist, u.difficulty]);
-        playlistCounts.set(key, (playlistCounts.get(key)||0)+1);
-      });
-      const playlistKeys = [...playlistCounts.keys()].sort((a,b)=>a.localeCompare(b));
-      if(playlistFilter!=='all' && !playlistCounts.has(playlistFilter)) playlistFilter = 'all';
-      playlistSelect.innerHTML = '<option value="all">All ('+items.length+')</option>'
-        + playlistKeys.map(k=>{
-            const [pl, diff] = JSON.parse(k);
-            return `<option value="${esc(k)}" ${k===playlistFilter?'selected':''}>${esc(pl)} &middot; ${esc(diff)} (${playlistCounts.get(k)})</option>`;
-          }).join('');
-      playlistSelect.value = playlistFilter;
-      if(playlistFilter!=='all') items = items.filter(u=>JSON.stringify([u.playlist, u.difficulty])===playlistFilter);
-
-      uniqCount.textContent = items.length+' of '+unique.length+' scenarios';
-      renderTagChips(items);
-      let sorted = items;
-      if(sortMode==='tomax-asc') sorted = [...items].sort((a,b)=>a._prog.toMax-b._prog.toMax);
-      else if(sortMode==='tomax-desc') sorted = [...items].sort((a,b)=>b._prog.toMax-a._prog.toMax);
-      else if(sortMode==='to2nd-asc') sorted = [...items].sort((a,b)=>a._prog.to2nd-b._prog.to2nd);
-      else if(sortMode==='to2nd-desc') sorted = [...items].sort((a,b)=>b._prog.to2nd-a._prog.to2nd);
-      else if(sortMode==='tonext-asc') sorted = [...items].sort((a,b)=>a._prog.toNext-b._prog.toNext);
-      else if(sortMode==='tonext-desc') sorted = [...items].sort((a,b)=>b._prog.toNext-a._prog.toNext);
-      else sorted = [...items].sort((a,b)=>a.name.localeCompare(b.name));
-      draw(sorted);
-    }
-    input.addEventListener('input', applyFilters);
-    wrap.querySelectorAll('.ft-btn').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        wrap.querySelectorAll('.ft-btn').forEach(b=>b.classList.remove('active'));
-        btn.classList.add('active');
-        mode = btn.dataset.mode;
-        unrankedWrap.style.display = mode==='played' ? '' : 'none';
-        if(mode!=='played' && unrankedOnly){ unrankedOnly=false; unrankedCb.checked=false; }
-        applyFilters();
-      });
-    });
-    sortSelect.addEventListener('change', ()=>{
-      sortMode = sortSelect.value;
-      applyFilters();
-    });
-    diffSelect.addEventListener("change", ()=>{
-      diffFilter = diffSelect.value;
-      applyFilters();
-    });
-    playlistSelect.addEventListener('change', ()=>{
-      playlistFilter = playlistSelect.value;
-      applyFilters();
-    });
-    unrankedCb.addEventListener('change', ()=>{
-      unrankedOnly = unrankedCb.checked;
-      applyFilters();
-    });
-    tagChips.addEventListener('click', (e)=>{
-      const chip = e.target.closest('.tag-chip');
-      if(!chip) return;
-      const t = chip.dataset.tag;
-      if(selectedTags.has(t)) selectedTags.delete(t); else selectedTags.add(t);
-      applyFilters();
-    });
-    tagClearBtn.addEventListener('click', ()=>{
-      selectedTags.clear();
-      applyFilters();
-    });
+    tagClearBtn.addEventListener('click', ()=>{ st.tags.clear(); applyFilters(); });
     applyFilters();
   }
 
@@ -2300,8 +2262,48 @@
         <input type="text" id="settings-stats-folder" placeholder="C:\\Program Files (x86)\\Steam\\steamapps\\common\\FPSAimTrainer\\FPSAimTrainer\\stats" />
         <span class="hint">Browsers won't let a page open this automatically — Sync Scores Locally always needs you to pick it in the native dialog. This is just a saved note so the path is easy to copy, whether that's for finding the folder faster or pasting into sync.ps1's sync-state.json.</span>
       </div>
+
+      <h2 class="pagehead" style="margin-top:36px;">Your scores</h2>
+      <p class="sub">Synced scores live in <em>this browser's</em> storage for <em>this address</em> only &mdash; a copy opened from a different folder, port, or site starts empty, and clearing browser data wipes them. Export is your backup and your way to carry them across; import merges a backup in and never lowers a score.</p>
+      <div class="meta" id="scores-summary"></div>
+      <div class="import-actions" style="margin-top:14px;">
+        <button type="button" class="import-btn" id="scores-export-btn">Export scores (.json)</button>
+        <label class="import-btn secondary" style="cursor:pointer;">Import scores (.json)<input type="file" id="scores-import-file" accept="application/json,.json" style="display:none;" /></label>
+      </div>
+      <div id="scores-import-error" class="import-error"></div>
+      <span class="hint" style="display:block;max-width:560px;margin-top:10px;">${IS_TOOLKIT_TEMPLATE
+        ? 'To bake an export into your tracker file itself (so a fresh browser or a hosted copy starts with them), run <code>apply-scores.ps1 -Scores &lt;export.json&gt; -Html &lt;your-copy.html&gt;</code> from the toolkit folder.'
+        : 'To bake an export into <code>mini_evxl.html</code> on disk (what the published artifact is built from), run <code>apply-scores.ps1 -Scores &lt;export.json&gt;</code> from the tracker folder, then republish.'}</span>
     `;
     app.innerHTML=''; app.appendChild(wrap);
+
+    // ---- export / import -------------------------------------------------
+    const scoresSummary = wrap.querySelector('#scores-summary');
+    const scoresErr = wrap.querySelector('#scores-import-error');
+    function paintScoresSummary(extra){
+      scoresSummary.textContent = fmt(SCORES.size)+' scenario score'+(SCORES.size===1?'':'s')+' stored in this browser'+(extra ? ' — '+extra : '');
+    }
+    paintScoresSummary('');
+    wrap.querySelector('#scores-export-btn').addEventListener('click', ()=>{
+      const payload = exportScoresPayload();
+      const blob = new Blob([JSON.stringify(payload, null, 1)], {type:'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'mini-evxl-scores-'+new Date().toISOString().slice(0,10)+'.json';
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+      paintScoresSummary('exported '+fmt(payload.count));
+    });
+    wrap.querySelector('#scores-import-file').addEventListener('change', async (e)=>{
+      scoresErr.textContent='';
+      const f = e.target.files[0]; e.target.value='';
+      if(!f) return;
+      try{
+        const res = importScoresText(await f.text());
+        paintScoresSummary(res.raised+' raised, '+res.unchanged+' already as high or higher, from '+f.name);
+        if(res.raised>0) updateTopnavSource();
+      }catch(err){ scoresErr.textContent = err.message || String(err); }
+    });
 
     function bindField(inputId, savedId, key){
       const input = wrap.querySelector('#'+inputId);
@@ -2322,14 +2324,12 @@
   }
 
   function route(){
-    const hash = location.hash.replace(/^#\/?/, '');
-    setActiveNav(hash.startsWith('bench/') ? hash : hash);
+    const { route: hash, params } = readHash();
+    setActiveNav(hash);
     if(hash.startsWith('bench/')){
       renderBenchDetail(Number(hash.slice('bench/'.length)));
-    } else if(hash==='shared'){
-      renderShared();
-    } else if(hash==='unique'){
-      renderUnique();
+    } else if(hash==='shared' || hash==='unique'){
+      renderScenarioList(hash, params);
     } else if(hash==='import'){
       renderImport();
     } else if(hash==='exclude'){
@@ -2337,10 +2337,15 @@
     } else if(hash==='settings'){
       renderSettings();
     } else {
-      renderHome();
+      renderHome(params);
     }
-    window.scrollTo(0,0);
+    // Scroll to top on a real page change, but not on a same-page re-render
+    // (a finished sync re-routes to refresh numbers — losing your scroll
+    // position for that would be a regression, not a feature).
+    if(hash !== lastRoute) window.scrollTo(0,0);
+    lastRoute = hash;
   }
+  let lastRoute = null;
 
   navHome.addEventListener('click', ()=>{ location.hash='#/'; });
   navShared.addEventListener('click', ()=>{ location.hash='#/shared'; });
@@ -2426,12 +2431,14 @@
     navSyncLocal.disabled = true;
     setSyncStatus('Syncing…');
     try{
-      const { changes, filesScanned } = await runLocalFolderSync(localStatsInput.files);
-      if(changes.length>0){
-        setSyncStatus(changes.length+' score'+(changes.length===1?'':'s')+' updated ('+filesScanned+' files scanned)', 6000);
+      const { changes, filesScanned, filesSkipped } = await runLocalFolderSync(localStatsInput.files);
+      const n = countScenarios(changes);
+      const scanned = filesScanned+' file'+(filesScanned===1?'':'s')+' read'+(filesSkipped>0 ? ', '+filesSkipped+' already synced' : '');
+      if(n>0){
+        setSyncStatus(n+' score'+(n===1?'':'s')+' updated ('+scanned+')', 6000);
         route();
       } else {
-        setSyncStatus('Up to date ('+filesScanned+' files scanned)', 4000);
+        setSyncStatus('Up to date ('+scanned+')', 4000);
       }
     }catch(e){
       setSyncStatus('Error: '+(e && e.message ? e.message : e), 10000);
@@ -2440,6 +2447,33 @@
       localStatsInput.value = ''; // reset so picking the same folder again still fires 'change'
     }
   });
+
+  // ---- theme -------------------------------------------------------------
+  // The CSS already understands data-theme="light"/"dark" on <html> (with
+  // the OS preference as the fallback) — this just gives it a hand to hold.
+  // Hidden when embedded: the artifact viewer stamps data-theme itself, and
+  // two hands on the same attribute would fight.
+  const THEME_KEY = 'mini-evxl-theme';
+  const themeBtn = document.getElementById('theme-toggle');
+  function applyTheme(){
+    const t = localStorage.getItem(THEME_KEY);
+    if(t==='light' || t==='dark') document.documentElement.setAttribute('data-theme', t);
+    else document.documentElement.removeAttribute('data-theme');
+    themeBtn.innerHTML = t==='light' ? '&#9788;' : t==='dark' ? '&#9790;' : '&#9681;';
+    themeBtn.title = t==='light' ? 'Theme: light (forced). Click for dark.'
+      : t==='dark' ? 'Theme: dark (forced). Click to follow your system.'
+      : 'Theme: follows your system. Click to force light.';
+  }
+  if(isEmbedded()){ themeBtn.style.display='none'; }
+  else {
+    applyTheme();
+    themeBtn.addEventListener('click', ()=>{
+      const t = localStorage.getItem(THEME_KEY);
+      const next = t==='light' ? 'dark' : t==='dark' ? null : 'light';
+      try{ if(next) localStorage.setItem(THEME_KEY, next); else localStorage.removeItem(THEME_KEY); }catch(e){}
+      applyTheme();
+    });
+  }
 
   updateTopnavSource();
   route();

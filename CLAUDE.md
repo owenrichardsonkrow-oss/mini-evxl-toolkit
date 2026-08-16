@@ -90,6 +90,16 @@ non-excluded playlist references it.** `getParsedBenchmarks()` implements it, so
 orphaning and exclusion are the same mechanism and neither touches scores. It
 assigns `index` before filtering so `#/bench/N` links stay stable.
 
+**Every score display goes through `parsedItemsFor(b)`** (the store overlay). The
+detail page once parsed raw rows instead — in this template, where every row is
+zeroed, that meant every detail page showed 0 after a sync. Fixed 2026-08-16.
+
+**The store is per browser and per origin** (`file://`, `localhost:9500`, a Pages
+URL are separate stores). Settings → *Your scores* has Export / Import (JSON,
+max-merge), and `apply-scores.ps1 -Scores <export.json> -Html <copy.html>` bakes
+an export into a tracker file's rows. That's the user's backup and their way to
+carry scores between copies.
+
 Score-only by design — tier thresholds belong to the playlist, so an orphaned
 scenario has nothing to draw a bar against and doesn't render.
 
@@ -120,8 +130,17 @@ by re-scraping that page in the tracker repo and regenerating.
 
 ## Rules that are easy to break
 
-- **Shared and Unique scenario cards must stay visually identical**; both go through
-  `mergedProgress(...)`. Only the "# playlists" chip may differ.
+- **Shared and Unique scenario cards must stay visually identical** — both pages
+  are one function, `renderScenarioList(kind, params)` (config in `SCEN_LIST`;
+  unique entries carry `playlists: [entry]`). Only the "# playlists" chip and the
+  min/max range are shared-only. Don't fork it again.
+- **`achievedIndex()` is the one tier rule** (threshold ≤ 0 never reads as
+  cleared) for bars, labels and the rank engine alike.
+- **Filter state lives in the hash query** (`#/shared?q=..`, `#/?sort=..`),
+  written with `replaceState`; new filters go into `st` + `syncUrl()`. Long lists
+  use `drawChunked()`; search inputs are debounced.
+- **Keep the leading `<!DOCTYPE html>` + charset + viewport** — without them a
+  double-clicked or Pages-hosted copy renders in quirks mode.
 - **Any new cache keyed off `BENCHMARKS` must be reset in `invalidateCaches()`.**
 - **`BENCHMARKS` is deep-cloned before patching** so `DEFAULT_BENCHMARKS` survives
   for reset-to-demo.
@@ -151,6 +170,13 @@ by re-scraping that page in the tracker repo and regenerating.
   locally"). Rank is deliberately *not* taken from kovaaks.com's
   `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
   non-equivalent rank system and would mix two taxonomies under one UI.
+- The home tile "Scenarios played on KovaaK's" is `all-played`'s size (whole
+  account, from the last online sync). It replaced "Lifetime runs", which summed
+  `total-play`'s play counts — an endpoint missing most of the history.
+- `apply-scores.ps1` (identical to the tracker's copy) bakes a Settings-page
+  export into a tracker file; `-Html` defaults to `sync-state.json`'s
+  `trackerHtml` here. Sync Scores Locally skips CSVs older than the newest it has
+  already read (`mini-evxl-local-sync-newest-ms`).
 
 ## Directions already evaluated and closed
 

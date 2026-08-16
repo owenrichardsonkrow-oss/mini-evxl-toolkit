@@ -82,6 +82,19 @@ doesn't have that problem, since it never makes a network request.
 
 Either way, the per-playlist rank badge recomputes from your scores automatically.
 
+**Where your scores actually live, and how to keep them.** Synced scores are
+stored in your browser's local storage *for the address you opened the file at*.
+Open the same file from a different folder, a different port, or a hosted URL and
+it starts empty; clear browser data and they're gone. So:
+
+- **Settings → Your scores → Export** saves them as a small `.json`. Do this
+  after a big sync. **Import** merges a backup in (it never lowers a score), which
+  is also how you carry scores from one copy of the tracker to another.
+- **`apply-scores.ps1`** bakes an export into a tracker HTML file itself, so a
+  fresh browser or a hosted copy starts with your scores already in place:
+  `.\apply-scores.ps1 -Scores mini-evxl-scores-2026-08-16.json -Html my-benchmarks.html`
+  (add `-WhatIf` to see what it would change without writing).
+
 **`sync.ps1`** — a scriptable equivalent to Sync Scores Locally, reading the same
 local stats folder and writing the patched score directly into your tracker HTML on
 disk instead of browser storage. Useful for a permanent on-disk copy or an
@@ -156,6 +169,8 @@ open `http://localhost:8744`.
   this toolkit itself, not using it.
 - `sync.ps1` / `sync-state.example.json` — the local-sync script and its config
   template — an alternative to the in-browser Sync Scores button, see above.
+- `apply-scores.ps1` — bakes a Settings-page scores export into a tracker HTML
+  file (see "Where your scores actually live").
 - `docs/SCRAPING_GUIDE.md` — how to pull a dataset off evxl.app from scratch, only
   needed if you want playlists outside what's already pre-loaded in the template.
 
