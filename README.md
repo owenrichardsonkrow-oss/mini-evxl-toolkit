@@ -120,12 +120,14 @@ Sync Scores in the browser first (reads all-time data from KovaaK's servers), th
 
 **About the rank badge**: it's computed locally from your scores using evxl's own
 rules. Every benchmark on evxl declares how its rank is calculated (a "mode"), and
-this tracker ports those modes — 39 of evxl's 41, each verified against evxl's
-own calculation, covering 246 of the 251 playlists. For the remaining five (a
-benchmark that ranks *your own* scenario selection, and two that come from an
-external service), the badge shows the stricter "every scenario at that tier"
-reading, which is exactly evxl's "X Complete" rank — accurate, just conservative
-— and the playlist page marks it with a • so you know. Volts is computed the same
+this tracker ports those modes — 40 of evxl's 41, each verified against evxl's
+own calculation, covering 249 of the 251 playlists. For the remaining two (both
+scored by an external service), the badge shows the stricter "every scenario at
+that tier" reading, which is exactly evxl's "X Complete" rank — accurate, just
+conservative — and the playlist page marks it with a • so you know. REVENGE
+Benchmark is a *pool*: its playlist carries 48 scenarios and evxl ranks the best
+of the 24 you select — the tracker starts from evxl's default pick and lets you
+tick your own on the playlist page (kept in your browser). Volts is computed the same
 way evxl computes it (100 per scenario at max tier, uncapped) and shown next to
 each playlist's completion percentage. Neither sync method needs to touch evxl for
 any of this. The rank rules and the volts formula are evxl's own; this tracker

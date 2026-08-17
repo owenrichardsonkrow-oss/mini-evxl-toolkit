@@ -114,12 +114,21 @@ the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
 dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
 `evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
 catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
-39 of evxl's 41 modes — 246 of 251 playlists (each proven against evxl's own
-code by the tracker repo's differential test). The other 5 are unportable by
-design (`selectable-top-n` ranks the user's own scenario selection; `aimbeast`
-comes from Aimbeast's service) and show the Complete reading only,
-flagged `modeSupported:false`; the detail page's Rank label carries a • that says
-so. `rankReq` survives only as a legacy per-entry override.
+40 of evxl's 41 modes — 249 of 251 playlists (each proven against evxl's own
+code by the tracker repo's differential test). The other 2 are unportable by
+design (`aimbeast` comes from Aimbeast's service) and show the Complete reading
+only, flagged `modeSupported:false`; the detail page's Rank label carries a •
+that says so. `rankReq` survives only as a legacy per-entry override.
+
+**Pool benchmarks (`selectable-top-n`, REVENGE Benchmark ×3, 2026-08-17):** the
+entry holds the whole 48-scenario pool (what the KovaaK's playlist plays) plus a
+`selection` block stamped from the catalog (`select 24, baseN 9, fullN 18, minCat
+8, minSub 4`). The page computes evxl's default pick (first 4 per subcategory)
+unless the user ticks their own on the detail page (per-browser
+`mini-evxl-scenario-selection`, like exclusions); rank = tier of the 9th-best
+scored selected scenario (18th when the whole pool is selected), Unranked under
+the minimums. `parsedItemsFor()` returns the selected subset, `parsedPoolFor()`
+the whole pool with `selected` flags; score patching covers the pool.
 
 Volts is back, computed from evxl's own formula (read out of its bundle): each
 scenario earns score ÷ top-tier threshold × 100 (uncapped), summed and rounded;

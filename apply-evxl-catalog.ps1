@@ -78,6 +78,23 @@ foreach ($x in $data) {
     $x | Add-Member -NotePropertyName evxlTiers -NotePropertyValue @($m.tiers) -Force
     $x | Add-Member -NotePropertyName evxlRankOffset -NotePropertyValue ([int]$m.offset) -Force
     $x | Add-Member -NotePropertyName evxlDiffIndex -NotePropertyValue ([int]$m.idx) -Force
+    # selectable-top-n benchmarks (REVENGE): the difficulty carries a
+    # scenarioSelection block -- the player picks `selectCount` of the pool and
+    # the rank is the N-th best of the picks. Stamped as `selection` so the page
+    # can compute evxl's default pick and apply the same rule; absent otherwise.
+    $sel = $m.d.scenarioSelection
+    if ($sel -and $sel.enabled) {
+        $x | Add-Member -NotePropertyName selection -NotePropertyValue ([ordered]@{
+            select  = [int]$sel.selectCount
+            baseN   = [int]($sel.baseRankScoreCount ?? $sel.requiredScoreCount ?? 12)
+            fullN   = $(if ($null -ne $sel.fullPoolRankScoreCount) { [int]$sel.fullPoolRankScoreCount } else { $null })
+            minCat  = [int]($sel.minPerCategory ?? 0)
+            minSub  = [int]($sel.minPerSubcategory ?? 0)
+            maxSelect = $(if ($null -ne $sel.maxSelectCount) { [int]$sel.maxSelectCount } else { $null })
+        }) -Force
+    } elseif ($x.PSObject.Properties['selection']) {
+        $x.PSObject.Properties.Remove('selection')
+    }
     $stamped++
     if (($x | ConvertTo-Json -Depth 10 -Compress) -ne $before) { $changed++ }
 }
