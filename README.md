@@ -13,10 +13,12 @@ copy, for free, with their own data.
 
 1. Open `template.html` in a browser (double-click it, or serve it with anything
    static — GitHub Pages works too, see below).
-2. Click **⟳ Sync Scores Online** (top right) and enter your KovaaK's username
-   (Settings → Profile in-game — often *not* your Steam name). Or, if you'd rather
-   not touch the network, **⟳ Sync Scores Locally** and pick your KovaaK's stats
-   folder (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
+2. Type your KovaaK's username into the **Start here** box on the home page and
+   press **⟳ Sync my scores** (Settings → Profile in-game — often *not* your Steam
+   name; a typo gets a "no player found" message and nothing is saved). The same
+   thing is always available as **⟳ Sync Scores Online** top right. Or, if you'd
+   rather not touch the network, **⟳ Sync Scores Locally** and pick your KovaaK's
+   stats folder (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
 
 That's it. `template.html` ships pre-loaded with every evxl-tracked playlist's
 structure — scenario lists, category groupings, tier thresholds — the same
@@ -94,7 +96,12 @@ Either way, the per-playlist rank badge recomputes from your scores automaticall
 **Where your scores actually live, and how to keep them.** Synced scores are
 stored in your browser's local storage *for the address you opened the file at*.
 Open the same file from a different folder, a different port, or a hosted URL and
-it starts empty; clear browser data and they're gone. So:
+it starts empty; clear browser data and they're gone. (Browser storage is shared
+across every page on the same host, so the template's keys carry their own
+prefix, `mini-evxl-template-…` — a personal copy of the tracker published on the
+same host keeps its own store and never leaks into yours. Stores written by
+template builds from before 2026-08-17 used the unprefixed keys; Export from that
+build and Import into this one to carry them over.) So:
 
 - **Settings → Your scores → Export** saves them as a small `.json`. Do this
   after a big sync. **Import** merges a backup in (it never lowers a score), which

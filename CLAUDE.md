@@ -103,7 +103,11 @@ preview tabs cache aggressively. `static-server.ps1`'s MIME map must keep
 ## Data model — three independent stores
 
 1. **Playlist structure** — `BENCHMARKS`, replaced wholesale by an upload.
-2. **Scenario scores** — `SCORES` (`localStorage['mini-evxl-scenario-scores']`),
+2. **Scenario scores** — `SCORES` (`localStorage[storeKey('scenario-scores')]`;
+   every key is `SITE.storePrefix + '-' + name`, and the template's prefix is
+   **`mini-evxl-template`** — set by the personal repo's `build.ps1` — so a
+   personal build and the template hosted on one origin never share a store;
+   localStorage is per origin, not per path, verified 2026-08-17 on GitHub Pages),
    an **append-only** name→score map. `recordScores()` never lowers a value, so
    the template's empty seed can't wipe a synced score, and an upload that
    drops playlists never destroys their scores. Cleared only by an explicit
@@ -223,9 +227,17 @@ card. The template now holds 251 entries / 127 playlists.
   `visibilitychange` → visible: one request to `user/activity/recent?username=`
   (last 10 events; `HIGH_SCORE` entries carry `scenarioName` + `score`, same scale
   as `last-scores/by-name`), patched through `patchScoresFromMap(map,'auto')`,
-  marker `mini-evxl-auto-check` `{at,newest}`, 60 s min gap, silent on failure,
-  off when embedded, Settings checkbox → `mini-evxl-auto-check-off`. Feed is 10
+  marker `storeKey('auto-check')` `{at,newest}`, 60 s min gap, silent on failure,
+  off when embedded, Settings checkbox → `storeKey('auto-check-off')`. Feed is 10
   deep: when all 10 are unseen it points at Sync Scores Online.
+- **First-run panel** (2026-08-17) — on the template's home while the store is
+  empty (`IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0`): username
+  field + "Sync my scores" (Enter or click) → `doSync(false, name)` →
+  `runKovaaksSync(…, presetUsername)`; status mirrored into `#first-run-status`
+  by `setSyncStatus`; the panel makes way once scores land; a saved username is
+  prefilled (reset case). Unknown usernames come back from `total-play` as
+  `200 null`, mapped to the "no player found" message. "Clear synced data" on
+  the Load Your Data page now also shows for synced-only template stores.
 - Both feed the locally computed rank badge automatically (see "Rank is computed
   locally"). Rank is deliberately *not* taken from kovaaks.com's
   `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a

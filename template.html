@@ -327,6 +327,21 @@
     background:var(--accent-soft); border:1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     color:var(--accent-text); font-size:13.5px; line-height:1.5;
   }
+  /* First-run panel (toolkit template, empty store): the banner grown a form. */
+  .template-banner.first-run { color:var(--text); padding:16px 18px 14px; }
+  .template-banner.first-run p { margin:6px 0 12px; color:var(--text-dim); }
+  .fr-title { font-weight:600; font-size:14.5px; color:var(--accent-text); }
+  .fr-form { display:flex; gap:10px; flex-wrap:wrap; align-items:stretch; }
+  .fr-form input[type="text"] {
+    flex:1 1 220px; min-width:0; background:var(--surface); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); font-family:ui-monospace,monospace; font-size:13px; padding:9px 12px;
+  }
+  .fr-form input[type="text"]:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  .fr-form .import-btn { white-space:nowrap; }
+  .fr-form .import-btn:disabled, .fr-form input:disabled { opacity:.6; cursor:default; }
+  .fr-hint { margin-top:10px; font-size:12px; color:var(--text-faint); line-height:1.5; }
+  .fr-hint a { color:var(--link); }
+  .fr-status { margin-top:8px; font-size:12.5px; color:var(--accent-text); min-height:1.2em; }
 
   :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   @media (prefers-reduced-motion: no-preference) { .card, .stat { transition: background-color .15s ease; } }
@@ -1422,16 +1437,22 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // The toolkit template's identity: no owner, no default username, no
   // profile links. Visitors fill their own in under Settings. This block is
   // written by build.ps1 -Template from the personal copy's SITE block.
+  // storePrefix differs from the personal copy's on purpose: localStorage is
+  // per origin, and a personal page and this template served from the same
+  // host (e.g. one GitHub Pages user) must not share a score store.
   const SITE = {
     template: true,
     owner: '',
     defaultUsername: '',
     steamUrl: '',
     steamLabel: '',
-    evxlProfileUrl: ''
+    evxlProfileUrl: '',
+    storePrefix: 'mini-evxl-template'
   };
   // ---- end site identity -------------------------------------------------
   const IS_TOOLKIT_TEMPLATE = !!SITE.template;
+  const STORE_PREFIX = String(SITE.storePrefix||'mini-evxl');
+  const storeKey = s => STORE_PREFIX+'-'+s;
   // The engine (src/engine.js, inlined just above this script by build.ps1).
   const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios } = MiniEvxlEngine;
 
@@ -1449,7 +1470,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     }catch(e){}
     return m;
   })();
-  const IMPORT_KEY = 'mini-evxl-imported-data';
+  const IMPORT_KEY = storeKey('imported-data');
   let BENCHMARKS = DEFAULT_BENCHMARKS;
   let usingImported = false;
   let importedSeedScores = null;   // scores carried by the saved import (v1 rows / v2 payload), seeded below
@@ -1478,7 +1499,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // not of the score, so a scenario no active playlist references simply
   // doesn't render — there's nothing to draw a bar against, and re-uploading
   // its playlist restores the correct thresholds along with it.
-  const SCORES_KEY = 'mini-evxl-scenario-scores';
+  const SCORES_KEY = storeKey('scenario-scores');
   const SCORES = new Map();
   try{
     const rawScores = localStorage.getItem(SCORES_KEY);
@@ -1503,7 +1524,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // from the file's own rows, which isn't a play event): {t, name, from, to,
   // src}. Capped; cleared with the store on reset-to-demo. Local telemetry —
   // deliberately not part of the scores export.
-  const HISTORY_KEY = 'mini-evxl-score-history';
+  const HISTORY_KEY = storeKey('score-history');
   const HISTORY_CAP = 4000;
   let HISTORY = [];
   try{ const h = JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]'); if(Array.isArray(h)) HISTORY = h.filter(e=>e && Number.isFinite(e.t) && e.name); }catch(e){}
@@ -1567,7 +1588,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // name+difficulty keys so exclusions survive a dataset re-upload, and
   // JSON-encoded rather than joined with a delimiter character — a literal
   // separator byte in a composite key has bitten this file before.
-  const EXCLUDE_KEY = 'mini-evxl-excluded-playlists';
+  const EXCLUDE_KEY = storeKey('excluded-playlists');
   const EXCLUDED = new Set();
   function benchKey(b){ return JSON.stringify([b.name, b.difficulty]); }
   try{
@@ -1606,7 +1627,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
 
-  const SELECTION_KEY = 'mini-evxl-scenario-selection';
+  const SELECTION_KEY = storeKey('scenario-selection');
   let SELECTION = {};
   try{ const raw = JSON.parse(localStorage.getItem(SELECTION_KEY)||'{}'); if(raw && typeof raw==='object' && !Array.isArray(raw)) SELECTION = raw; }catch(e){}
   function saveSelection(){ try{ localStorage.setItem(SELECTION_KEY, JSON.stringify(SELECTION)); }catch(e){} }
@@ -1828,7 +1849,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
     try{ localStorage.removeItem(PLAYED_KEY); }catch(e){}
     try{ localStorage.removeItem(LOCAL_SYNC_MARK_KEY); }catch(e){}
-    try{ localStorage.removeItem('mini-evxl-auto-check'); }catch(e){}
+    try{ localStorage.removeItem(storeKey('auto-check')); }catch(e){}
     updateTopnavSource();
   }
   function updateTopnavSource(){
@@ -1868,11 +1889,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // scenario shared across playlists gets patched everywhere it appears.
   // Patches funnel through loadBenchmarks(), same as every other data path
   // on this page.
-  const KOVAAKS_USERNAME_KEY = 'mini-evxl-kovaaks-username';
+  const KOVAAKS_USERNAME_KEY = storeKey('kovaaks-username');
   const DEFAULT_KOVAAKS_USERNAME = String(SITE.defaultUsername||'');
-  const STEAM_LINK_KEY = 'mini-evxl-steam-link';
-  const EVXL_LINK_KEY = 'mini-evxl-evxl-link';
-  const STATS_FOLDER_NOTE_KEY = 'mini-evxl-stats-folder-note';
+  const STEAM_LINK_KEY = storeKey('steam-link');
+  const EVXL_LINK_KEY = storeKey('evxl-link');
+  const STATS_FOLDER_NOTE_KEY = storeKey('stats-folder-note');
   // The two profile links: the Settings value when set, else the site default.
   // Steam shows top-right; evxl gives every playlist page an "open on evxl"
   // link (evxl's URL is /u/<steamid64>/<playlist>/<difficulty>).
@@ -1901,7 +1922,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     return n.toLocaleString(undefined,{maximumFractionDigits:2});
   }
 
-  function getKovaaksUsername(forcePrompt){
+  // presetUsername: the first-run panel on the template hands the typed name
+  // straight in, so no window.prompt() appears on top of a form that just
+  // asked the same question.
+  function getKovaaksUsername(forcePrompt, presetUsername){
+    if(presetUsername && String(presetUsername).trim()) return String(presetUsername).trim();
     let name = forcePrompt ? null : (localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME || null);
     if(!name){
       const entered = window.prompt("Your KovaaK's username, as shown on kovaaks.com (Settings → Profile in-game — this is often NOT your Steam name):");
@@ -1933,9 +1958,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   if(importedSeedScores) recordScores(importedSeedScores, 'seed');
 
   // {total, tracked, at} from the last online sync's all-played response.
-  const PLAYED_KEY = 'mini-evxl-kovaaks-played';
+  const PLAYED_KEY = storeKey('kovaaks-played');
   // The stat this replaced. Clear the old key once so it doesn't linger.
-  try{ localStorage.removeItem('mini-evxl-lifetime-runs'); }catch(e){}
+  try{ localStorage.removeItem(storeKey('lifetime-runs')); }catch(e){}
   function readPlayedStat(){
     try{
       const o = JSON.parse(localStorage.getItem(PLAYED_KEY)||'null');
@@ -1951,7 +1976,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     }
     if(!first.ok) throw new Error('KovaaK\'s API returned an error (status '+first.status+').');
     const firstBody = await first.json();
-    if(!firstBody || !Array.isArray(firstBody.data)) throw new Error('No score data returned for that username.');
+    // Unknown usernames come back as 200 with a literal null body (checked
+    // 2026-08-17), not 404 — treat that like "no such player" so a typo gets
+    // the useful hint instead of a generic line.
+    if(!firstBody) throw new Error('No KovaaK\'s player found for username "'+username+'" — double check it (Settings → Profile in-game, not your Steam name).');
+    if(!Array.isArray(firstBody.data)) throw new Error('No score data returned for that username.');
 
     const total = Number(firstBody.total) || firstBody.data.length;
     const pageCount = Math.ceil(total/100);
@@ -2161,11 +2190,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     return { found, done, aborted, stopped: syncAbort };
   }
 
-  async function runKovaaksSync(forcePrompt, onProgress){
+  async function runKovaaksSync(forcePrompt, onProgress, presetUsername){
     if(BENCHMARKS.length===0){
       throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
     }
-    const username = getKovaaksUsername(forcePrompt);
+    const username = getKovaaksUsername(forcePrompt, presetUsername);
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
     syncAbort = false;
 
@@ -2222,7 +2251,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // every time, but only what's new needs reading. Safe because the store is
   // append-only: re-reading old files could never change anything anyway.
   // The marker is cleared by reset-to-demo along with the store itself.
-  const LOCAL_SYNC_MARK_KEY = 'mini-evxl-local-sync-newest-ms';
+  const LOCAL_SYNC_MARK_KEY = storeKey('local-sync-newest-ms');
   async function runLocalFolderSync(fileList){
     if(BENCHMARKS.length===0){
       throw new Error('Load Your Data first — there\'s no dataset yet for a sync to patch scores into.');
@@ -2497,14 +2526,29 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
         + '<span class="pr-val">'+fmt(e.from)+' &rarr; '+fmt(e.to)+esc(pct)+'</span></div>';
     }).join('');
 
+    // First-run panel: only the toolkit template, only while the store is
+    // empty (fresh visitor, or after "reset to blank template"). Replaces the
+    // old text banner that pointed at the top-right button. A saved username
+    // (reset case, or a sync that found nothing) is prefilled.
+    const showFirstRun = IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0;
+    const firstRunName = showFirstRun ? (localStorage.getItem(KOVAAKS_USERNAME_KEY) || '') : '';
     const wrap = document.createElement('div');
     wrap.className='wrap';
     wrap.innerHTML = `
       <div class="eyebrow"><span class="dot"></span> personal benchmark tracker</div>
       <h1>${usingImported ? 'Your KovaaK\'s benchmarks' : (IS_TOOLKIT_TEMPLATE ? 'KovaaK\'s Benchmark Tracker' : esc(String(SITE.owner||'my'))+'\'s KovaaK\'s benchmarks')}</h1>
       <p class="sub">A self-hosted view of all ${activeCount()} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
-      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : ownerMetaLine())}</div>
-      ${IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0 ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
+      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? (SCORES.size>0 ? 'YOUR SCORES &nbsp;&middot;&nbsp; synced from KovaaK\'s, kept in this browser only' : 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not') : ownerMetaLine())}</div>
+      ${showFirstRun ? `<div class="template-banner first-run" id="first-run">
+        <div class="fr-title">Start here &mdash; this is a blank template</div>
+        <p>Every evxl benchmark's playlists, scenarios and tier thresholds are already loaded; every score reads 0 until you pull yours in. Nothing is uploaded anywhere &mdash; your KovaaK's username is used only to read your own scores from kovaaks.com, and they stay in this browser.</p>
+        <form class="fr-form" id="first-run-form" autocomplete="off">
+          <input type="text" id="first-run-username" placeholder="Your KovaaK's username" spellcheck="false" aria-label="KovaaK's username" value="${esc(firstRunName)}" />
+          <button type="submit" class="import-btn" id="first-run-sync">&#8635; Sync my scores</button>
+        </form>
+        <div class="fr-hint">Settings &rarr; Profile in KovaaK's &mdash; often <em>not</em> your Steam name. The first sync reads one scenario at a time and can take a few minutes; stopping is safe, it picks up where it left off. Prefer no network? <a href="#" id="first-run-local">Sync Scores Locally</a> reads your KovaaK's stats folder instead.</div>
+        <div class="fr-status" id="first-run-status" aria-live="polite"></div>
+      </div>` : ''}
       <div class="stats">
         <div class="stat" title="${esc(playedTitle)}"><div class="val">${playedDisplay}</div><div class="label">Scenarios played on KovaaK's</div></div>
         <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${activeCount()}</span></div><div class="label">Benchmarks played</div></div>
@@ -2541,6 +2585,24 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     `;
     app.innerHTML='';
     app.appendChild(wrap);
+
+    if(showFirstRun){
+      const frForm = wrap.querySelector('#first-run-form');
+      const frInput = wrap.querySelector('#first-run-username');
+      const frBtn = wrap.querySelector('#first-run-sync');
+      const frSubmit = ()=>{
+        const name = frInput.value.trim();
+        if(!name){ frInput.focus(); return; }
+        if(syncRunning) return;
+        frBtn.disabled = true; frInput.disabled = true;
+        doSync(false, name).finally(()=>{ frBtn.disabled = false; frInput.disabled = false; });
+      };
+      frForm.addEventListener('submit', (e)=>{ e.preventDefault(); frSubmit(); });
+      // Explicit Enter: implicit submission rides on the keypress event, which
+      // some automation/embedded contexts never send; keydown always arrives.
+      frInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); frSubmit(); } });
+      wrap.querySelector('#first-run-local').addEventListener('click', (e)=>{ e.preventDefault(); localStatsInput.click(); });
+    }
 
     const grid = wrap.querySelector('#bench-grid');
     const withMeta = parsed.map(({benchmark,items,index})=>({
@@ -3135,7 +3197,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
         <textarea id="import-text" class="import-textarea" placeholder='[{"name":"...","difficulty":"...","tiers":["Iron","Bronze"],"groups":[{"category":"...","subcategory":"...","scenarios":[{"name":"...","thresholds":[100,200]}]}]}]' spellcheck="false"></textarea>
         <div class="import-actions">
           <button type="button" class="import-btn" id="import-load-btn">Load this data</button>
-          ${usingImported ? '<button type="button" class="import-btn secondary" id="import-reset-btn">'+(!IS_TOOLKIT_TEMPLATE ? 'Reset to demo data ('+esc(String(SITE.owner||'the owner'))+"'s)" : 'Clear synced data (reset to blank template)')+'</button>' : ''}
+          ${(usingImported || (IS_TOOLKIT_TEMPLATE && SCORES.size>0)) ? '<button type="button" class="import-btn secondary" id="import-reset-btn">'+(!IS_TOOLKIT_TEMPLATE ? 'Reset to demo data ('+esc(String(SITE.owner||'the owner'))+"'s)" : 'Clear synced data (reset to blank template)')+'</button>' : ''}
         </div>
         <div id="import-error" class="import-error"></div>
       </div>
@@ -3478,6 +3540,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   let syncStatusTimer = null;
   function setSyncStatus(text, ms){
     syncStatus.textContent = text;
+    // The template's first-run panel (if it's on screen) shows the same line
+    // next to its own button, so a visitor isn't sent hunting top-right.
+    const fr = document.getElementById('first-run-status');
+    if(fr) fr.textContent = text;
     if(syncStatusTimer) clearTimeout(syncStatusTimer);
     if(ms) syncStatusTimer = setTimeout(()=>{ syncStatus.textContent=''; }, ms);
   }
@@ -3512,7 +3578,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // in, and the store never lowers a value.
   let syncRunning = false;
   const navSyncLabel = navSync.innerHTML;
-  async function doSync(forcePrompt){
+  async function doSync(forcePrompt, presetUsername){
     if(syncRunning){
       syncAbort = true;
       setSyncStatus('Stopping…');
@@ -3524,9 +3590,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     try{
       const res = await runKovaaksSync(forcePrompt, (done,total)=>{
         setSyncStatus('Syncing '+done+' / '+total+'…');
-      });
+      }, presetUsername);
       const { msg, ms } = syncResultMessage(res);
       setSyncStatus(msg, ms);
+      // Re-render on changes (a first-run sync that found nothing leaves the
+      // panel up with its status line, ready for another try).
       if(res.changes.length>0) route();
     }catch(e){
       const d = describeSyncError(e);
@@ -3582,8 +3650,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // only (a run that didn't beat your record isn't a HIGH_SCORE event), which
   // is exactly what a max-only store needs. Off inside the embedded artifact
   // (its CSP blocks fetch anyway) and switchable in Settings.
-  const AUTO_CHECK_KEY = 'mini-evxl-auto-check';        // {at, newest} of the last check
-  const AUTO_CHECK_OFF_KEY = 'mini-evxl-auto-check-off'; // '1' = disabled (Settings)
+  const AUTO_CHECK_KEY = storeKey('auto-check');        // {at, newest} of the last check
+  const AUTO_CHECK_OFF_KEY = storeKey('auto-check-off'); // '1' = disabled (Settings)
   const AUTO_CHECK_MIN_GAP_MS = 60*1000;
   const ACTIVITY_FEED_DEPTH = 10;
   function autoCheckEnabled(){ return localStorage.getItem(AUTO_CHECK_OFF_KEY)!=='1'; }
@@ -3648,7 +3716,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // the OS preference as the fallback) — this just gives it a hand to hold.
   // Hidden when embedded: the artifact viewer stamps data-theme itself, and
   // two hands on the same attribute would fight.
-  const THEME_KEY = 'mini-evxl-theme';
+  const THEME_KEY = storeKey('theme');
   const themeBtn = document.getElementById('theme-toggle');
   function applyTheme(){
     const t = localStorage.getItem(THEME_KEY);
