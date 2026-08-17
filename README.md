@@ -76,6 +76,13 @@ scores are saved as they arrive and a sync never lowers a score, so a partial ru
 is just a shorter one — run it again later to pick up the rest. If KovaaK's starts
 refusing requests (they rate-limit bursts), the sync stops itself and tells you.
 
+**Auto-check** (on by default, Settings → *Auto-check recent plays*) — once a
+username is saved, opening the page or switching back to its tab makes **one**
+request to KovaaK's for your last 10 personal bests and pulls them straight in, so
+a playlist is current when you click it after a session. It never lowers a score.
+It only sees the last 10 events, so after a long session it will tell you to run
+Sync Scores Online for the rest.
+
 It can't reach kovaaks.com at all from inside a sandboxed embedded viewer like a
 Claude Artifact — those block all external network requests. Sync Scores Locally
 doesn't have that problem, since it never makes a network request.

@@ -1530,6 +1530,7 @@
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
     try{ localStorage.removeItem(PLAYED_KEY); }catch(e){}
     try{ localStorage.removeItem(LOCAL_SYNC_MARK_KEY); }catch(e){}
+    try{ localStorage.removeItem('mini-evxl-auto-check'); }catch(e){}
     updateTopnavSource();
   }
   function updateTopnavSource(){
@@ -3057,6 +3058,11 @@
       </div>
 
       <div class="settings-field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;"><input type="checkbox" id="settings-auto-check" /> Auto-check recent plays <span class="settings-saved" id="saved-auto-check">Saved</span></label>
+        <span class="hint">One request to KovaaK's when the page opens or comes back into view: your last 10 personal bests are pulled in on the spot, so a playlist is current when you click it. Runs off inside the embedded artifact. Anything older than those 10 still needs Sync Scores Online.</span>
+      </div>
+
+      <div class="settings-field">
         <label for="settings-steam">Steam Community link <span class="settings-saved" id="saved-steam">Saved</span></label>
         <input type="text" id="settings-steam" placeholder="https://steamcommunity.com/id/yourname/" />
         <span class="hint">Just kept for reference — nothing on this page reads it back.</span>
@@ -3135,6 +3141,15 @@
     bindField('settings-steam', 'saved-steam', STEAM_LINK_KEY);
     bindField('settings-evxl', 'saved-evxl', EVXL_LINK_KEY);
     bindField('settings-stats-folder', 'saved-stats-folder', STATS_FOLDER_NOTE_KEY);
+    const autoCb = wrap.querySelector('#settings-auto-check');
+    const autoSaved = wrap.querySelector('#saved-auto-check');
+    autoCb.checked = autoCheckEnabled();
+    autoCb.addEventListener('change', ()=>{
+      try{ if(autoCb.checked) localStorage.removeItem(AUTO_CHECK_OFF_KEY); else localStorage.setItem(AUTO_CHECK_OFF_KEY, '1'); }catch(e){}
+      autoSaved.classList.add('show');
+      setTimeout(()=>autoSaved.classList.remove('show'), 1500);
+      if(autoCb.checked) autoCheck('settings');
+    });
   }
 
   function route(){
@@ -3262,6 +3277,78 @@
     }
   });
 
+  // ---- auto-check ---------------------------------------------------------
+  // The evxl feel — open a playlist and the scores are already current —
+  // without the 1,000-request full sync. KovaaK's `user/activity/recent`
+  // returns the player's last 10 events (HIGH_SCORE ones carry scenarioName
+  // + score, same scale as last-scores/by-name), so one request on open, and
+  // again whenever the tab comes back into view after a KovaaK's session, is
+  // enough to pick up whatever was just played. It only ever *raises* scores
+  // through the same append-only store as a manual sync.
+  //
+  // Limits, by design: the feed is 10 events deep, so if more than 10
+  // personal bests landed since the last check the older ones are missed —
+  // the status line says so and points at Sync Scores Online. Personal bests
+  // only (a run that didn't beat your record isn't a HIGH_SCORE event), which
+  // is exactly what a max-only store needs. Off inside the embedded artifact
+  // (its CSP blocks fetch anyway) and switchable in Settings.
+  const AUTO_CHECK_KEY = 'mini-evxl-auto-check';        // {at, newest} of the last check
+  const AUTO_CHECK_OFF_KEY = 'mini-evxl-auto-check-off'; // '1' = disabled (Settings)
+  const AUTO_CHECK_MIN_GAP_MS = 60*1000;
+  const ACTIVITY_FEED_DEPTH = 10;
+  function autoCheckEnabled(){ return localStorage.getItem(AUTO_CHECK_OFF_KEY)!=='1'; }
+  async function fetchRecentHighScores(username){
+    const r = await fetch(KOVAAKS_BASE+'/user/activity/recent?username='+encodeURIComponent(username));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    if(!Array.isArray(j)) return [];
+    const out = [];
+    j.forEach(e=>{
+      if(!e || e.type!=='HIGH_SCORE') return;
+      const name = String(e.scenarioName||'').trim();
+      const score = Number(e.score);
+      const ts = Date.parse(e.timestamp||'') || 0;
+      if(name && Number.isFinite(score) && score>0) out.push({ name, score, ts });
+    });
+    return out;
+  }
+  let autoCheckRunning = false;
+  async function autoCheck(reason){
+    if(autoCheckRunning || syncRunning || isEmbedded() || !autoCheckEnabled() || BENCHMARKS.length===0) return;
+    const username = localStorage.getItem(KOVAAKS_USERNAME_KEY);
+    if(!username) return;
+    let state = null;
+    try{ state = JSON.parse(localStorage.getItem(AUTO_CHECK_KEY)||'null'); }catch(e){}
+    if(state && Date.now()-Number(state.at||0) < AUTO_CHECK_MIN_GAP_MS) return;
+    autoCheckRunning = true;
+    try{
+      const events = await fetchRecentHighScores(username);
+      const since = state ? Number(state.newest||0) : 0;
+      const fresh = events.filter(e=>e.ts > since);
+      const map = new Map();
+      fresh.forEach(e=>{ if(!map.has(e.name) || map.get(e.name) < e.score) map.set(e.name, e.score); });
+      const changes = map.size ? patchScoresFromMap(map, 'auto') : [];
+      let newest = since;
+      events.forEach(e=>{ if(e.ts > newest) newest = e.ts; });
+      try{ localStorage.setItem(AUTO_CHECK_KEY, JSON.stringify({ at: Date.now(), newest })); }catch(e){}
+      const n = countScenarios(changes);
+      // A full feed of unseen events means there may be more behind it.
+      const overflow = since>0 && events.length>=ACTIVITY_FEED_DEPTH && fresh.length===events.length;
+      if(n>0){
+        setSyncStatus('Auto-check: '+n+' score'+(n===1?'':'s')+' updated from your recent plays'+(overflow ? ' — more than '+ACTIVITY_FEED_DEPTH+' since the last check, run Sync Scores Online to catch the rest.' : '.'), overflow ? 12000 : 6000);
+        route();
+      } else if(overflow){
+        setSyncStatus('Auto-check: more than '+ACTIVITY_FEED_DEPTH+' plays since the last check — run Sync Scores Online to catch them all.', 12000);
+      }
+    }catch(e){
+      // Quiet by design: a background check that fails (kovaaks down, rate
+      // limit) shouldn't shout on every page open. The manual sync reports.
+    }finally{
+      autoCheckRunning = false;
+    }
+  }
+  document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') autoCheck('visible'); });
+
   // ---- theme -------------------------------------------------------------
   // The CSS already understands data-theme="light"/"dark" on <html> (with
   // the OS preference as the fallback) — this just gives it a hand to hold.
@@ -3295,5 +3382,6 @@
 
   updateTopnavSource();
   route();
+  autoCheck('open');
 })();
 </script>

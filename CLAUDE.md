@@ -133,7 +133,11 @@ their next tier, most playlists first) and **Recent improvements** (a local
 score-history log written by every sync/import raise; not exported).
 
 The scrape's only remaining purpose is **structure**; the tracker repo's
-`refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice.
+`refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice, and
+since 2026-08-17 the tracker's `weekly-refresh.ps1` (Task Scheduler, Sunday
+04:00) runs the whole chain unattended and **commits + pushes `template.html`
+here** when the structure moved — so a `template.html` commit titled "Weekly
+structure refresh <date> (automated)" is expected, not a stray.
 
 **Dropped from the template (2026-08-16)**: `Black Dawn [Celestial Forge]` — it is
 empty at the source (KovaaK's returns no scenarios for that benchmark id, evxl
@@ -178,6 +182,13 @@ card. The template now holds 251 entries / 127 playlists.
   `SYNC_CONCURRENCY = 2`, `SYNC_GAP_MS = 300`, 2500ms backoff, self-abort after 5
   consecutive failures. 4-wide with no gap got a whole IP refused; total request
   volume matters more than concurrency.
+- **Auto-check** (2026-08-17) — `autoCheck()` on page open and on
+  `visibilitychange` → visible: one request to `user/activity/recent?username=`
+  (last 10 events; `HIGH_SCORE` entries carry `scenarioName` + `score`, same scale
+  as `last-scores/by-name`), patched through `patchScoresFromMap(map,'auto')`,
+  marker `mini-evxl-auto-check` `{at,newest}`, 60 s min gap, silent on failure,
+  off when embedded, Settings checkbox → `mini-evxl-auto-check-off`. Feed is 10
+  deep: when all 10 are unseen it points at Sync Scores Online.
 - Both feed the locally computed rank badge automatically (see "Rank is computed
   locally"). Rank is deliberately *not* taken from kovaaks.com's
   `benchmarks/player-progress-rank`, whose 596-benchmark catalog uses a
