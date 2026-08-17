@@ -125,9 +125,10 @@ own calculation, covering 249 of the 251 playlists. For the remaining two (both
 scored by an external service), the badge shows the stricter "every scenario at
 that tier" reading, which is exactly evxl's "X Complete" rank — accurate, just
 conservative — and the playlist page marks it with a • so you know. REVENGE
-Benchmark is a *pool*: its playlist carries 48 scenarios and evxl ranks the best
-of the 24 you select — the tracker starts from evxl's default pick and lets you
-tick your own on the playlist page (kept in your browser). Volts is computed the same
+Benchmark is a *pool*: its playlist carries 48 scenarios (all of them count as
+part of the playlist here) and evxl ranks the best of the 24 you select — the
+tracker starts from evxl's default pick and lets you tick your own on the
+playlist page (kept in your browser). Volts is computed the same
 way evxl computes it (100 per scenario at max tier, uncapped) and shown next to
 each playlist's completion percentage. Neither sync method needs to touch evxl for
 any of this. The rank rules and the volts formula are evxl's own; this tracker

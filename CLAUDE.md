@@ -127,8 +127,10 @@ entry holds the whole 48-scenario pool (what the KovaaK's playlist plays) plus a
 unless the user ticks their own on the detail page (per-browser
 `mini-evxl-scenario-selection`, like exclusions); rank = tier of the 9th-best
 scored selected scenario (18th when the whole pool is selected), Unranked under
-the minimums. `parsedItemsFor()` returns the selected subset, `parsedPoolFor()`
-the whole pool with `selected` flags; score patching covers the pool.
+the minimums. `parsedItemsFor()` returns the WHOLE pool with `selected` flags
+(every pool scenario is a playlist member for Shared/Unique, completion, sync);
+only `benchmarkStanding()`/`benchmarkVolts()` narrow to the selection via
+`rankedItems()`.
 
 Volts is back, computed from evxl's own formula (read out of its bundle): each
 scenario earns score ÷ top-tier threshold × 100 (uncapped), summed and rounded;

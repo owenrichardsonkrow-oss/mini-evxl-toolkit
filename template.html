@@ -1310,12 +1310,22 @@
     if(!items || items.length===0){
       return { pct:0, rankIdx:-1, rankName:null, complete:false, floorIdx:-1, blockers:0, total:0, tierCount:0, maxed:false, mode:b.rankCalc||null, modeSupported:false, modeTier:0, completeTier:0 };
     }
+    // Completion (`pct`) is over everything the playlist carries; for pool
+    // benchmarks the RANK — Complete tier, mode tier, floor, blockers — is read
+    // off the selection only, exactly as evxl narrows its table first.
+    let sum=0;
+    items.forEach(it=>{ sum += scenarioCompletion(it.score, it.tiers); });
+    const pct = sum/items.length;
+    const pool = items;
+    items = rankedItems(items, b);
+    if(items.length===0){
+      return { pct, rankIdx:-1, rankName:null, complete:false, floorIdx:-1, blockers:0, total:0, tierCount:0, maxed:false, mode:b.rankCalc||null, modeSupported:!!(b.rankCalc && RANK_RULES[b.rankCalc]), modeTier:0, completeTier:0 };
+    }
     const total = items.length;
     const ref = items.find(it=>it.tiers && it.tiers.length>0);
     const tierCount = ref ? ref.tiers.length : 0;
 
-    let sum=0;
-    const achieved = items.map(it=>{ sum += scenarioCompletion(it.score, it.tiers); return achievedIndex(it.score, it.tiers); });
+    const achieved = items.map(it=>achievedIndex(it.score, it.tiers));
     // Complete tier: highest tier every scenario has reached (1-based; 0 = none).
     let floorIdx=-1;
     for(let t=0; t<tierCount; t++){ if(achieved.every(i=>i>=t)) floorIdx=t; }
@@ -1324,8 +1334,8 @@
     const mode = b.rankCalc || null;
     // Selection benchmarks need the whole pool for their minimum-per-group
     // checks (a subcategory with nothing selected must still count as a group);
-    // callers with a synthetic pool (the diff test) pass it in.
-    const ctx = { completeTier, tierCount, pool: (opts && opts.pool) || (hasSelection(b) ? parsedPoolFor(b) : items) };
+    // callers with a synthetic subset (the diff test) pass the pool in.
+    const ctx = { completeTier, tierCount, pool: (opts && opts.pool) || pool };
     let rule = null;
     if(Number.isFinite(Number(b.rankReq)) && Number(b.rankReq)>0) rule = RANK_RULES._topn;
     else if(mode && RANK_RULES[mode]) rule = RANK_RULES[mode];
@@ -1341,7 +1351,7 @@
     // When the floor IS the top tier, every scenario is maxed — the same count
     // means the opposite thing, so callers label it differently.
     const maxed = floorIdx>=0 && tierCount>0 && floorIdx===tierCount-1;
-    return { pct: sum/total, rankIdx, rankName, complete, floorIdx, blockers, total, tierCount, maxed, mode, modeSupported, modeTier, completeTier };
+    return { pct, rankIdx, rankName, complete, floorIdx, blockers, total, tierCount, maxed, mode, modeSupported, modeTier, completeTier };
   }
 
   // Volts — evxl's own "secondary progress metric", read out of its page
@@ -1353,7 +1363,8 @@
   function benchmarkVolts(items, b){
     const rankRange = String(b && b.name || '').trim()==='Viscose Benchmarks';
     let sum = 0;
-    items.forEach(it=>{
+    // Pool benchmarks: evxl sums over the selected scenarios (its narrowed table).
+    rankedItems(items, b).forEach(it=>{
       const tv = it.tiers.map(x=>x[1]);
       if(!tv.length || !(it.score>0)) return;
       const top = tv[tv.length-1];
@@ -1388,9 +1399,12 @@
   // The dataset keeps the whole pool (so it matches the KovaaK's playlist and
   // survives a structure refresh); the selection is a per-browser preference
   // (`mini-evxl-scenario-selection`, benchKey → [names]) with evxl's default
-  // when unset. Everything that scores, ranks or lists a benchmark sees the
-  // SELECTED scenarios (parsedItemsFor); the detail page shows the full pool
-  // with the selection marked (parsedPoolFor); score patching covers the pool.
+  // when unset. Owen's call (2026-08-17): the playlist's FULL SCOPE is the
+  // pool — every pool scenario is a member of the playlist for Shared/Unique,
+  // completion, counts, Quick wins and sync — while the RANK and VOLTS keep
+  // evxl's selection-based calculation. So parsedItemsFor() returns the whole
+  // pool with a `selected` flag on each item, and benchmarkStanding() /
+  // benchmarkVolts() narrow to the selected items themselves.
   const SELECTION_KEY = 'mini-evxl-scenario-selection';
   let SELECTION = {};
   try{ const raw = JSON.parse(localStorage.getItem(SELECTION_KEY)||'{}'); if(raw && typeof raw==='object' && !Array.isArray(raw)) SELECTION = raw; }catch(e){}
@@ -1467,8 +1481,8 @@
   // getParsedBenchmarks, which uses it) — the detail page once parsed rows
   // directly and showed pre-sync scores while the cards showed synced ones.
   // The whole pool, each item flagged `selected` (always true for ordinary
-  // benchmarks). parsedItemsFor() is the selected subset.
-  function parsedPoolFor(b){
+  // benchmarks). parsedPoolFor is the same thing under its older name.
+  function parsedItemsFor(b){
     const pool = parseTable(b.hdrs, b.rows).map(it=>(
       SCORES.has(it.name) && SCORES.get(it.name) > it.score
         ? Object.assign({}, it, { score: SCORES.get(it.name) })
@@ -1478,9 +1492,12 @@
     const { set } = selectionFor(b, pool);
     return pool.map(it=>Object.assign(it, { selected: set.has(it.name) }));
   }
-  function parsedItemsFor(b){
-    const pool = parsedPoolFor(b);
-    return hasSelection(b) ? pool.filter(it=>it.selected) : pool;
+  const parsedPoolFor = parsedItemsFor;
+  // The items a pool benchmark is RANKED on: the selection. `selected` is
+  // undefined on synthetic items (the diff test builds its own subset), which
+  // reads as selected.
+  function rankedItems(items, b){
+    return hasSelection(b) ? items.filter(it=>it.selected!==false) : items;
   }
 
   // Parsed scenario items per benchmark, computed once and cached.
@@ -1490,11 +1507,11 @@
     // Index is the position in the full BENCHMARKS array, assigned before
     // the exclusion filter — #/bench/N links must keep pointing at the same
     // playlist whether or not anything is excluded.
-    // `items` is what the benchmark counts (its selection, for pool
-    // benchmarks); `pool` is every scenario it carries — the sync and score
-    // patch cover the pool so an unselected scenario's score is never lost.
+    // `items` is every scenario the playlist carries (the whole pool for pool
+    // benchmarks, each flagged `selected`); `pool` is the same list under the
+    // name the sync/patch code uses.
     _parsedCache = BENCHMARKS
-      .map((b,i)=>{ const pool = parsedPoolFor(b); return { index: i, benchmark: b, pool, items: hasSelection(b) ? pool.filter(it=>it.selected) : pool }; })
+      .map((b,i)=>{ const items = parsedItemsFor(b); return { index: i, benchmark: b, items, pool: items }; })
       .filter(e=>!EXCLUDED.has(benchKey(e.benchmark)));
     return _parsedCache;
   }
@@ -2515,9 +2532,9 @@
     // Pool benchmarks (REVENGE): the page lists the whole pool — what the
     // KovaaK's playlist holds — with the selection marked; rank, volts and the
     // stats read the selected scenarios only, as evxl's table does.
-    const pool = parsedPoolFor(b);
+    const pool = parsedItemsFor(b);
     const selectable = hasSelection(b);
-    const items = selectable ? pool.filter(it=>it.selected) : pool;
+    const items = rankedItems(pool, b);
     const groups = [];
     pool.forEach(it=>{
       let g = groups.find(x=>x.name===it.group);
@@ -2525,13 +2542,14 @@
       g.items.push(it);
     });
 
-    const _st = benchmarkStanding(items, b, { pool });
+    const _st = benchmarkStanding(pool, b);
     const sel = selectable ? selectionFor(b, pool) : null;
     const issues = selectable ? selectionIssues(pool, b, sel.set) : null;
-    // Scenarios holding the playlist at its current floor (or, when every
-    // scenario is at the top tier, all of them). Named on the page so the
-    // "what do I practice to move this rank" question answers itself.
-    const floorSet = new Set(items.filter(it=>achievedIndex(it.score, it.tiers)<=_st.floorIdx).map(it=>it.name));
+    // Played scenarios holding the playlist at its current floor (or, when
+    // every scenario is at the top tier, all of them). Named on the page so the
+    // "what do I practice to move this rank" question answers itself. Unplayed
+    // ones are left untagged (Owen, 2026-08-17): "play it" is not news.
+    const floorSet = new Set(items.filter(it=>it.score>0 && achievedIndex(it.score, it.tiers)<=_st.floorIdx).map(it=>it.name));
     const rankTitle = _st.mode
       ? (_st.modeSupported
           ? 'evxl rank rule for this benchmark: '+_st.mode+' — reproduced locally.'
@@ -2545,7 +2563,7 @@
         <span class="pool-rule mono">${b.selection.minCat}+ per category &middot; ${b.selection.minSub}+ per subcategory &middot; rank = ${sel.set.size===pool.length && Number(b.selection.fullN)>0 ? b.selection.fullN : b.selection.baseN}th-best selected scenario</span>
         ${sel.custom ? '<button type="button" class="pool-reset" id="pool-reset">reset to evxl\'s default</button>' : '<span class="pool-note">evxl\'s default selection</span>'}
         ${(issues.cats.length || issues.subs.length) ? '<span class="pool-issue">Unranked until the selection meets the minimums: '+esc([...issues.cats.map(c=>c+' ('+b.selection.minCat+'+)'), ...issues.subs.map(s=>s+' ('+b.selection.minSub+'+)')].join(', '))+'</span>' : ''}
-        <span class="pool-hint">Tick a scenario to count it, untick to drop it — the same pick as evxl's Configure, kept in this browser. The KovaaK's playlist behind the share code plays the whole pool.</span>
+        <span class="pool-hint">Every scenario below is part of this playlist (it's what the KovaaK's share code plays, and what Shared/Unique and completion count). The rank and volts read the ticked ones only, exactly as evxl does — tick to count a scenario, untick to drop it; kept in this browser.</span>
       </div>`;
     wrap.innerHTML = `
       <button class="back-link" id="back-btn">&larr; all benchmarks</button>
@@ -2559,7 +2577,7 @@
           <div class="dstat"><div class="val">${pctLabel(_st.pct)}</div><div class="label">Complete</div></div>
           <div class="dstat" title="evxl's secondary metric: each scenario earns score ÷ top-tier threshold × 100 (uncapped), summed."><div class="val">${fmt(benchmarkVolts(items, b))}</div><div class="label">Volts</div></div>
           <div class="dstat"><div class="val">${_st.blockers} <span style="color:var(--text-faint);font-size:14px;">/ ${_st.total}</span></div><div class="label">${_st.maxed ? 'At top tier' : (_st.floorIdx>=0 ? 'Holding the floor' : 'Below first tier')}</div></div>
-          <div class="dstat"><div class="val">${items.length}${selectable ? ' <span style="color:var(--text-faint);font-size:14px;">/ '+pool.length+'</span>' : ''}</div><div class="label">${selectable ? 'Selected' : 'Scenarios'}</div></div>
+          <div class="dstat"><div class="val">${pool.length}${selectable ? ' <span style="color:var(--text-faint);font-size:14px;">· '+items.length+' ranked</span>' : ''}</div><div class="label">Scenarios</div></div>
         </div>
       </div>
       ${poolHead}
