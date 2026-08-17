@@ -113,11 +113,12 @@ Sync Scores in the browser first (reads all-time data from KovaaK's servers), th
 
 **About the rank badge**: it's computed locally from your scores using evxl's own
 rules. Every benchmark on evxl declares how its rank is calculated (a "mode"), and
-this tracker ports those modes one at a time — eleven are done, each verified
-against evxl's own calculation, covering 185 of the 251 playlists. For the
-rest, the badge shows the stricter "every scenario at that tier" reading, which is
-exactly evxl's "X Complete" rank — accurate, just conservative — and the playlist
-page marks it with a • so you know. Volts isn't shown: it isn't derivable from the
+this tracker ports those modes — 39 of evxl's 41, each verified against evxl's
+own calculation, covering 246 of the 251 playlists. For the remaining five (a
+benchmark that ranks *your own* scenario selection, and two that come from an
+external service), the badge shows the stricter "every scenario at that tier"
+reading, which is exactly evxl's "X Complete" rank — accurate, just conservative
+— and the playlist page marks it with a • so you know. Volts isn't shown: it isn't derivable from the
 tables, so cards show mean scenario completion instead. Neither sync method needs
 to touch evxl for any of this.
 

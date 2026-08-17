@@ -12,6 +12,9 @@
 #               counts add up to the parsed scenario count; otherwise the engine
 #               falls back to the table's own category/subcategory labels.
 #   evxlTiers - evxl's rank names for this difficulty, in order (rankColors keys).
+#   evxlDiffIndex - the difficulty's position among the benchmark's difficulties
+#               (catalog order, 0-based); mh-tracking's ladder and 33/iris's
+#               fallback start depend on it.
 #   evxlRankOffset - how many ranks the benchmark's PRECEDING difficulties hold
 #               (catalog order). The generic-energy rules put every difficulty on
 #               one long energy ladder (Normal starts where Easy ends), and a
@@ -41,12 +44,12 @@ $utf8 = New-Object System.Text.UTF8Encoding($false)
 $cat = ([System.IO.File]::ReadAllText($Catalog, $utf8) | ConvertFrom-Json).benchmarks
 $byKey = @{}
 foreach ($b in $cat) {
-    $offset = 0
+    $offset = 0; $idx = 0
     foreach ($d in $b.difficulties) {
         $tierNames = @()
         if ($d.rankColors) { $tierNames = @($d.rankColors.PSObject.Properties.Name) }
-        $byKey[("{0}|{1}" -f $b.benchmarkName.Trim(), $d.difficultyName.Trim()).ToLower()] = @{ b = $b; d = $d; offset = $offset; tiers = $tierNames }
-        $offset += $tierNames.Count
+        $byKey[("{0}|{1}" -f $b.benchmarkName.Trim(), $d.difficultyName.Trim()).ToLower()] = @{ b = $b; d = $d; offset = $offset; tiers = $tierNames; idx = $idx }
+        $offset += $tierNames.Count; $idx++
     }
 }
 
@@ -74,6 +77,7 @@ foreach ($x in $data) {
     $x | Add-Member -NotePropertyName subcats  -NotePropertyValue $subcats -Force
     $x | Add-Member -NotePropertyName evxlTiers -NotePropertyValue @($m.tiers) -Force
     $x | Add-Member -NotePropertyName evxlRankOffset -NotePropertyValue ([int]$m.offset) -Force
+    $x | Add-Member -NotePropertyName evxlDiffIndex -NotePropertyValue ([int]$m.idx) -Force
     $stamped++
     if (($x | ConvertTo-Json -Depth 10 -Compress) -ne $before) { $changed++ }
 }

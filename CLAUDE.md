@@ -114,8 +114,10 @@ the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
 dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
 `evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
 catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
-`basic`, `complete`, `tsk`, `generic-energy`, `-alt`, `-uncapped`, `dm`, `dm-s3`, `vt-energy`, `aplus-alt`, `jade-palace` — 185 of 251
-playlists (each proven against evxl's own code by the tracker repo's differential test). The other 66 (30 small bespoke modes) show the Complete reading only,
+39 of evxl's 41 modes — 246 of 251 playlists (each proven against evxl's own
+code by the tracker repo's differential test). The other 5 are unportable by
+design (`selectable-top-n` ranks the user's own scenario selection; `aimbeast`
+comes from Aimbeast's service) and show the Complete reading only,
 flagged `modeSupported:false`; the detail page's Rank label carries a • that says
 so. `rankReq` survives only as a legacy per-entry override.
 
