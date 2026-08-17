@@ -17,7 +17,14 @@ The personal copy this is generated from lives in the sibling folder
 ## Generated, not hand-edited
 
 `template.html` is produced by `generate-template.ps1` from the personal copy. It
-zeroes scores, resets rank/volts, and flips `IS_TOOLKIT_TEMPLATE` to `true`.
+zeroes scores, resets rank/volts, and swaps the page's **`SITE` identity block**
+(the only personal strings in the script: `template`, `owner`,
+`defaultUsername`, `steamUrl`/`steamLabel`, `evxlProfileUrl`) plus the `<title>`
+and brand text for generic values — every replacement asserted, and it refuses
+to write if a personal string survives anywhere. It also copies the shared
+scripts (`lib/`, `apply-scores.ps1`, `apply-evxl-catalog.ps1`,
+`fix-mojibake.ps1`) from the tracker repo when they differ.
+`IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
 **App-behavior changes belong in the personal copy first, then regenerate.**
 Hand-editing `template.html` directly means the next regeneration silently discards
@@ -151,9 +158,12 @@ score-history log written by every sync/import raise; not exported).
 The scrape's only remaining purpose is **structure**; the tracker repo's
 `refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice, and
 since 2026-08-17 the tracker's `weekly-refresh.ps1` (Task Scheduler, Sunday
-04:00) runs the whole chain unattended and **commits + pushes `template.html`
+04:00) runs the whole chain unattended and **commits `template.html`
 here** when the structure moved — so a `template.html` commit titled "Weekly
-structure refresh <date> (automated)" is expected, not a stray.
+structure refresh <date> (automated)" is expected, not a stray. Since
+2026-08-16 late it does **not push** (a sanity gate blocks bad upstream days,
+and the push waits for a human glance; `weekly-refresh.ps1 -Push` opts in) —
+so `master` may be ahead of `origin/master` on a Monday; look, then push.
 
 **Dropped from the template (2026-08-16)**: `Black Dawn [Celestial Forge]` — it is
 empty at the source (KovaaK's returns no scenarios for that benchmark id, evxl

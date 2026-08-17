@@ -190,6 +190,8 @@
 
   .detail-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:20px; margin-bottom:26px; }
   .detail-head .dpack { font-size:12.5px; color:var(--text-faint); margin-bottom:6px; }
+  .ext-link { font-family:ui-monospace,monospace; font-size:11.5px; color:var(--text-faint); text-decoration:none; }
+  .ext-link:hover { color:var(--accent-text); }
   .detail-stats { display:flex; gap:22px; flex-wrap:wrap; }
   .detail-stats .dstat .val { font-family:ui-monospace,monospace; font-variant-numeric:tabular-nums; font-size:18px; font-weight:600; color:var(--accent-text); }
   .detail-stats .dstat .label { font-size:10.5px; text-transform:uppercase; letter-spacing:.07em; color:var(--text-faint); margin-top:2px; }
@@ -363,12 +365,12 @@
 </style>
 
 <div class="topnav">
-  <div class="brand" id="brand-home"><span class="dot"></span> Benchmark Tracker</div>
+  <div class="brand" id="brand-home"><span class="dot"></span> <span id="brand-text">Benchmark Tracker</span></div>
   <nav>
     <button id="nav-home" class="active">Home</button>
     <button id="nav-shared">Shared Scenarios</button>
     <button id="nav-unique">Unique Scenarios</button>
-    <button id="nav-import">Load Your Data</button>
+    <button id="nav-import" style="display:none;">Load Your Data</button>
     <button id="nav-exclude">Exclude Benchmarks</button>
     <button id="nav-settings">Settings</button>
   </nav>
@@ -389,17 +391,24 @@
 
 <script>
 (function(){
+  // ---- site identity -----------------------------------------------------
+  // The toolkit template's identity: no owner, no default username, no
+  // profile links. Visitors fill their own in under Settings. This block is
+  // written by generate-template.ps1 from the personal copy's SITE block.
+  const SITE = {
+    template: true,
+    owner: '',
+    defaultUsername: '',
+    steamUrl: '',
+    steamLabel: '',
+    evxlProfileUrl: ''
+  };
+  // ---- end site identity -------------------------------------------------
+  const IS_TOOLKIT_TEMPLATE = !!SITE.template;
   const DEFAULT_BENCHMARKS = JSON.parse(document.getElementById('benchmarks-data').textContent);
   const IMPORT_KEY = 'mini-evxl-imported-data';
   let BENCHMARKS = DEFAULT_BENCHMARKS;
   let usingImported = false;
-  // Set true only in the generated toolkit template (template.html), never
-  // in this personal copy. Distinguishes "Owen's real data" from "a public
-  // template pre-loaded with every playlist's structure but zeroed scores,
-  // waiting to be filled in via Sync Scores" — the two need different
-  // wording in a few places below, and DEFAULT_BENCHMARKS.length is no
-  // longer a reliable proxy for that now that the template ships nonempty.
-  const IS_TOOLKIT_TEMPLATE = true;
   try{
     const saved = localStorage.getItem(IMPORT_KEY);
     if(saved){
@@ -1677,10 +1686,13 @@
   function updateTopnavSource(){
     const el = document.getElementById('topnav-source');
     if(!el) return;
+    const steam = steamProfileUrl();
     if(usingImported){
       el.innerHTML = '<a class="steam-link" href="#/import">your data &middot; reset</a>';
-    } else if(!IS_TOOLKIT_TEMPLATE && DEFAULT_BENCHMARKS.length>0){
-      el.innerHTML = '';
+    } else if(steam){
+      // The Steam link from Settings (or the site's default): the owner's on
+      // the personal copy, the visitor's own once they fill it in.
+      el.innerHTML = '<a class="steam-link" href="'+esc(steam)+'" target="_blank" rel="noopener">'+esc(steamProfileLabel(steam))+' &#8599;</a>';
     } else if(IS_TOOLKIT_TEMPLATE){
       el.innerHTML = SCORES.size>0
         ? '<a class="steam-link" href="#/import">your scores &middot; synced</a>'
@@ -1709,10 +1721,32 @@
   // Patches funnel through loadBenchmarks(), same as every other data path
   // on this page.
   const KOVAAKS_USERNAME_KEY = 'mini-evxl-kovaaks-username';
-  const DEFAULT_KOVAAKS_USERNAME = '';
+  const DEFAULT_KOVAAKS_USERNAME = String(SITE.defaultUsername||'');
   const STEAM_LINK_KEY = 'mini-evxl-steam-link';
   const EVXL_LINK_KEY = 'mini-evxl-evxl-link';
   const STATS_FOLDER_NOTE_KEY = 'mini-evxl-stats-folder-note';
+  // The two profile links: the Settings value when set, else the site default.
+  // Steam shows top-right; evxl gives every playlist page an "open on evxl"
+  // link (evxl's URL is /u/<steamid64>/<playlist>/<difficulty>).
+  function steamProfileUrl(){ return (localStorage.getItem(STEAM_LINK_KEY)||'').trim() || String(SITE.steamUrl||''); }
+  function steamProfileLabel(url){
+    if(url===String(SITE.steamUrl||'') && SITE.steamLabel) return String(SITE.steamLabel);
+    const m = String(url).replace(/\/+$/,'').match(/([^\/]+)$/);
+    return m ? decodeURIComponent(m[1]) : 'Steam';
+  }
+  function evxlProfileUrl(){ return (localStorage.getItem(EVXL_LINK_KEY)||'').trim() || String(SITE.evxlProfileUrl||''); }
+  function evxlBenchmarkUrl(b){
+    const base = evxlProfileUrl().replace(/\/+$/,'');
+    if(!base) return '';
+    return base+'/'+encodeURIComponent(b.name)+'/'+encodeURIComponent(b.difficulty);
+  }
+  // Home-page meta line on the personal copy: "STEAM: <label> · SOURCE DATA <evxl profile>".
+  function ownerMetaLine(){
+    const parts = [];
+    const steam = steamProfileUrl(); if(steam) parts.push('STEAM: '+esc(steamProfileLabel(steam)));
+    const evxl = evxlProfileUrl(); if(evxl) parts.push('SOURCE DATA '+esc(evxl.replace(/^https?:\/\//,'').replace(/\/+$/,'')));
+    return parts.join(' &nbsp;&middot;&nbsp; ');
+  }
 
   function formatScoreJs(n){
     if(n===Math.floor(n)) return n.toLocaleString(undefined,{maximumFractionDigits:0});
@@ -2403,9 +2437,9 @@
     wrap.className='wrap';
     wrap.innerHTML = `
       <div class="eyebrow"><span class="dot"></span> personal benchmark tracker</div>
-      <h1>${usingImported ? 'Your KovaaK\'s benchmarks' : (IS_TOOLKIT_TEMPLATE ? 'KovaaK\'s Benchmark Tracker' : 'mini\'s KovaaK\'s benchmarks')}</h1>
+      <h1>${usingImported ? 'Your KovaaK\'s benchmarks' : (IS_TOOLKIT_TEMPLATE ? 'KovaaK\'s Benchmark Tracker' : esc(String(SITE.owner||'my'))+'\'s KovaaK\'s benchmarks')}</h1>
       <p class="sub">A self-hosted view of all ${activeCount()} benchmark playlists (across every difficulty variant) on evxl.app, in the spirit of evxl.app itself &mdash; plus a page evxl doesn't have: every scenario shared across playlists, ranked by how many playlists it unlocks.</p>
-      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : '')}</div>
+      <div class="meta">${usingImported ? 'YOUR DATA &nbsp;&middot;&nbsp; kept in this browser only &nbsp;&middot;&nbsp; <a href="#/import" style="color:inherit;">reset</a>' : (IS_TOOLKIT_TEMPLATE ? 'BLANK TEMPLATE &nbsp;&middot;&nbsp; every playlist\'s structure is pre-loaded, scores are not' : ownerMetaLine())}</div>
       ${IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0 ? '<div class="template-banner">This page is a template &mdash; every evxl benchmark\'s playlists, scenarios, and tier thresholds are already loaded, but every score reads 0. Click <strong>&#8635; Sync Scores</strong> (top right) and enter your KovaaK\'s username to fill it in with your own scores &mdash; no scraping required.</div>' : ''}
       <div class="stats">
         <div class="stat" title="${esc(playedTitle)}"><div class="val">${playedDisplay}</div><div class="label">Scenarios played on KovaaK's</div></div>
@@ -2572,7 +2606,7 @@
       <button class="back-link" id="back-btn">&larr; all benchmarks</button>
       <div class="detail-head">
         <div>
-          <div class="dpack">${esc(b.pack)} &middot; ${esc(b.difficulty)}</div>
+          <div class="dpack">${esc(b.pack)} &middot; ${esc(b.difficulty)}${evxlBenchmarkUrl(b) ? ' &middot; <a class="ext-link" href="'+esc(evxlBenchmarkUrl(b))+'" target="_blank" rel="noopener" title="The same playlist on your evxl profile (from the evxl link in Settings)">open on evxl &#8599;</a>' : ''}</div>
           <h2 class="pagehead">${esc(b.name)}</h2>
         </div>
         <div class="detail-stats">
@@ -3037,12 +3071,12 @@
         <textarea id="import-text" class="import-textarea" placeholder='[{"name":"...","difficulty":"...","hdrs":[...],"rows":[...]}]' spellcheck="false"></textarea>
         <div class="import-actions">
           <button type="button" class="import-btn" id="import-load-btn">Load this data</button>
-          ${usingImported ? '<button type="button" class="import-btn secondary" id="import-reset-btn">'+(!IS_TOOLKIT_TEMPLATE ? "Reset to demo data (mini's)" : 'Clear synced data (reset to blank template)')+'</button>' : ''}
+          ${usingImported ? '<button type="button" class="import-btn secondary" id="import-reset-btn">'+(!IS_TOOLKIT_TEMPLATE ? 'Reset to demo data ('+esc(String(SITE.owner||'the owner'))+"'s)" : 'Clear synced data (reset to blank template)')+'</button>' : ''}
         </div>
         <div id="import-error" class="import-error"></div>
       </div>
       <div class="footnote">
-        <p><strong>Expected shape:</strong> a JSON array where each entry is one benchmark/difficulty playlist: <code>{"name","pack","difficulty","rank","volts","hdrs","rows"}</code> &mdash; <code>hdrs</code>/<code>rows</code> mirror the raw scenario table straight off evxl.app (or an equivalent source)${!IS_TOOLKIT_TEMPLATE ? ", the same as what's embedded in this page for mini's own data" : ", the same shape already pre-loaded in this page's blank template"}. If you just want your own scores, you likely don't need this at all &mdash; use <strong>&#8635; Sync Scores</strong> in the top bar instead. This importer is for loading an entirely different playlist set. If you don't have a file like this yet, see this project's scraping guide, or whoever set up your copy of this tool can export one for you.</p>
+        <p><strong>Expected shape:</strong> a JSON array where each entry is one benchmark/difficulty playlist: <code>{"name","pack","difficulty","rank","volts","hdrs","rows"}</code> &mdash; <code>hdrs</code>/<code>rows</code> mirror the raw scenario table straight off evxl.app (or an equivalent source)${!IS_TOOLKIT_TEMPLATE ? ", the same as what's embedded in this page for "+esc(String(SITE.owner||'the owner'))+"'s own data" : ", the same shape already pre-loaded in this page's blank template"}. If you just want your own scores, you likely don't need this at all &mdash; use <strong>&#8635; Sync Scores</strong> in the top bar instead. This importer is for loading an entirely different playlist set. If you don't have a file like this yet, see this project's scraping guide, or whoever set up your copy of this tool can export one for you.</p>
       </div>
     `;
     app.innerHTML=''; app.appendChild(wrap);
@@ -3050,7 +3084,7 @@
     const statusEl = wrap.querySelector('#import-status');
     statusEl.textContent = usingImported
       ? 'Currently viewing: your data ('+BENCHMARKS.length+' playlists)'
-      : (!IS_TOOLKIT_TEMPLATE ? "Currently viewing: demo data — mini's own ("+BENCHMARKS.length+' playlists)'
+      : (!IS_TOOLKIT_TEMPLATE ? 'Currently viewing: demo data — '+String(SITE.owner||'the owner')+"'s own ("+BENCHMARKS.length+' playlists)'
          : BENCHMARKS.length>0 ? 'Currently viewing: blank template ('+BENCHMARKS.length+' playlists, no scores yet) — click Sync Scores above to fill it in'
          : 'No data loaded yet.');
 
@@ -3244,7 +3278,7 @@
 
       <div class="settings-field">
         <label for="settings-kovaaks">KovaaK's username <span class="settings-saved" id="saved-kovaaks">Saved</span></label>
-        <input type="text" id="settings-kovaaks" placeholder="e.g. Owen" />
+        <input type="text" id="settings-kovaaks" placeholder="your in-game name" />
         <span class="hint">Settings → Profile in-game. Often different from your Steam name. Used by Sync Scores Online.</span>
       </div>
 
@@ -3256,13 +3290,13 @@
       <div class="settings-field">
         <label for="settings-steam">Steam Community link <span class="settings-saved" id="saved-steam">Saved</span></label>
         <input type="text" id="settings-steam" placeholder="https://steamcommunity.com/id/yourname/" />
-        <span class="hint">Just kept for reference — nothing on this page reads it back.</span>
+        <span class="hint">Shown top-right as your profile link.${SITE.steamUrl ? ' Leave blank to keep the default.' : ''}</span>
       </div>
 
       <div class="settings-field">
         <label for="settings-evxl">evxl.app profile link <span class="settings-saved" id="saved-evxl">Saved</span></label>
         <input type="text" id="settings-evxl" placeholder="https://evxl.app/u/&lt;your steamid64&gt;" />
-        <span class="hint">Reference only, same as above.</span>
+        <span class="hint">Gives every playlist page an "open on evxl" link to the same playlist on your evxl profile, for a side-by-side check.${SITE.evxlProfileUrl ? ' Leave blank to keep the default.' : ''}</span>
       </div>
 
       <div class="settings-field">
@@ -3316,20 +3350,21 @@
       }catch(err){ scoresErr.textContent = err.message || String(err); }
     });
 
-    function bindField(inputId, savedId, key){
+    function bindField(inputId, savedId, key, onChange){
       const input = wrap.querySelector('#'+inputId);
       const saved = wrap.querySelector('#'+savedId);
       input.value = localStorage.getItem(key) || '';
       let t = null;
       input.addEventListener('input', ()=>{
-        try{ localStorage.setItem(key, input.value); }catch(e){}
+        try{ if(input.value.trim()) localStorage.setItem(key, input.value); else localStorage.removeItem(key); }catch(e){}
         saved.classList.add('show');
         if(t) clearTimeout(t);
         t = setTimeout(()=>saved.classList.remove('show'), 1500);
+        if(onChange) onChange();
       });
     }
     bindField('settings-kovaaks', 'saved-kovaaks', KOVAAKS_USERNAME_KEY);
-    bindField('settings-steam', 'saved-steam', STEAM_LINK_KEY);
+    bindField('settings-steam', 'saved-steam', STEAM_LINK_KEY, updateTopnavSource);
     bindField('settings-evxl', 'saved-evxl', EVXL_LINK_KEY);
     bindField('settings-stats-folder', 'saved-stats-folder', STATS_FOLDER_NOTE_KEY);
     const autoCb = wrap.querySelector('#settings-auto-check');
@@ -3575,6 +3610,10 @@
   // and console poking. Nothing in the page reads this.
   window.__miniEvxl = Object.freeze({ benchmarkStanding, parseTable, parsedItemsFor, defaultSelection, selectionFor, achievedIndex, preciseTier, subcategoryGroups, RANK_RULES, getBenchmarks: ()=>BENCHMARKS });
 
+  // Brand and the "Load Your Data" tab follow the site identity: the personal
+  // copy hides the importer (its data is baked in), the template shows it.
+  document.getElementById('brand-text').textContent = IS_TOOLKIT_TEMPLATE ? 'Benchmark Tracker' : String(SITE.owner||'my')+"'s benchmarks";
+  if(IS_TOOLKIT_TEMPLATE) navImport.style.display = '';
   updateTopnavSource();
   route();
   autoCheck('open');

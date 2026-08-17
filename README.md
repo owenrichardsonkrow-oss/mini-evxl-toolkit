@@ -24,10 +24,10 @@ benchmark metadata for every player, already baked in. Only the scores are yours
 fill in. No scraping, no JSON file, no AI assistant required for this path. Your
 data lives only in that browser's local storage, never uploaded anywhere.
 
-There's also a **Settings** tab for saving your KovaaK's username, Steam/evxl
-profile links, and your stats folder path as a note — see "Keeping it fresh" below
-for what each is actually used for (only the username does anything functional,
-and only for the online sync method).
+There's also a **Settings** tab for your KovaaK's username (used by Sync Scores
+Online and the auto-check), your Steam profile link (shown top-right), your evxl
+profile link (every playlist page gets an "open on evxl" link to the same
+playlist on your profile), and your stats folder path as a note.
 
 ## Two ways to use this
 
@@ -152,8 +152,9 @@ Four separable parts, which is worth knowing before changing anything:
    only about 65% of them, which is why that wasn't adopted as an update path. The
    scraping guide explains the survey.)
 3. **Your own info** — KovaaK's username, Steam and evxl profile links, stats folder
-   note. All under **Settings**, all in your browser's local storage. Only the
-   username does anything functional.
+   note. All under **Settings**, all in your browser's local storage. The username
+   drives the online sync and auto-check; the Steam link shows top-right; the evxl
+   link puts an "open on evxl" link on every playlist page.
 4. **Getting scores in** — online (kovaaks.com's API, by username) or locally (your
    own stats folder). See "Keeping it fresh" above for which to trust.
 

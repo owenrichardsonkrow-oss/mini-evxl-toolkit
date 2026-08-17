@@ -1,88 +1,97 @@
 # Regenerates template.html from the personal tracker copy this toolkit was
-# forked from. Run this whenever the personal copy's dataset changes (new
-# playlists added, tier thresholds refreshed) to keep the toolkit's
-# pre-loaded structure in sync.
+# forked from, and refreshes the scripts this toolkit shares with it. Run it
+# whenever the personal copy's dataset or app behaviour changes.
 #
-# What it does, beyond a straight copy:
-#   - Genericizes the title/brand/topnav (no personal name or Steam link)
-#   - Flips IS_TOOLKIT_TEMPLATE to true (changes wording in a few places —
-#     the sync CTA banner, reset button label, etc.)
-#   - Clears the default KovaaK's username (visitors get prompted for their
-#     own instead of quietly syncing against someone else's)
-#   - Keeps the "Load Your Data" button visible (hidden on the personal
-#     copy, but still the only way to load an entirely different playlist
-#     set here)
-#   - Zeroes every score and resets every playlist's rank/volts to
-#     Unranked/0 in the embedded dataset — but leaves tier thresholds,
-#     scenario names, and category/subcategory labels untouched, since
-#     those are properties of the benchmark itself, not the player. A
-#     visitor fills the zeroed template back in with real numbers just by
-#     entering their KovaaK's username and clicking Sync Scores — no evxl
-#     scraping needed for that part at all.
+# What it does, beyond a straight copy of the page:
+#   - Replaces the page's SITE identity block (the ONLY personal strings in the
+#     script: owner name, default KovaaK's username, Steam/evxl profile links,
+#     template flag) with the toolkit's generic values, and the <title> and brand
+#     text in the markup. Every one of these replacements is asserted -- if the
+#     personal copy's markup or block moved, this script stops instead of
+#     shipping the owner's identity in a public file. (It used to be six silent
+#     string replacements; a drifted string meant a silent leak.)
+#   - Zeroes every score and resets every playlist's rank/volts to Unranked/0 in
+#     the embedded dataset -- but leaves tier thresholds, scenario names, and
+#     category/subcategory labels untouched, since those are properties of the
+#     benchmark itself, not the player. A visitor fills the zeroed template back
+#     in with real numbers just by entering their KovaaK's username and clicking
+#     Sync Scores -- no evxl scraping needed for that part at all.
+#   - Copies the shared scripts (lib\kovaaks-table.ps1, apply-scores.ps1,
+#     apply-evxl-catalog.ps1, fix-mojibake.ps1) from the personal repo, so the
+#     two copies can't drift. static-server.ps1 and sync.ps1 are NOT copied --
+#     the toolkit's are intentionally different (see CLAUDE.md).
+#
+# Anchored to this script's folder, so it can be run from anywhere.
 
 $ErrorActionPreference = 'Stop'
-# Anchored to this script's folder, so it can be run from anywhere (it used to
-# use relative paths and silently wrote template.html into whatever the current
-# directory happened to be).
-$src = Join-Path (Split-Path $PSScriptRoot -Parent) 'mini-benchmarks-tracker\mini_evxl.html'
+$trackerRoot = Join-Path (Split-Path $PSScriptRoot -Parent) 'mini-benchmarks-tracker'
+$src = Join-Path $trackerRoot 'mini_evxl.html'
 $dst = Join-Path $PSScriptRoot 'template.html'
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+if (-not (Test-Path $src)) { Write-Output "Source file not found: $src"; exit 1 }
+
+# ---- 1. shared scripts, copied first (the lib is dot-sourced below) ----------
+$shared = @('lib\kovaaks-table.ps1', 'apply-scores.ps1', 'apply-evxl-catalog.ps1', 'fix-mojibake.ps1')
+New-Item -ItemType Directory -Force (Join-Path $PSScriptRoot 'lib') | Out-Null
+$copied = @()
+foreach ($rel in $shared) {
+    $from = Join-Path $trackerRoot $rel; $to = Join-Path $PSScriptRoot $rel
+    if (-not (Test-Path $from)) { throw "Shared script missing in the tracker repo: $from" }
+    $same = (Test-Path $to) -and ([IO.File]::ReadAllText($from) -eq [IO.File]::ReadAllText($to))
+    if (-not $same) { Copy-Item $from $to -Force; $copied += $rel }
+}
 . (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
 
-if (-not (Test-Path $src)) {
-    Write-Output "Source file not found: $src"
-    exit 1
-}
-
+# ---- 2. the page ------------------------------------------------------------
 $content = [System.IO.File]::ReadAllText($src, $Utf8NoBom)
 
-$content = $content -replace "<title>mini.s Benchmarks.*?</title>", "<title>KovaaK's Benchmark Tracker</title>"
+function Replace-Asserted([string]$what, [string]$pattern, [string]$replacement) {
+    $m = [regex]::Matches($script:content, $pattern)
+    if ($m.Count -ne 1) { throw "generate-template: expected exactly one match for $what, found $($m.Count). The personal copy's markup or identity block moved -- fix this script rather than shipping the owner's identity." }
+    $script:content = [regex]::Replace($script:content, $pattern, $replacement, 1)
+}
+function Rx([string]$literal) { [regex]::Escape($literal) }
 
-$content = $content.Replace(
-    "<div class=`"brand`" id=`"brand-home`"><span class=`"dot`"></span> mini's benchmarks</div>",
-    "<div class=`"brand`" id=`"brand-home`"><span class=`"dot`"></span> Benchmark Tracker</div>"
-)
+# <title> and the brand text are markup (they render before any script runs and
+# the artifact reads <title> from the file), so they are replaced here.
+Replace-Asserted '<title>' '<title>[^<]*</title>' "<title>KovaaK's Benchmark Tracker</title>"
+Replace-Asserted 'brand text' ((Rx '<span id="brand-text">') + '[^<]*</span>') '<span id="brand-text">Benchmark Tracker</span>'
 
-$content = $content.Replace(
-    "<span id=`"topnav-source`"><a class=`"steam-link`" href=`"https://steamcommunity.com/id/sinseriously/`" target=`"_blank`" rel=`"noopener`">sinseriously &#8599;</a></span>",
-    "<span id=`"topnav-source`"></span>"
-)
+# The SITE identity block: everything between the two marker comments.
+$siteStart = '  // ---- site identity -----------------------------------------------------'
+$siteEnd   = '  // ---- end site identity -------------------------------------------------'
+$s = $content.IndexOf($siteStart); $e = $content.IndexOf($siteEnd)
+if ($s -lt 0 -or $e -lt 0 -or $e -le $s) { throw 'generate-template: SITE identity block markers not found in the personal copy.' }
+$templateSite = @'
+  // ---- site identity -----------------------------------------------------
+  // The toolkit template's identity: no owner, no default username, no
+  // profile links. Visitors fill their own in under Settings. This block is
+  // written by generate-template.ps1 from the personal copy's SITE block.
+  const SITE = {
+    template: true,
+    owner: '',
+    defaultUsername: '',
+    steamUrl: '',
+    steamLabel: '',
+    evxlProfileUrl: ''
+  };
 
-$content = $content.Replace(
-    "const DEFAULT_KOVAAKS_USERNAME = 'Owen';",
-    "const DEFAULT_KOVAAKS_USERNAME = '';"
-)
+'@
+$content = $content.Substring(0, $s) + $templateSite + $content.Substring($e)
 
-$content = $content.Replace(
-    "const IS_TOOLKIT_TEMPLATE = false;",
-    "const IS_TOOLKIT_TEMPLATE = true;"
-)
+# Belt and braces: nothing personal may survive outside the (now replaced) block.
+foreach ($needle in @("'Owen'", 'sinseriously', '76561198251208570', "mini's")) {
+    if ($content.Contains($needle)) { throw "generate-template: personal string $needle still present after replacement -- something outside the SITE block hard-codes identity." }
+}
 
-# Strip the maintainer's Steam identity out of the two branches that only ever
-# run on the personal copy. They never render in the template — IS_TOOLKIT_TEMPLATE
-# and usingImported both gate them off — but the strings would still ship in a
-# public repo, so they are replaced rather than left as dead text.
-$content = $content.Replace(
-    "el.innerHTML = '<a class=`"steam-link`" href=`"https://steamcommunity.com/id/sinseriously/`" target=`"_blank`" rel=`"noopener`">sinseriously &#8599;</a>';",
-    "el.innerHTML = '';"
-)
-$content = $content.Replace(
-    "'STEAM: sinseriously &nbsp;&middot;&nbsp; SOURCE DATA evxl.app/u/76561198251208570'",
-    "''"
-)
-
-$content = $content.Replace(
-    "<button id=`"nav-import`" style=`"display:none;`">Load Your Data</button>",
-    "<button id=`"nav-import`">Load Your Data</button>"
-)
-
-# Extract the embedded dataset, zero scores/rank/volts, re-embed.
+# ---- 3. zero the dataset ----------------------------------------------------
 $startTag = '<script id="benchmarks-data" type="application/json">'
 $endTag = '</script>'
 $startIdx = $content.IndexOf($startTag) + $startTag.Length
 $endIdx = $content.IndexOf($endTag, $startIdx)
 $data = ($content.Substring($startIdx, $endIdx - $startIdx)) | ConvertFrom-Json
 
-$pctRegex = '^-?\d+(\.\d+)?%$'
 foreach ($b in $data) {
     $b.rank = "Unranked"
     $b.volts = 0
@@ -90,17 +99,15 @@ foreach ($b in $data) {
         $row = $b.rows[$ri]
         if ($row.Count -le 1) { continue }
         $p = -1
-        for ($i = 0; $i -lt $row.Count; $i++) {
-            if ($row[$i] -match $pctRegex) { $p = $i; break }
-        }
+        for ($i = 0; $i -lt $row.Count; $i++) { if ([string]$row[$i] -match $PctRegex) { $p = $i; break } }
         if ($p -lt 2) { continue }
         $row[$p - 1] = "0"
         $b.rows[$ri] = $row
     }
 }
 $zeroedJson = ConvertTo-DatasetJson $data
-
 $content = $content.Substring(0, $startIdx) + $zeroedJson + $content.Substring($endIdx)
 
 [System.IO.File]::WriteAllText($dst, $content, $Utf8NoBom)
 Write-Output "Wrote $dst ($($data.Count) playlists, all scores zeroed)."
+if ($copied.Count) { Write-Output ("Refreshed shared scripts from the tracker repo: " + ($copied -join ', ')) } else { Write-Output "Shared scripts already identical." }
