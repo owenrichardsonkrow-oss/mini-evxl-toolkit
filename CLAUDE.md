@@ -235,7 +235,10 @@ card. The template now holds 251 entries / 127 playlists.
   field + "Sync my scores" (Enter or click) → `doSync(false, name)` →
   `runKovaaksSync(…, presetUsername)`; status mirrored into `#first-run-status`
   by `setSyncStatus`; the panel makes way once scores land; a saved username is
-  prefilled (reset case). Unknown usernames come back from `total-play` as
+  prefilled (reset case), else `?user=<name>` from the page URL
+  (`URL_KOVAAKS_USERNAME`, also the last fallback of the Sync prompt; never
+  persisted by itself and deliberately not an auto-check fallback — that would
+  drip 10 scores into an empty store and hide the panel before a full sync). Unknown usernames come back from `total-play` as
   `200 null`, mapped to the "no player found" message. "Clear synced data" on
   the Load Your Data page now also shows for synced-only template stores.
 - Both feed the locally computed rank badge automatically (see "Rank is computed

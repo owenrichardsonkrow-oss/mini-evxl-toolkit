@@ -1891,6 +1891,13 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // on this page.
   const KOVAAKS_USERNAME_KEY = storeKey('kovaaks-username');
   const DEFAULT_KOVAAKS_USERNAME = String(SITE.defaultUsername||'');
+  // `?user=<kovaaks name>` on the page URL: a shareable link that prefills the
+  // first-run box and the Sync prompt for a specific player, so onboarding a
+  // friend is "open the link, click Sync". Never persisted by itself — a
+  // username is saved only when a sync confirms it — and deliberately NOT a
+  // fallback for the auto-check, which would drip 10 scores into an empty
+  // store and hide the first-run panel before a full sync ever ran.
+  const URL_KOVAAKS_USERNAME = (()=>{ try{ return String(new URLSearchParams(location.search).get('user')||'').trim().slice(0,64); }catch(e){ return ''; } })();
   const STEAM_LINK_KEY = storeKey('steam-link');
   const EVXL_LINK_KEY = storeKey('evxl-link');
   const STATS_FOLDER_NOTE_KEY = storeKey('stats-folder-note');
@@ -1927,7 +1934,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // asked the same question.
   function getKovaaksUsername(forcePrompt, presetUsername){
     if(presetUsername && String(presetUsername).trim()) return String(presetUsername).trim();
-    let name = forcePrompt ? null : (localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME || null);
+    let name = forcePrompt ? null : (localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME || URL_KOVAAKS_USERNAME || null);
     if(!name){
       const entered = window.prompt("Your KovaaK's username, as shown on kovaaks.com (Settings → Profile in-game — this is often NOT your Steam name):");
       if(!entered) return null;
@@ -2531,7 +2538,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // old text banner that pointed at the top-right button. A saved username
     // (reset case, or a sync that found nothing) is prefilled.
     const showFirstRun = IS_TOOLKIT_TEMPLATE && !usingImported && SCORES.size===0;
-    const firstRunName = showFirstRun ? (localStorage.getItem(KOVAAKS_USERNAME_KEY) || '') : '';
+    const firstRunName = showFirstRun ? (localStorage.getItem(KOVAAKS_USERNAME_KEY) || URL_KOVAAKS_USERNAME || '') : '';
     const wrap = document.createElement('div');
     wrap.className='wrap';
     wrap.innerHTML = `
@@ -2546,6 +2553,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
           <input type="text" id="first-run-username" placeholder="Your KovaaK's username" spellcheck="false" aria-label="KovaaK's username" value="${esc(firstRunName)}" />
           <button type="submit" class="import-btn" id="first-run-sync">&#8635; Sync my scores</button>
         </form>
+        ${(firstRunName && firstRunName===URL_KOVAAKS_USERNAME && !localStorage.getItem(KOVAAKS_USERNAME_KEY)) ? '<div class="fr-hint">This link was set up for <strong>'+esc(firstRunName)+'</strong> &mdash; if that isn\'t you, just change the name.</div>' : ''}
         <div class="fr-hint">Settings &rarr; Profile in KovaaK's &mdash; often <em>not</em> your Steam name. The first sync reads one scenario at a time and can take a few minutes; stopping is safe, it picks up where it left off. Prefer no network? <a href="#" id="first-run-local">Sync Scores Locally</a> reads your KovaaK's stats folder instead.</div>
         <div class="fr-status" id="first-run-status" aria-live="polite"></div>
       </div>` : ''}

@@ -16,7 +16,9 @@ copy, for free, with their own data.
 2. Type your KovaaK's username into the **Start here** box on the home page and
    press **⟳ Sync my scores** (Settings → Profile in-game — often *not* your Steam
    name; a typo gets a "no player found" message and nothing is saved). The same
-   thing is always available as **⟳ Sync Scores Online** top right. Or, if you'd
+   thing is always available as **⟳ Sync Scores Online** top right. Sharing the
+   tracker with someone? Add `?user=<their KovaaK's name>` to the link and the box
+   comes prefilled — the name is only saved once a sync confirms it. Or, if you'd
    rather not touch the network, **⟳ Sync Scores Locally** and pick your KovaaK's
    stats folder (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
 
