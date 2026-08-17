@@ -147,7 +147,7 @@ function ConvertFrom-V1Entry($b) {
     }
     # groups
     $groups = @(); $mismatch = $null
-    $sc = if ($b.PSObject.Properties['subcats']) { @($b.subcats) } else { @() }
+    $sc = @(); if ($b.PSObject.Properties['subcats']) { $sc = @($b.subcats) }   # not `= if (...) { @(...) }`: that unrolls a one-group layout into its cells
     $sum = 0; foreach ($x in $sc) { $sum += [int]$x[2] }
     if ($sc.Count -gt 0 -and $sum -eq $items.Count) {
         $i = 0

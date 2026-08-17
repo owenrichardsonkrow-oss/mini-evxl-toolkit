@@ -1,0 +1,19 @@
+# Golden-standings regression test for the rank engine, on every push and PR.
+# test/golden.js loads src/engine.js and the dataset embedded in template.html,
+# throws seeded score vectors at every playlist and compares the standings with
+# test/golden-standings.json (recorded from an engine proven against evxl's own
+# rank code). Any drift fails the run.
+name: engine tests
+on:
+  push:
+    branches: [master]
+  pull_request:
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node test/golden.js

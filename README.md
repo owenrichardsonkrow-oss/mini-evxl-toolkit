@@ -192,6 +192,15 @@ open `http://localhost:8744`.
 - `lib/kovaaks-table.ps1` — shared helpers the scripts above dot-source (reading
   and writing the embedded dataset, number parsing that ignores your Windows
   language settings). Keep it next to the scripts.
+- `src/engine.js` — the tracker's rank engine on its own (the same code that is
+  inlined into `template.html`): dataset parsing, tier reading, all of evxl's
+  rank rules, volts, pool selection. Loadable in Node; that's what the tests use.
+- `test/golden.js` + `test/golden-standings.json` — the regression test: seeded
+  score vectors for every playlist and the standings the engine is expected to
+  produce (recorded from an engine proven identical to evxl's own rank code).
+  `node test/golden.js` — also run by GitHub Actions on every push
+  (`.github/workflows/test.yml`). `test/harness.html` runs the same test in a
+  browser for machines without Node.
 - `docs/SCRAPING_GUIDE.md` — how to pull a dataset off evxl.app from scratch, only
   needed if you want playlists outside what's already pre-loaded in the template.
 

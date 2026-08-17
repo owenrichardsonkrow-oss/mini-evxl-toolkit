@@ -98,7 +98,7 @@ foreach ($x in $data) {
     } elseif ($layout.Count -and $catTotal -eq $total) {
         $flat = @(); foreach ($g in $groups) { $flat += @($g.scenarios) }
         $newGroups = @(); $i = 0
-        foreach ($l in $layout) { $n = [int]$l[2]; $slice = if ($n -gt 0) { @($flat[$i..($i + $n - 1)]) } else { @() }; $i += $n
+        foreach ($l in $layout) { $n = [int]$l[2]; $slice = @(); if ($n -gt 0) { $slice = @($flat[$i..($i + $n - 1)]) }; $i += $n
             $newGroups += [pscustomobject]@{ category = [string]$l[0]; subcategory = [string]$l[1]; scenarios = $slice } }
         Set-Prop $x 'groups' $newGroups
         $repartitioned += "$($x.name) [$($x.difficulty)]: $($ourCounts -join '/') -> $($catCounts -join '/')"

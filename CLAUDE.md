@@ -16,16 +16,26 @@ The personal copy this is generated from lives in the sibling folder
 
 ## Generated, not hand-edited
 
-`template.html` is produced by `generate-template.ps1` from the personal copy. It
-empties the scores block (the v2 dataset is structure only, so it ships
-verbatim), and swaps the page's **`SITE` identity block**
-(the only personal strings in the script: `template`, `owner`,
-`defaultUsername`, `steamUrl`/`steamLabel`, `evxlProfileUrl`) plus the `<title>`
-and brand text for generic values — every replacement asserted, and it refuses
-to write if a personal string survives anywhere. It also copies the shared
-scripts (`lib/`, `apply-scores.ps1`, `apply-evxl-catalog.ps1`,
-`fix-mojibake.ps1`) from the tracker repo when they differ.
+`template.html` is produced by the personal repo's **`build.ps1 -Template`**
+(`generate-template.ps1` here is a thin wrapper) from that repo's source tree —
+`src/page.html` + `styles.css` + `engine.js` + `app.js` and `data/`. The template
+build empties the scores block (the v2 dataset is structure only, so it ships
+verbatim), and swaps the page's **`SITE` identity block** (the only personal
+strings in the script: `template`, `owner`, `defaultUsername`,
+`steamUrl`/`steamLabel`, `evxlProfileUrl`) plus the `<title>` and brand text for
+generic values — every replacement asserted, and it refuses to write if a
+personal string survives anywhere. It also copies the shared files (`lib/`,
+`apply-scores.ps1`, `apply-evxl-catalog.ps1`, `fix-mojibake.ps1`,
+**`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
+
+**Tests:** `test/golden.js` (Node; `test/harness.html` in a browser) checks the
+engine's standings for seeded score vectors against `test/golden-standings.json`
+— answers recorded from an engine the personal repo's differential test had
+proven identical to evxl's own rank code. GitHub Actions runs it on every push
+(`.github/workflows/test.yml`). The golden file is regenerated only from the
+personal repo (`dev\run-tests.ps1 -WriteGolden`) after an intended engine change
+that the differential test has blessed — never by hand here.
 
 **App-behavior changes belong in the personal copy first, then regenerate.**
 Hand-editing `template.html` directly means the next regeneration silently discards

@@ -391,191 +391,13 @@
 
 
 <script>
-(function(){
-  // ---- site identity -----------------------------------------------------
-  // The toolkit template's identity: no owner, no default username, no
-  // profile links. Visitors fill their own in under Settings. This block is
-  // written by generate-template.ps1 from the personal copy's SITE block.
-  const SITE = {
-    template: true,
-    owner: '',
-    defaultUsername: '',
-    steamUrl: '',
-    steamLabel: '',
-    evxlProfileUrl: ''
-  };
-  // ---- end site identity -------------------------------------------------
-  const IS_TOOLKIT_TEMPLATE = !!SITE.template;
-  // The embedded dataset (structure, format v2 — see entryItems()) and the
-  // embedded scores ({name: score}; the owner's on the personal copy, {} in the
-  // template). Both are what the file was last built with; the browser's own
-  // store takes precedence wherever it holds a higher score.
-  const DEFAULT_BENCHMARKS = JSON.parse(document.getElementById('benchmarks-data').textContent);
-  const SEED_SCORES = (()=>{
-    const m = new Map();
-    try{
-      const el = document.getElementById('scores-data');
-      const obj = el ? JSON.parse(el.textContent||'{}') : {};
-      Object.keys(obj||{}).forEach(k=>{ const v=Number(obj[k]); if(k && Number.isFinite(v) && v>0) m.set(k, v); });
-    }catch(e){}
-    return m;
-  })();
-  const IMPORT_KEY = 'mini-evxl-imported-data';
-  let BENCHMARKS = DEFAULT_BENCHMARKS;
-  let usingImported = false;
-  let importedSeedScores = null;   // scores carried by the saved import (v1 rows / v2 payload), seeded below
-  try{
-    const saved = localStorage.getItem(IMPORT_KEY);
-    if(saved){
-      const savedParsed = JSON.parse(saved);
-      if(!validateImportedData(savedParsed)){
-        const norm = normalizeImported(savedParsed);
-        BENCHMARKS = norm.benchmarks;
-        importedSeedScores = norm.scores;
-        usingImported = true;
-      }
-    }
-  }catch(e){}
-  // ---- Scenario score store -------------------------------------------
-  // Scores used to live only inside each playlist's own table rows, which
-  // meant removing a playlist destroyed its scores along with it. They now
-  // live here instead, keyed by scenario name and independent of any
-  // playlist: an append-only record that a dataset upload never shrinks.
-  // Playlist rows still carry their originally-scraped score (sync.ps1
-  // patches those on disk, and they seed this store on first load), but the
-  // store takes precedence wherever the two disagree.
-  //
-  // Deliberately score-only. Tier thresholds are a property of the playlist,
-  // not of the score, so a scenario no active playlist references simply
-  // doesn't render — there's nothing to draw a bar against, and re-uploading
-  // its playlist restores the correct thresholds along with it.
-  const SCORES_KEY = 'mini-evxl-scenario-scores';
-  const SCORES = new Map();
-  try{
-    const rawScores = localStorage.getItem(SCORES_KEY);
-    if(rawScores){
-      const obj = JSON.parse(rawScores);
-      Object.keys(obj).forEach(k=>{
-        const v = Number(obj[k]);
-        if(Number.isFinite(v)) SCORES.set(k, v);
-      });
-    }
-  }catch(e){}
-  function persistScores(){
-    try{
-      const obj = {};
-      SCORES.forEach((v,k)=>{ obj[k]=v; });
-      localStorage.setItem(SCORES_KEY, JSON.stringify(obj));
-    }catch(e){}
-  }
-  // ---- Score history --------------------------------------------------
-  // The store is max-only, so on its own it can't say what improved when. This
-  // log records every raise that comes from a sync or an import (not the seed
-  // from the file's own rows, which isn't a play event): {t, name, from, to,
-  // src}. Capped; cleared with the store on reset-to-demo. Local telemetry —
-  // deliberately not part of the scores export.
-  const HISTORY_KEY = 'mini-evxl-score-history';
-  const HISTORY_CAP = 4000;
-  let HISTORY = [];
-  try{ const h = JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]'); if(Array.isArray(h)) HISTORY = h.filter(e=>e && Number.isFinite(e.t) && e.name); }catch(e){}
-  function persistHistory(){ try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(HISTORY)); }catch(e){} }
-  function logRaises(events){
-    if(!events.length) return;
-    HISTORY.push(...events);
-    if(HISTORY.length > HISTORY_CAP) HISTORY = HISTORY.slice(HISTORY.length - HISTORY_CAP);
-    persistHistory();
-  }
-
-  // Never lowers a stored score — a playlist whose embedded rows are stale
-  // (or zeroed, as in the toolkit template) can't clobber a real result.
-  // `src` names where the raise came from ('seed' | 'online' | 'local' |
-  // 'import'); anything but 'seed' is logged to the history.
-  function recordScores(map, src){
-    let changed = 0;
-    const events = [];
-    const now = Date.now();
-    map.forEach((v,k)=>{
-      if(!Number.isFinite(v) || v<=0) return;
-      const prev = SCORES.has(k) ? SCORES.get(k) : 0;
-      if(prev < v){
-        SCORES.set(k, v); changed++;
-        if(src && src!=='seed') events.push({ t: now, name: k, from: prev, to: v, src });
-      }
-    });
-    if(changed) persistScores();
-    if(events.length) logRaises(events);
-    return changed;
-  }
-
-  // Export/import of the store. The file is the store's escape hatch: it is
-  // per-browser and per-origin (localhost:8850, file://, a GitHub Pages URL
-  // and the artifact are four separate stores), so without this a deep sync's
-  // results could never reach the on-disk file, another copy, or a backup.
-  // apply-scores.ps1 reads the same file and bakes it into the HTML rows.
-  const SCORES_EXPORT_FORMAT = 'mini-evxl-scores';
-  function exportScoresPayload(){
-    const scores = {};
-    [...SCORES.keys()].sort((a,b)=>a.localeCompare(b)).forEach(k=>{ scores[k]=SCORES.get(k); });
-    return { format: SCORES_EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(), count: SCORES.size, scores };
-  }
-  // Accepts our export, or a bare {name: score} object. Max-merge, never lowers.
-  function importScoresText(text){
-    let parsed;
-    try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Not valid JSON: '+e.message); }
-    const obj = parsed && typeof parsed==='object' && parsed.scores && typeof parsed.scores==='object' ? parsed.scores : parsed;
-    if(!obj || typeof obj!=='object' || Array.isArray(obj)) throw new Error('Expected a scores export ({"scores": {name: score}}) or a plain {name: score} object.');
-    const map = new Map();
-    let ignored = 0;
-    Object.keys(obj).forEach(k=>{ const v = Number(obj[k]); if(k && Number.isFinite(v) && v>0) map.set(k.trim(), v); else ignored++; });
-    if(map.size===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
-    const raised = recordScores(map, 'import');
-    if(raised>0) invalidateCaches();
-    return { raised, unchanged: map.size - raised, ignored };
-  }
-
-  // ---- Excluded playlists ---------------------------------------------
-  // Benchmarks the user has opted out of. Held as a set of stable
-  // name+difficulty keys so exclusions survive a dataset re-upload, and
-  // JSON-encoded rather than joined with a delimiter character — a literal
-  // separator byte in a composite key has bitten this file before.
-  const EXCLUDE_KEY = 'mini-evxl-excluded-playlists';
-  const EXCLUDED = new Set();
-  function benchKey(b){ return JSON.stringify([b.name, b.difficulty]); }
-  try{
-    const rawExcl = localStorage.getItem(EXCLUDE_KEY);
-    if(rawExcl){
-      const arr = JSON.parse(rawExcl);
-      if(Array.isArray(arr)) arr.forEach(k=>{ if(typeof k==='string') EXCLUDED.add(k); });
-    }
-  }catch(e){}
-  function persistExcluded(){
-    try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify([...EXCLUDED])); }catch(e){}
-  }
-  // The visible benchmark pool: loaded, minus excluded. Everything the site
-  // renders derives from this — so a scenario disappears from the site when
-  // no playlist in the pool references it, whether that's because its
-  // playlist was excluded or because an upload no longer contains it. Both
-  // cases are the same condition, and neither touches the score store.
-  function activeBenchmarks(){
-    return BENCHMARKS.filter(b=>!EXCLUDED.has(benchKey(b)));
-  }
-  function activeCount(){ return activeBenchmarks().length; }
-
-  const app = document.getElementById('app');
-  const navHome = document.getElementById('nav-home');
-  const navShared = document.getElementById('nav-shared');
-  const navUnique = document.getElementById('nav-unique');
-  const navImport = document.getElementById('nav-import');
-  const navExclude = document.getElementById('nav-exclude');
-  const navSettings = document.getElementById('nav-settings');
-  const navSync = document.getElementById('nav-sync');
-  const navSyncLocal = document.getElementById('nav-sync-local');
-  const localStatsInput = document.getElementById('local-stats-input');
-  const syncStatus = document.getElementById('sync-status');
-
-  function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
+// mini-evxl engine -- the pure part of the tracker: dataset parsing (v2 and the
+// v1 importer), tier reading, evxl's rank rules, volts, pool selection, merged
+// progress. No DOM, no storage, no fetch. build.ps1 inlines it into the page
+// ahead of app.js; tests load it in Node:  const E = require('./src/engine.js').
+// Every rule here is proven against evxl's own functions by dev/rank-diff-test.js.
+const MiniEvxlEngine = (function(){
   function stripSuffix(s){ return String(s).replace(/\s*-\s*[\d,]+$/,'').trim(); }
-  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 
   // ---- dataset format (v2, 2026-08-16 late) --------------------------------
   // An entry is STRUCTURE only — the same for every player:
@@ -1476,10 +1298,7 @@
   // evxl's selection-based calculation. So parsedItemsFor() returns the whole
   // pool with a `selected` flag on each item, and benchmarkStanding() /
   // benchmarkVolts() narrow to the selected items themselves.
-  const SELECTION_KEY = 'mini-evxl-scenario-selection';
-  let SELECTION = {};
-  try{ const raw = JSON.parse(localStorage.getItem(SELECTION_KEY)||'{}'); if(raw && typeof raw==='object' && !Array.isArray(raw)) SELECTION = raw; }catch(e){}
-  function saveSelection(){ try{ localStorage.setItem(SELECTION_KEY, JSON.stringify(SELECTION)); }catch(e){} }
+
   function hasSelection(b){ return !!(b && b.selection && Number(b.selection.select)>0); }
   // Category / subcategory groups of the POOL, from the catalog layout.
   function selectionGroups(pool, b){
@@ -1510,19 +1329,7 @@
   }
   // The active selection for a benchmark: the stored one (kept to names that
   // still exist in the pool, capped like evxl's _e()) or the default.
-  function selectionFor(b, pool){
-    const stored = SELECTION[benchKey(b)];
-    if(Array.isArray(stored)){
-      const names = new Set(pool.map(it=>it.name));
-      const max = Number(b.selection.maxSelect)>0 ? Number(b.selection.maxSelect) : pool.length;
-      const s = new Set();
-      for(const n of stored){ if(names.has(n) && !s.has(n)){ s.add(n); if(s.size>=max) break; } }
-      return { set: s, custom: true };
-    }
-    return { set: defaultSelection(pool, b), custom: false };
-  }
-  function setSelection(b, names){ SELECTION[benchKey(b)] = [...names]; saveSelection(); invalidateCaches(); }
-  function resetSelection(b){ delete SELECTION[benchKey(b)]; saveSelection(); invalidateCaches(); }
+
   // Which minimums a selection misses (evxl's categorySelectionIssues /
   // subcategorySelectionIssues): names of the offending groups.
   function selectionIssues(pool, b, set){
@@ -1547,6 +1354,276 @@
     return Math.max(0, Math.floor(ranked[N-1].base));
   };
 
+  // The items a pool benchmark is RANKED on: the selection. `selected` is
+  // undefined on synthetic items (the diff test builds its own subset), which
+  // reads as selected.
+  function rankedItems(items, b){
+    return hasSelection(b) ? items.filter(it=>it.selected!==false) : items;
+  }
+
+  function countScenarios(changes){ return new Set(changes.map(c=>c.scenario)).size; }
+
+  // Progress stats against the same merged ruler buildMergedEqualBar draws:
+  // toMax = 100% minus (top - score) / (top - min) once score clears the lowest
+  //         tier, i.e. how far from min to top the score has come; below the
+  //         lowest tier there's no "min" to anchor against, so it stays as the
+  //         raw score / top instead (0% unplayed, climbing toward the min tier).
+  // to2nd = identical formula to toMax, but anchored to the second-highest
+  //         distinct rank threshold across every shared playlist instead of the top one.
+  // toNext = how far between the current merged tier and the next one the score sits.
+  function mergedProgress(playlists, score){
+    const merged = [];
+    playlists.forEach(pl=>{ pl.tiers.forEach(([,thresh])=>{ merged.push(thresh); }); });
+    merged.sort((a,b)=>a-b);
+    const n = merged.length;
+    const top = merged[n-1];
+    const min = merged[0];
+    const uniqueDesc = [...new Set(merged)].sort((a,b)=>b-a);
+    const second = uniqueDesc.length>1 ? uniqueDesc[1] : uniqueDesc[0];
+    let idx=-1;
+    for(let i=0;i<n;i++){ if(score>=merged[i]) idx=i; }
+    const toMax = score<min
+      ? (top>0 ? score/top : 0)
+      : (top>min ? 1 - (top-score)/(top-min) : 0);
+    const to2nd = score<min
+      ? (second>0 ? score/second : 0)
+      : (second>min ? 1 - (second-score)/(second-min) : 0);
+    let toNext, maxed=false;
+    if(idx===n-1){ maxed=true; toNext=1; }
+    else if(idx<0){ const upper=merged[0]; toNext = upper>0 ? score/upper : 0; }
+    else { const lower=merged[idx], upper=merged[idx+1]; toNext = upper>lower ? (score-lower)/(upper-lower) : 0; }
+    return { toMax, to2nd, toNext, maxed };
+  }
+
+  // Difficulty attribute: derived from the scenario's own name plus every
+  // playlist difficulty label it's found under (a shared scenario can carry
+  // several). "Easy"/"Easier" in either signals Easy; "Hard"/"Expert" signals
+  // Hard. Anything else (Medium, Advanced, Novice, custom pack names like
+  // "roa Ultimate"...) contributes no signal either way. If a scenario picks
+  // up both an Easy and a Hard signal (e.g. named "...Easy" but only appears
+  // in a Hard-difficulty playlist) they cancel out to Intermediate, same as
+  // when there's no signal at all.
+  function hasEasySignal(s){ const t=String(s).toLowerCase(); return t.includes('easy') || t.includes('easier'); }
+  function hasHardSignal(s){ const t=String(s).toLowerCase(); return t.includes('hard') || t.includes('expert'); }
+  function classifyDifficulty(name, difficulties){
+    const easy = hasEasySignal(name) || difficulties.some(hasEasySignal);
+    const hard = hasHardSignal(name) || difficulties.some(hasHardSignal);
+    if(easy && hard) return 'Intermediate';
+    if(easy) return 'Easy';
+    if(hard) return 'Hard';
+    return 'Intermediate';
+  }
+
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios };
+})();
+if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
+(function(){
+  // ---- site identity -----------------------------------------------------
+  // The toolkit template's identity: no owner, no default username, no
+  // profile links. Visitors fill their own in under Settings. This block is
+  // written by build.ps1 -Template from the personal copy's SITE block.
+  const SITE = {
+    template: true,
+    owner: '',
+    defaultUsername: '',
+    steamUrl: '',
+    steamLabel: '',
+    evxlProfileUrl: ''
+  };
+  // ---- end site identity -------------------------------------------------
+  const IS_TOOLKIT_TEMPLATE = !!SITE.template;
+  // The engine (src/engine.js, inlined just above this script by build.ps1).
+  const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios } = MiniEvxlEngine;
+
+  // The embedded dataset (structure, format v2 — see entryItems()) and the
+  // embedded scores ({name: score}; the owner's on the personal copy, {} in the
+  // template). Both are what the file was last built with; the browser's own
+  // store takes precedence wherever it holds a higher score.
+  const DEFAULT_BENCHMARKS = JSON.parse(document.getElementById('benchmarks-data').textContent);
+  const SEED_SCORES = (()=>{
+    const m = new Map();
+    try{
+      const el = document.getElementById('scores-data');
+      const obj = el ? JSON.parse(el.textContent||'{}') : {};
+      Object.keys(obj||{}).forEach(k=>{ const v=Number(obj[k]); if(k && Number.isFinite(v) && v>0) m.set(k, v); });
+    }catch(e){}
+    return m;
+  })();
+  const IMPORT_KEY = 'mini-evxl-imported-data';
+  let BENCHMARKS = DEFAULT_BENCHMARKS;
+  let usingImported = false;
+  let importedSeedScores = null;   // scores carried by the saved import (v1 rows / v2 payload), seeded below
+  try{
+    const saved = localStorage.getItem(IMPORT_KEY);
+    if(saved){
+      const savedParsed = JSON.parse(saved);
+      if(!validateImportedData(savedParsed)){
+        const norm = normalizeImported(savedParsed);
+        BENCHMARKS = norm.benchmarks;
+        importedSeedScores = norm.scores;
+        usingImported = true;
+      }
+    }
+  }catch(e){}
+  // ---- Scenario score store -------------------------------------------
+  // Scores used to live only inside each playlist's own table rows, which
+  // meant removing a playlist destroyed its scores along with it. They now
+  // live here instead, keyed by scenario name and independent of any
+  // playlist: an append-only record that a dataset upload never shrinks.
+  // Playlist rows still carry their originally-scraped score (sync.ps1
+  // patches those on disk, and they seed this store on first load), but the
+  // store takes precedence wherever the two disagree.
+  //
+  // Deliberately score-only. Tier thresholds are a property of the playlist,
+  // not of the score, so a scenario no active playlist references simply
+  // doesn't render — there's nothing to draw a bar against, and re-uploading
+  // its playlist restores the correct thresholds along with it.
+  const SCORES_KEY = 'mini-evxl-scenario-scores';
+  const SCORES = new Map();
+  try{
+    const rawScores = localStorage.getItem(SCORES_KEY);
+    if(rawScores){
+      const obj = JSON.parse(rawScores);
+      Object.keys(obj).forEach(k=>{
+        const v = Number(obj[k]);
+        if(Number.isFinite(v)) SCORES.set(k, v);
+      });
+    }
+  }catch(e){}
+  function persistScores(){
+    try{
+      const obj = {};
+      SCORES.forEach((v,k)=>{ obj[k]=v; });
+      localStorage.setItem(SCORES_KEY, JSON.stringify(obj));
+    }catch(e){}
+  }
+  // ---- Score history --------------------------------------------------
+  // The store is max-only, so on its own it can't say what improved when. This
+  // log records every raise that comes from a sync or an import (not the seed
+  // from the file's own rows, which isn't a play event): {t, name, from, to,
+  // src}. Capped; cleared with the store on reset-to-demo. Local telemetry —
+  // deliberately not part of the scores export.
+  const HISTORY_KEY = 'mini-evxl-score-history';
+  const HISTORY_CAP = 4000;
+  let HISTORY = [];
+  try{ const h = JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]'); if(Array.isArray(h)) HISTORY = h.filter(e=>e && Number.isFinite(e.t) && e.name); }catch(e){}
+  function persistHistory(){ try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(HISTORY)); }catch(e){} }
+  function logRaises(events){
+    if(!events.length) return;
+    HISTORY.push(...events);
+    if(HISTORY.length > HISTORY_CAP) HISTORY = HISTORY.slice(HISTORY.length - HISTORY_CAP);
+    persistHistory();
+  }
+
+  // Never lowers a stored score — a playlist whose embedded rows are stale
+  // (or zeroed, as in the toolkit template) can't clobber a real result.
+  // `src` names where the raise came from ('seed' | 'online' | 'local' |
+  // 'import'); anything but 'seed' is logged to the history.
+  function recordScores(map, src){
+    let changed = 0;
+    const events = [];
+    const now = Date.now();
+    map.forEach((v,k)=>{
+      if(!Number.isFinite(v) || v<=0) return;
+      const prev = SCORES.has(k) ? SCORES.get(k) : 0;
+      if(prev < v){
+        SCORES.set(k, v); changed++;
+        if(src && src!=='seed') events.push({ t: now, name: k, from: prev, to: v, src });
+      }
+    });
+    if(changed) persistScores();
+    if(events.length) logRaises(events);
+    return changed;
+  }
+
+  // Export/import of the store. The file is the store's escape hatch: it is
+  // per-browser and per-origin (localhost:8850, file://, a GitHub Pages URL
+  // and the artifact are four separate stores), so without this a deep sync's
+  // results could never reach the on-disk file, another copy, or a backup.
+  // apply-scores.ps1 reads the same file and bakes it into the HTML rows.
+  const SCORES_EXPORT_FORMAT = 'mini-evxl-scores';
+  function exportScoresPayload(){
+    const scores = {};
+    [...SCORES.keys()].sort((a,b)=>a.localeCompare(b)).forEach(k=>{ scores[k]=SCORES.get(k); });
+    return { format: SCORES_EXPORT_FORMAT, version: 1, exportedAt: new Date().toISOString(), count: SCORES.size, scores };
+  }
+  // Accepts our export, or a bare {name: score} object. Max-merge, never lowers.
+  function importScoresText(text){
+    let parsed;
+    try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Not valid JSON: '+e.message); }
+    const obj = parsed && typeof parsed==='object' && parsed.scores && typeof parsed.scores==='object' ? parsed.scores : parsed;
+    if(!obj || typeof obj!=='object' || Array.isArray(obj)) throw new Error('Expected a scores export ({"scores": {name: score}}) or a plain {name: score} object.');
+    const map = new Map();
+    let ignored = 0;
+    Object.keys(obj).forEach(k=>{ const v = Number(obj[k]); if(k && Number.isFinite(v) && v>0) map.set(k.trim(), v); else ignored++; });
+    if(map.size===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
+    const raised = recordScores(map, 'import');
+    if(raised>0) invalidateCaches();
+    return { raised, unchanged: map.size - raised, ignored };
+  }
+
+  // ---- Excluded playlists ---------------------------------------------
+  // Benchmarks the user has opted out of. Held as a set of stable
+  // name+difficulty keys so exclusions survive a dataset re-upload, and
+  // JSON-encoded rather than joined with a delimiter character — a literal
+  // separator byte in a composite key has bitten this file before.
+  const EXCLUDE_KEY = 'mini-evxl-excluded-playlists';
+  const EXCLUDED = new Set();
+  function benchKey(b){ return JSON.stringify([b.name, b.difficulty]); }
+  try{
+    const rawExcl = localStorage.getItem(EXCLUDE_KEY);
+    if(rawExcl){
+      const arr = JSON.parse(rawExcl);
+      if(Array.isArray(arr)) arr.forEach(k=>{ if(typeof k==='string') EXCLUDED.add(k); });
+    }
+  }catch(e){}
+  function persistExcluded(){
+    try{ localStorage.setItem(EXCLUDE_KEY, JSON.stringify([...EXCLUDED])); }catch(e){}
+  }
+  // The visible benchmark pool: loaded, minus excluded. Everything the site
+  // renders derives from this — so a scenario disappears from the site when
+  // no playlist in the pool references it, whether that's because its
+  // playlist was excluded or because an upload no longer contains it. Both
+  // cases are the same condition, and neither touches the score store.
+  function activeBenchmarks(){
+    return BENCHMARKS.filter(b=>!EXCLUDED.has(benchKey(b)));
+  }
+  function activeCount(){ return activeBenchmarks().length; }
+
+  const app = document.getElementById('app');
+  const navHome = document.getElementById('nav-home');
+  const navShared = document.getElementById('nav-shared');
+  const navUnique = document.getElementById('nav-unique');
+  const navImport = document.getElementById('nav-import');
+  const navExclude = document.getElementById('nav-exclude');
+  const navSettings = document.getElementById('nav-settings');
+  const navSync = document.getElementById('nav-sync');
+  const navSyncLocal = document.getElementById('nav-sync-local');
+  const localStatsInput = document.getElementById('local-stats-input');
+  const syncStatus = document.getElementById('sync-status');
+
+  function fmt(n){ return Number(n).toLocaleString(undefined,{maximumFractionDigits:2}); }
+  function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+
+  const SELECTION_KEY = 'mini-evxl-scenario-selection';
+  let SELECTION = {};
+  try{ const raw = JSON.parse(localStorage.getItem(SELECTION_KEY)||'{}'); if(raw && typeof raw==='object' && !Array.isArray(raw)) SELECTION = raw; }catch(e){}
+  function saveSelection(){ try{ localStorage.setItem(SELECTION_KEY, JSON.stringify(SELECTION)); }catch(e){} }
+  function selectionFor(b, pool){
+    const stored = SELECTION[benchKey(b)];
+    if(Array.isArray(stored)){
+      const names = new Set(pool.map(it=>it.name));
+      const max = Number(b.selection.maxSelect)>0 ? Number(b.selection.maxSelect) : pool.length;
+      const s = new Set();
+      for(const n of stored){ if(names.has(n) && !s.has(n)){ s.add(n); if(s.size>=max) break; } }
+      return { set: s, custom: true };
+    }
+    return { set: defaultSelection(pool, b), custom: false };
+  }
+  function setSelection(b, names){ SELECTION[benchKey(b)] = [...names]; saveSelection(); invalidateCaches(); }
+  function resetSelection(b){ delete SELECTION[benchKey(b)]; saveSelection(); invalidateCaches(); }
+
   // One benchmark's scenario items with the score store's scores on them.
   // EVERY place that shows a score must go through this (or through
   // getParsedBenchmarks, which uses it) — the detail page once read the raw
@@ -1559,12 +1636,6 @@
     if(!hasSelection(b)) return pool.map(it=>Object.assign(it, { selected: true }));
     const { set } = selectionFor(b, pool);
     return pool.map(it=>Object.assign(it, { selected: set.has(it.name) }));
-  }
-  // The items a pool benchmark is RANKED on: the selection. `selected` is
-  // undefined on synthetic items (the diff test builds its own subset), which
-  // reads as selected.
-  function rankedItems(items, b){
-    return hasSelection(b) ? items.filter(it=>it.selected!==false) : items;
   }
 
   // Parsed scenario items per benchmark, computed once and cached.
@@ -2184,7 +2255,6 @@
 
   // Sync results report per (playlist, scenario) row, but "N scores updated"
   // should mean N scenarios — a scenario shared by 5 playlists is one score.
-  function countScenarios(changes){ return new Set(changes.map(c=>c.scenario)).size; }
 
   // Cleared bar segments shade from gold (first tier) to green (top tier),
   // through the theme's own tokens so light mode gets its own colours — this
@@ -2248,37 +2318,6 @@
     return track;
   }
 
-  // Progress stats against the same merged ruler buildMergedEqualBar draws:
-  // toMax = 100% minus (top - score) / (top - min) once score clears the lowest
-  //         tier, i.e. how far from min to top the score has come; below the
-  //         lowest tier there's no "min" to anchor against, so it stays as the
-  //         raw score / top instead (0% unplayed, climbing toward the min tier).
-  // to2nd = identical formula to toMax, but anchored to the second-highest
-  //         distinct rank threshold across every shared playlist instead of the top one.
-  // toNext = how far between the current merged tier and the next one the score sits.
-  function mergedProgress(playlists, score){
-    const merged = [];
-    playlists.forEach(pl=>{ pl.tiers.forEach(([,thresh])=>{ merged.push(thresh); }); });
-    merged.sort((a,b)=>a-b);
-    const n = merged.length;
-    const top = merged[n-1];
-    const min = merged[0];
-    const uniqueDesc = [...new Set(merged)].sort((a,b)=>b-a);
-    const second = uniqueDesc.length>1 ? uniqueDesc[1] : uniqueDesc[0];
-    let idx=-1;
-    for(let i=0;i<n;i++){ if(score>=merged[i]) idx=i; }
-    const toMax = score<min
-      ? (top>0 ? score/top : 0)
-      : (top>min ? 1 - (top-score)/(top-min) : 0);
-    const to2nd = score<min
-      ? (second>0 ? score/second : 0)
-      : (second>min ? 1 - (second-score)/(second-min) : 0);
-    let toNext, maxed=false;
-    if(idx===n-1){ maxed=true; toNext=1; }
-    else if(idx<0){ const upper=merged[0]; toNext = upper>0 ? score/upper : 0; }
-    else { const lower=merged[idx], upper=merged[idx+1]; toNext = upper>lower ? (score-lower)/(upper-lower) : 0; }
-    return { toMax, to2nd, toNext, maxed };
-  }
 
   // Merges every playlist's tier thresholds into one sorted ruler, one equal-width
   // step per threshold regardless of point gap, one marker for the single real score.
@@ -2354,24 +2393,6 @@
     return track;
   }
 
-  // Difficulty attribute: derived from the scenario's own name plus every
-  // playlist difficulty label it's found under (a shared scenario can carry
-  // several). "Easy"/"Easier" in either signals Easy; "Hard"/"Expert" signals
-  // Hard. Anything else (Medium, Advanced, Novice, custom pack names like
-  // "roa Ultimate"...) contributes no signal either way. If a scenario picks
-  // up both an Easy and a Hard signal (e.g. named "...Easy" but only appears
-  // in a Hard-difficulty playlist) they cancel out to Intermediate, same as
-  // when there's no signal at all.
-  function hasEasySignal(s){ const t=String(s).toLowerCase(); return t.includes('easy') || t.includes('easier'); }
-  function hasHardSignal(s){ const t=String(s).toLowerCase(); return t.includes('hard') || t.includes('expert'); }
-  function classifyDifficulty(name, difficulties){
-    const easy = hasEasySignal(name) || difficulties.some(hasEasySignal);
-    const hard = hasHardSignal(name) || difficulties.some(hasHardSignal);
-    if(easy && hard) return 'Intermediate';
-    if(easy) return 'Easy';
-    if(hard) return 'Hard';
-    return 'Intermediate';
-  }
   function diffChipClass(diff){
     if(diff==='Easy') return 'chip-diff-easy';
     if(diff==='Hard') return 'chip-diff-hard';
