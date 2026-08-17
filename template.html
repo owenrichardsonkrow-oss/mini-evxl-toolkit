@@ -599,21 +599,25 @@
   // to the parsed scenario count; otherwise the table's own label path; and
   // if the table has no labels at all, every scenario is its own group (which
   // is also how evxl's catalog encodes uncategorised benchmarks).
-  function subcategoryGroups(items, b){
+  function subcategoryGroups(items, b){ return subcategoryGroupsNamed(items, b).map(g=>g.items); }
+  // Same, keeping the labels: [{cat, sub, items}]. Some modes filter
+  // subcategories by name (vt-energy drops anything containing "strafe").
+  function subcategoryGroupsNamed(items, b){
     const sc = b && Array.isArray(b.subcats) ? b.subcats : null;
     if(sc && sc.length){
       const sum = sc.reduce((a,x)=>a+(Number(x[2])||0),0);
       if(sum===items.length){
         const groups=[]; let i=0;
-        sc.forEach(x=>{ const n=Number(x[2])||0; groups.push(items.slice(i, i+n)); i+=n; });
-        return groups.filter(g=>g.length>0);
+        sc.forEach(x=>{ const n=Number(x[2])||0; groups.push({cat:String(x[0]||''), sub:String(x[1]||''), items: items.slice(i, i+n)}); i+=n; });
+        return groups.filter(g=>g.items.length>0);
       }
     }
     const byKey = new Map();
     items.forEach((it,i)=>{
-      const key = (it.tags && it.tags.length) ? it.tags.join('::') : ('#'+i);
-      if(!byKey.has(key)) byKey.set(key, []);
-      byKey.get(key).push(it);
+      const tags = it.tags && it.tags.length ? it.tags : null;
+      const key = tags ? tags.join('::') : ('#'+i);
+      if(!byKey.has(key)) byKey.set(key, {cat: tags && tags.length>1 ? tags[0] : '', sub: tags ? tags[tags.length-1] : '', items: []});
+      byKey.get(key).items.push(it);
     });
     return [...byKey.values()];
   }
@@ -652,8 +656,8 @@
   // Below the first tier: ramps from 0 up to th[0]-100 by a "fake" tier one
   // gap below the first threshold, then on to th[0]. Above the top: continues
   // one more gap (or `overSpan` gaps), then flat.
-  function scenarioEnergy(it, th, overSpan){
-    const t = 100;
+  function scenarioEnergy(it, th, overSpan, lowerOffset){
+    const t = (lowerOffset===undefined) ? 100 : lowerOffset;
     const score = it.score;
     const tv = it.tiers.map(x=>x[1]);
     const base = achievedIndex(score, it.tiers)+1;
@@ -671,17 +675,17 @@
     if(pr<a+overSpan) return Math.trunc(l+(pr-a)*(h-l));
     return Math.trunc(h);
   }
-  // Harmonic mean of per-subcategory best energies → rank on this
-  // difficulty's ladder. Any subcategory at 0 energy → Unranked (evxl's X()).
-  function energyRank(items, b, ctx, opts){
-    const n = ctx.tierCount;
-    if(n===0) return 0;
-    const off = Number(b.evxlRankOffset)||0;
-    const th = Array.from({length:n},(_,i)=>(off+i+1)*100);
-    let cap = opts.capped ? (off+n+1)*100 : (String(b.difficulty||'').trim().toLowerCase()==='advanced' ? 1200 : Infinity);
-    const energyFn = it => scenarioEnergy(it, th, opts.overSpan);
-    const energies = subcategoryGroups(items, b).map(g=>{
-      const best = subcategoryBest(g, energyFn);
+  // evxl's Z(): per-subcategory best energy (subcategories optionally
+  // filtered by name), each capped, harmonic mean → rank on `thresholds`.
+  // Any counted subcategory at 0 energy → Unranked (evxl's X()).
+  function zRank(items, b, cfg){
+    const th = cfg.thresholds;
+    if(!th || !th.length) return 0;
+    const cap = Number.isFinite(cfg.cap) ? cfg.cap : Infinity;
+    const energyFn = it => scenarioEnergy(it, th, cfg.overSpan, cfg.lowerOffset);
+    const groups = subcategoryGroupsNamed(items, b).filter(g => cfg.filter ? cfg.filter(g) : true);
+    const energies = groups.map(g=>{
+      const best = subcategoryBest(g.items, energyFn);
       if(!best) return 0;
       return Math.min(energyFn(best), cap);
     });
@@ -689,6 +693,90 @@
     const hm = Math.round(energies.length/energies.reduce((a,e)=>a+1/e,0)*10)/10;
     for(let i=th.length-1;i>=0;i--){ if(hm>=th[i]) return i+1; }
     return 0;
+  }
+  // generic-energy / -uncapped: this difficulty's slice of the benchmark-wide
+  // 100-per-rank ladder (offset by preceding difficulties); capped one rank
+  // above the top (uncapped: only "advanced" is capped, at 1200).
+  function energyRank(items, b, ctx, opts){
+    const n = ctx.tierCount;
+    if(n===0) return 0;
+    const off = Number(b.evxlRankOffset)||0;
+    const th = Array.from({length:n},(_,i)=>(off+i+1)*100);
+    const cap = opts.capped ? (off+n+1)*100 : (String(b.difficulty||'').trim().toLowerCase()==='advanced' ? 1200 : Infinity);
+    return zRank(items, b, { thresholds: th, lowerOffset: 100, overSpan: opts.overSpan, cap });
+  }
+  // vt-energy (Voltaic S5/S5.5; evxl's Y()+pe()): a fixed 100…1500 ladder
+  // sliced per difficulty (novice 100–400, intermediate 500–800, advanced
+  // 900–1200; unknown names take the whole ladder), fake-lower offset 0 for
+  // novice else 100, over-max span 1, "strafe" subcategories excluded from the
+  // mean, and advanced capped at 1200. ("elite (unofficial)" isn't in our data.)
+  function vtEnergyRank(items, b, ctx){
+    const ladder = [100,200,300,400,500,600,700,800,900,1000,1100,1200,1300,1400,1500];
+    const diff = String(b.difficulty||'').trim().toLowerCase();
+    let slice = { novice:[0,4], intermediate:[4,8], advanced:[8,12] }[diff] || [0, ladder.length];
+    if(diff==='elite (unofficial)'){
+      // evxl's pe(): the top of the ladder, one step lower when the first
+      // tier is a Grandmaster tier.
+      const first = ((b.evxlTiers && b.evxlTiers[0]) || (items[0] && items[0].tiers[0] && items[0].tiers[0][0]) || '');
+      slice = String(first).toLowerCase().replace(/[^a-z]/g,'').startsWith('grandmaster') ? [8,14] : [9,15];
+    }
+    const th = ladder.slice(slice[0], slice[1]);
+    return zRank(items, b, { thresholds: th, lowerOffset: diff==='novice' ? 0 : 100, overSpan: 1,
+      cap: diff==='advanced' ? 1200 : Infinity,
+      filter: g => !String(g.sub||'').toLowerCase().includes('strafe') });
+  }
+  // aplus-alt (Aimerz+; evxl's hn()): every scenario contributes
+  // (tier + progress) × 100/N (below the first tier: score/first × 100/N);
+  // the sum is read off a 100-per-tier ladder.
+  function aplusAltRank(items, b, ctx){
+    const n = ctx.tierCount; if(!n || !items.length) return 0;
+    const th = Array.from({length:n},(_,i)=>(i+1)*100);
+    const s = 100/items.length;
+    let total = 0;
+    items.forEach(it=>{
+      const tv = it.tiers.map(x=>x[1]);
+      const base = achievedIndex(it.score, it.tiers)+1;
+      let d;
+      if(base===0){ const k = tv[0]||1; d = (it.score>0 ? it.score : 0)/k*s; }
+      else d = (base + tierFrac(it))*s;
+      total += d;
+    });
+    total = Math.round(total*100)/100;
+    let r=0; for(let i=th.length-1;i>=0;i--){ if(total>=th[i]){ r=i+1; break; } }
+    return r;
+  }
+  // jade-palace (evxl's Sn()): benchmark-wide ladder like generic-energy;
+  // per-scenario energy (below first tier: score/first × first threshold;
+  // maxed: top + min(over,1)×100, or uncapped over×100 on Easy); each
+  // subcategory counts the mean of its top half (top 3 on Fundamentals);
+  // harmonic mean with zeros treated as 0.1; on Easy, if the capped mean is
+  // ≥ 600 the uncapped one is used instead.
+  function jadePalaceRank(items, b, ctx){
+    const n = ctx.tierCount; if(!n) return 0;
+    const off = Number(b.evxlRankOffset)||0;
+    const c = Array.from({length:n},(_,i)=>(off+i+1)*100);
+    const diff = String(b.difficulty||'').trim().toLowerCase();
+    const isEasy = diff==='easy', isFund = diff==='fundamentals';
+    const energies = it => {
+      let L=0, G=0;
+      const tv = it.tiers.map(x=>x[1]);
+      if(it.score>0 && tv.length>0){
+        const base = achievedIndex(it.score, it.tiers)+1;
+        if(base===0){ const V=tv[0]; if(V>0){ L = Math.min(it.score/V,1)*c[0]; G=L; } }
+        else if(base===tv.length){ const top=tv[tv.length-1], prev=tv.length>1?tv[tv.length-2]:0, J=Math.abs(top-prev)||1, se=Math.max(0,(it.score-top)/J), xe=Math.min(se,1), oe=c[c.length-1]; L = oe+xe*100; G = isEasy ? oe+se*100 : L; }
+        else { const lo=c[base-1]||0, hi=(c[base]!==undefined?c[base]:c[c.length-1]); L = lo + tierFrac(it)*(hi-lo); G=L; }
+        L=Math.trunc(L); G=Math.trunc(G);
+      }
+      return [L,G];
+    };
+    const topMean = (arr) => { const r=[...arr].sort((a,b)=>b-a); const t = isFund ? Math.min(3,r.length) : Math.floor(r.length/2); const o=r.slice(0,t); return o.length===0 ? 0 : Math.trunc(o.reduce((a,x)=>a+x,0)/o.length); };
+    const hm = (arr) => { if(!arr.length) return 0; const nn=arr.map(x=>x>0?x:.1); return Math.trunc(nn.length/nn.reduce((a,x)=>a+1/x,0)); };
+    const capped=[], uncapped=[];
+    subcategoryGroups(items, b).forEach(g=>{ const O=[], w=[]; g.forEach(it=>{ const [L,G]=energies(it); O.push(L); w.push(G); }); capped.push(topMean(O)); uncapped.push(topMean(w)); });
+    const m = hm(capped);
+    const N = (isEasy && m>=600) ? hm(uncapped) : m;
+    let T=0; for(let i=0;i<c.length;i++){ if(N>=c[i]) T=i+1; }
+    return T;
   }
   // generic-energy-alt (evxl's Ye()): per-SCENARIO energies on a per-difficulty
   // ladder [100..n*100] (no offset), arithmetic mean over every scenario
@@ -713,7 +801,75 @@
     return r;
   }
 
+  // Shared tail of every "harmonic mean of subcategory energies" mode: any
+  // subcategory at 0 → Unranked; else HM rounded to 0.1 and read off `thresholds`.
+  function harmonicRank(energies, thresholds){
+    if(energies.length===0 || energies.some(e=>!(e>0))) return 0;
+    const hm = Math.round(energies.length/energies.reduce((a,e)=>a+1/e,0)*10)/10;
+    let r=0; for(let i=0;i<thresholds.length;i++){ if(hm>=thresholds[i]) r=i+1; }
+    return r;
+  }
+  // evxl's H().progressToNext for a ranked scenario: inside the ladder, the
+  // clamped 0..1 fraction to the next tier; at the top, the FRACTIONAL part of
+  // how many top-gaps the score is over (1.7 gaps over → 0.7, not 1).
+  function tierFrac(it){
+    const base = achievedIndex(it.score, it.tiers)+1;
+    if(base<=0) return 0;
+    const g = preciseTier(it.score, it.tiers)-base;
+    if(base===it.tiers.length) return g - Math.floor(g);
+    return Math.max(0, Math.min(g, 1));
+  }
+
+  // Deadman's Static S1/S2 + Poke Static (evxl's ze()): ladder starts at 100
+  // (500 for "boss+" and for an 8-tier "boss", 900 for "boss++"), +100 per
+  // tier, the last step only +10. Per-scenario energy sits on that ladder
+  // (over-max adds up to +10 per over-gap); each subcategory counts its max.
+  function dmRank(items, b, ctx){
+    const n = ctx.tierCount; if(!n) return 0;
+    const diff = String(b.difficulty||'').trim().toLowerCase();
+    let o = 100;
+    if((diff==='boss' && n===8) || diff==='boss+') o = 500; else if(diff==='boss++') o = 900;
+    const s = []; for(let i=0;i<n;i++){ s.push(i===0 ? o : (i===n-1 ? s[i-1]+10 : s[i-1]+100)); }
+    const energyOf = it => {
+      if(!(it.score>0)) return 0;
+      const tv = it.tiers.map(x=>x[1]);
+      const base = achievedIndex(it.score, it.tiers)+1;
+      if(base===0) return 0;
+      let x;
+      if(base===tv.length){ const top=tv[tv.length-1], prev=tv.length>1?tv[tv.length-2]:0, w=Math.abs(top-prev)||1; x = s[s.length-1] + Math.max(0,(it.score-top)/w)*10; }
+      else { const v=s[base-1]||0, O=s[base]; x = v + tierFrac(it)*(O-v); }
+      return Math.max(0, Math.trunc(x));
+    };
+    return harmonicRank(subcategoryGroups(items, b).map(g=>Math.max(0, ...g.map(energyOf))), s);
+  }
+  // Deadman's Static S3 (evxl's Be()): 4 fixed thresholds per difficulty —
+  // Level N → [(N-1)*300+100, +100, +200, 1510]; anything with "boss" →
+  // [1300,1400,1500,1510]. Below the first tier a scenario still earns energy
+  // proportionally (capped at the first threshold); at max tier it earns the top.
+  function dmS3Rank(items, b, ctx){
+    const diff = String(b.difficulty||'').trim().toLowerCase();
+    let t = [100,200,300,1510];
+    if(diff.includes('boss')) t = [1300,1400,1500,1510];
+    else { const m = diff.match(/level\s*([1-4])/i); if(m){ const R=(Number(m[1])-1)*300+100; t=[R,R+100,R+200,1510]; } }
+    const energyOf = it => {
+      if(!(it.score>0)) return 0;
+      const tv = it.tiers.map(x=>x[1]);
+      const base = achievedIndex(it.score, it.tiers)+1;
+      let S;
+      if(base===0){ const x=tv[0]||1, E=t[0]; S = Math.min(it.score/x*E, E); }
+      else if(base===tv.length){ S = t[t.length-1]; }
+      else { const x=t[base-1]||0, E=(t[base]!==undefined ? t[base] : t[t.length-1]); S = x + tierFrac(it)*(E-x); }
+      return Math.max(0, Math.trunc(S));
+    };
+    return harmonicRank(subcategoryGroups(items, b).map(g=>Math.max(0, ...g.map(energyOf))), t);
+  }
+
   const RANK_RULES = {
+    'dm'(items, tiersOf, b, ctx){ return dmRank(items, b, ctx); },
+    'dm-s3'(items, tiersOf, b, ctx){ return dmS3Rank(items, b, ctx); },
+    'vt-energy'(items, tiersOf, b, ctx){ return vtEnergyRank(items, b, ctx); },
+    'aplus-alt'(items, tiersOf, b, ctx){ return aplusAltRank(items, b, ctx); },
+    'jade-palace'(items, tiersOf, b, ctx){ return jadePalaceRank(items, b, ctx); },
     // min over subcategory bests; any 0 → 0
     basic(items, tiersOf, b){
       const groups = subcategoryGroups(items, b);
@@ -2667,6 +2823,10 @@
       applyTheme();
     });
   }
+
+  // Test hook — read-only handles on the rank engine for dev/rank-diff-test.js
+  // and console poking. Nothing in the page reads this.
+  window.__miniEvxl = Object.freeze({ benchmarkStanding, parseTable, parsedItemsFor, achievedIndex, preciseTier, subcategoryGroups, RANK_RULES, getBenchmarks: ()=>BENCHMARKS });
 
   updateTopnavSource();
   route();
