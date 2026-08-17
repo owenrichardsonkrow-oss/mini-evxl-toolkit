@@ -2238,10 +2238,21 @@
     const raised7d = HISTORY.filter(e=>e.t>=weekAgo).length;
     const sharedNames = new Set(computeSharedScenarios().map(s=>s.name));
     const ago = t => { const d=Date.now()-t; const m=Math.floor(d/60000); if(m<60) return m+'m'; const h=Math.floor(m/60); if(h<48) return h+'h'; return Math.floor(h/24)+'d'; };
+    // Tier changes: did the raise cross a tier line in any playlist that carries
+    // the scenario? Computed at render against the current tiers.
+    const scenByName = new Map(); allScen.forEach(sc=>scenByName.set(sc.name, sc));
+    const tierJump = e => {
+      const sc = scenByName.get(e.name); if(!sc) return '';
+      const ups = [];
+      sc.playlists.forEach(pl=>{ const a=achievedIndex(e.from, pl.tiers), b=achievedIndex(e.to, pl.tiers); if(b>a) ups.push({tier: pl.tiers[b][0], pl: pl.playlist, idx:b}); });
+      if(!ups.length) return '';
+      ups.sort((x,y)=>y.idx-x.idx);
+      return ' <span title="'+esc(ups.map(u=>u.tier+' in '+u.pl).join(', '))+'">&uarr; '+esc(ups[0].tier)+(ups.length>1 ? ' +'+(ups.length-1) : '')+'</span>';
+    };
     const recentRows = recent.slice(0,8).map(e=>{
       const href = sharedNames.has(e.name) ? '#/shared?q='+encodeURIComponent(e.name) : '#/unique?q='+encodeURIComponent(e.name);
       const pct = e.from>0 ? ' (+'+((e.to-e.from)/e.from*100).toFixed(1)+'%)' : ' (new)';
-      return '<div class="panel-row"><span class="pr-name"><a href="'+href+'">'+esc(e.name)+'</a></span>'
+      return '<div class="panel-row"><span class="pr-name"><a href="'+href+'">'+esc(e.name)+'</a>'+tierJump(e)+'</span>'
         + '<span class="pr-meta">'+ago(e.t)+' ago &middot; '+esc(e.src)+'</span>'
         + '<span class="pr-val">'+fmt(e.from)+' &rarr; '+fmt(e.to)+esc(pct)+'</span></div>';
     }).join('');
