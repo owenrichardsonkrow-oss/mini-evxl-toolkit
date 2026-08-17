@@ -34,14 +34,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-function Resolve-Full([string]$p) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) }
-$Html = Resolve-Full $Html
-$Catalog = Resolve-Full $Catalog
+. (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
+$Html = Resolve-FullPath $Html
+$Catalog = Resolve-FullPath $Catalog
 if (-not (Test-Path -LiteralPath $Html))    { Write-Output "Tracker HTML not found: $Html"; exit 1 }
 if (-not (Test-Path -LiteralPath $Catalog)) { Write-Output "Catalog not found: $Catalog"; exit 1 }
 
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$cat = ([System.IO.File]::ReadAllText($Catalog, $utf8) | ConvertFrom-Json).benchmarks
+$cat = ([System.IO.File]::ReadAllText($Catalog, $Utf8NoBom) | ConvertFrom-Json).benchmarks
 $byKey = @{}
 foreach ($b in $cat) {
     $offset = 0; $idx = 0
@@ -53,13 +52,8 @@ foreach ($b in $cat) {
     }
 }
 
-$content = [System.IO.File]::ReadAllText($Html, $utf8)
-$startTag = '<script id="benchmarks-data" type="application/json">'
-$s = $content.IndexOf($startTag)
-if ($s -lt 0) { Write-Output "No embedded benchmarks-data block in $Html"; exit 1 }
-$s += $startTag.Length
-$e = $content.IndexOf('</script>', $s)
-$data = $content.Substring($s, $e - $s) | ConvertFrom-Json
+$ds = Read-TrackerDataset $Html
+$data = $ds.data
 
 $stamped = 0; $changed = 0; $missing = @()
 foreach ($x in $data) {
@@ -106,7 +100,6 @@ Write-Output ("modes: " + (($modes.GetEnumerator() | Sort-Object Value -Descendi
 
 if ($changed -eq 0) { Write-Output "Nothing to write."; exit 0 }
 if ($PSCmdlet.ShouldProcess($Html, "Write $changed stamped entries")) {
-    $newJson = $data | ConvertTo-Json -Depth 10 -Compress
-    [System.IO.File]::WriteAllText($Html, $content.Substring(0, $s) + $newJson + $content.Substring($e), $utf8)
+    Write-TrackerDataset $ds $Html
     Write-Output "Wrote $Html"
 }

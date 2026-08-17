@@ -20,15 +20,20 @@
 #     entering their KovaaK's username and clicking Sync Scores — no evxl
 #     scraping needed for that part at all.
 
-$src = "..\mini-benchmarks-tracker\mini_evxl.html"
-$dst = "template.html"
+$ErrorActionPreference = 'Stop'
+# Anchored to this script's folder, so it can be run from anywhere (it used to
+# use relative paths and silently wrote template.html into whatever the current
+# directory happened to be).
+$src = Join-Path (Split-Path $PSScriptRoot -Parent) 'mini-benchmarks-tracker\mini_evxl.html'
+$dst = Join-Path $PSScriptRoot 'template.html'
+. (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
 
 if (-not (Test-Path $src)) {
     Write-Output "Source file not found: $src"
     exit 1
 }
 
-$content = Get-Content -Raw $src
+$content = [System.IO.File]::ReadAllText($src, $Utf8NoBom)
 
 $content = $content -replace "<title>mini.s Benchmarks.*?</title>", "<title>KovaaK's Benchmark Tracker</title>"
 
@@ -93,9 +98,9 @@ foreach ($b in $data) {
         $b.rows[$ri] = $row
     }
 }
-$zeroedJson = $data | ConvertTo-Json -Depth 10 -Compress
+$zeroedJson = ConvertTo-DatasetJson $data
 
 $content = $content.Substring(0, $startIdx) + $zeroedJson + $content.Substring($endIdx)
 
-Set-Content -Path $dst -Value $content -NoNewline -Encoding UTF8
+[System.IO.File]::WriteAllText($dst, $content, $Utf8NoBom)
 Write-Output "Wrote $dst ($($data.Count) playlists, all scores zeroed)."

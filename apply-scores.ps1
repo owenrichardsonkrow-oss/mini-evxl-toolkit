@@ -26,10 +26,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-
-# .NET file APIs resolve relative paths against the PROCESS working directory,
-# not PowerShell's current location -- resolve to absolute paths first.
-function Resolve-Full([string]$p) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) }
+# Shared helpers (dataset in/out, culture-proof number parsing/formatting).
+. (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
+function Resolve-Full([string]$p) { Resolve-FullPath $p }
 
 if (-not $Html) {
     $personal = Join-Path $PSScriptRoot 'mini_evxl.html'
@@ -46,31 +45,19 @@ $Html = Resolve-Full $Html
 if (-not (Test-Path -LiteralPath $Scores)) { Write-Output "Scores file not found: $Scores"; exit 1 }
 if (-not (Test-Path -LiteralPath $Html)) { Write-Output "Tracker HTML not found: $Html"; exit 1 }
 
-$utf8 = New-Object System.Text.UTF8Encoding($false)
-$export = [System.IO.File]::ReadAllText($Scores, $utf8) | ConvertFrom-Json
+$export = [System.IO.File]::ReadAllText($Scores, $Utf8NoBom) | ConvertFrom-Json
 $scoreObj = if ($export.PSObject.Properties.Name -contains 'scores') { $export.scores } else { $export }
 $map = @{}
 foreach ($p in $scoreObj.PSObject.Properties) {
-    $v = 0.0
-    if ([double]::TryParse([string]$p.Value, [ref]$v) -and $v -gt 0) { $map[$p.Name.Trim()] = [math]::Round($v, 2) }
+    $v = ConvertTo-Num $p.Value
+    if ($v -gt 0) { $map[$p.Name.Trim()] = [math]::Round($v, 2) }
 }
 if ($map.Count -eq 0) { Write-Output "No usable scores in $Scores"; exit 1 }
 Write-Output "Read $($map.Count) score(s) from $Scores"
 
-$content = [System.IO.File]::ReadAllText($Html, $utf8)
-$startTag = '<script id="benchmarks-data" type="application/json">'
-$s = $content.IndexOf($startTag)
-if ($s -lt 0) { Write-Output "No embedded benchmarks-data block in $Html"; exit 1 }
-$s += $startTag.Length
-$e = $content.IndexOf('</script>', $s)
-$data = $content.Substring($s, $e - $s) | ConvertFrom-Json
+$ds = Read-TrackerDataset $Html
+$data = $ds.data
 
-function Format-Score($n) {
-    if ($n -eq [math]::Floor($n)) { return "{0:N0}" -f $n }
-    else { return ("{0:N2}" -f $n).TrimEnd('0').TrimEnd('.') }
-}
-
-$pctRegex = '^-?\d+(\.\d+)?%$'
 $changes = @()
 $scenariosTouched = @{}
 foreach ($b in $data) {
@@ -78,18 +65,16 @@ foreach ($b in $data) {
         $row = $b.rows[$ri]
         if ($row.Count -le 1) { continue }
         $p = -1
-        for ($i = 0; $i -lt $row.Count; $i++) { if ([string]$row[$i] -match $pctRegex) { $p = $i; break } }
+        for ($i = 0; $i -lt $row.Count; $i++) { if ([string]$row[$i] -match $PctRegex) { $p = $i; break } }
         if ($p -lt 2) { continue }
         $scenario = ([string]$row[$p - 2]).Trim()
         if (-not $map.ContainsKey($scenario)) { continue }
-        $cur = 0.0
-        [void][double]::TryParse((([string]$row[$p - 1]) -replace ',', ''), [ref]$cur)
-        $cur = [math]::Round($cur, 2)
+        $cur = [math]::Round((ConvertTo-Num $row[$p - 1]), 2)
         $new = $map[$scenario]
         if ($new -gt $cur) {
-            $changes += [PSCustomObject]@{ benchmark = $b.name; difficulty = $b.difficulty; scenario = $scenario; oldScore = [string]$row[$p - 1]; newScore = (Format-Score $new) }
+            $changes += [PSCustomObject]@{ benchmark = $b.name; difficulty = $b.difficulty; scenario = $scenario; oldScore = [string]$row[$p - 1]; newScore = (Format-Num $new) }
             $scenariosTouched[$scenario] = $true
-            $row[$p - 1] = Format-Score $new
+            $row[$p - 1] = Format-Num $new
             $b.rows[$ri] = $row
         }
     }
@@ -104,9 +89,7 @@ Write-Output ("{0} row(s) across {1} scenario(s) would be raised." -f $changes.C
 $changes | Format-Table -AutoSize | Out-String -Width 200
 
 if ($PSCmdlet.ShouldProcess($Html, "Write $($changes.Count) patched score row(s)")) {
-    $newJson = $data | ConvertTo-Json -Depth 10 -Compress
-    $newContent = $content.Substring(0, $s) + $newJson + $content.Substring($e)
-    [System.IO.File]::WriteAllText($Html, $newContent, $utf8)
+    Write-TrackerDataset $ds $Html
     Write-Output "Wrote $Html"
 } else {
     Write-Output "(WhatIf) $Html not modified."

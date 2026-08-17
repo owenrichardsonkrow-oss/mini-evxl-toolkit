@@ -16,6 +16,8 @@
 
 $root = $PSScriptRoot
 $statePath = Join-Path $root "sync-state.json"
+# Shared helpers (dataset in/out, culture-proof number parsing/formatting).
+. (Join-Path $root 'lib\kovaaks-table.ps1')
 
 if (-not (Test-Path $statePath)) {
     Write-Output "No sync-state.json found next to this script."
@@ -61,7 +63,7 @@ foreach ($f in $newFiles) {
     $scoreLine = $lines | Where-Object { $_ -match '^Score:,' } | Select-Object -First 1
     $scenLine  = $lines | Where-Object { $_ -match '^Scenario:,' } | Select-Object -First 1
     if ($scoreLine -and $scenLine) {
-        $score = [math]::Round([double]($scoreLine -replace '^Score:,',''), 2)
+        $score = [math]::Round((ConvertTo-Num ($scoreLine -replace '^Score:,','')), 2)
         $scenario = ($scenLine -replace '^Scenario:,','').Trim()
         if (-not $localMap.ContainsKey($scenario) -or $localMap[$scenario] -lt $score) {
             $localMap[$scenario] = $score
@@ -69,20 +71,10 @@ foreach ($f in $newFiles) {
     }
 }
 
-$content = Get-Content -Raw $htmlPath
-$startTag = '<script id="benchmarks-data" type="application/json">'
-$endTag = '</script>'
-$startIdx = $content.IndexOf($startTag) + $startTag.Length
-$endIdx = $content.IndexOf($endTag, $startIdx)
-$data = ($content.Substring($startIdx, $endIdx - $startIdx)) | ConvertFrom-Json
-
-function Format-Score($n) {
-    if ($n -eq [math]::Floor($n)) { return "{0:N0}" -f $n }
-    else { return ("{0:N2}" -f $n).TrimEnd('0').TrimEnd('.') }
-}
+$ds = Read-TrackerDataset $htmlPath
+$data = $ds.data
 
 $changes = @()
-$pctRegex = '^-?\d+(\.\d+)?%$'
 
 foreach ($b in $data) {
     for ($ri = 0; $ri -lt $b.rows.Count; $ri++) {
@@ -90,16 +82,16 @@ foreach ($b in $data) {
         if ($row.Count -le 1) { continue }
         $p = -1
         for ($i = 0; $i -lt $row.Count; $i++) {
-            if ($row[$i] -match $pctRegex) { $p = $i; break }
+            if ([string]$row[$i] -match $PctRegex) { $p = $i; break }
         }
         if ($p -lt 2) { continue }
-        $scenario = $row[$p-2]
+        $scenario = ([string]$row[$p-2]).Trim()
         $scoreStr = $row[$p-1]
         if ($localMap.ContainsKey($scenario)) {
             $localScore = $localMap[$scenario]
-            $currentScore = [math]::Round([double]($scoreStr -replace ',',''), 2)
+            $currentScore = [math]::Round((ConvertTo-Num $scoreStr), 2)
             if ($localScore -gt $currentScore) {
-                $newScoreStr = Format-Score $localScore
+                $newScoreStr = Format-Num $localScore
                 $changes += [PSCustomObject]@{
                     benchmark = $b.name; difficulty = $b.difficulty
                     scenario = $scenario; oldScore = $scoreStr; newScore = $newScoreStr
@@ -112,9 +104,7 @@ foreach ($b in $data) {
 }
 
 if ($changes.Count -gt 0) {
-    $newJson = $data | ConvertTo-Json -Depth 10 -Compress
-    $newContent = $content.Substring(0, $startIdx) + $newJson + $content.Substring($endIdx)
-    Set-Content -Path $htmlPath -Value $newContent -NoNewline -Encoding UTF8
+    Write-TrackerDataset $ds $htmlPath
 }
 
 $maxMtime = ($newFiles | Measure-Object -Property LastWriteTimeUtc -Maximum).Maximum

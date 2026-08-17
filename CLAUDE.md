@@ -23,20 +23,25 @@ zeroes scores, resets rank/volts, and flips `IS_TOOLKIT_TEMPLATE` to `true`.
 Hand-editing `template.html` directly means the next regeneration silently discards
 the work.
 
-**Run `generate-template.ps1` from this directory.** Both `$src` and `$dst` are
-relative paths, so running it from anywhere else silently writes `template.html`
-into the wrong folder and reports success. Verify afterwards that the toolkit's
-own `template.html` actually changed. `static-server.ps1` and `sync.ps1` *are* intentionally divergent from
+`generate-template.ps1` is anchored to its own folder (since 2026-08-16 late; it
+used to use relative paths and silently wrote `template.html` wherever you
+happened to be). `static-server.ps1` and `sync.ps1` *are* intentionally divergent from
 their personal-copy counterparts (port 8744/9500, `$PSScriptRoot` instead of a
 hardcoded root, config-driven `trackerHtml`, first-run guidance) — those two are
 hand-maintained here and must not be overwritten from the personal copy.
+`lib/kovaaks-table.ps1`, `apply-scores.ps1`, `apply-evxl-catalog.ps1` and
+`fix-mojibake.ps1` are straight copies of the tracker's. Every script here
+dot-sources `lib/kovaaks-table.ps1` for dataset I/O and **culture-proof number
+handling** (`ConvertTo-Num` / `Format-Num`): `[double]::TryParse` and
+`"{0:N0}" -f` follow the machine's locale and on a German PC read "131.02" as
+13102 — never use them on file values.
 
 ## Onboarding design — the point of the whole toolkit
 
 The evxl scrape was only ever needed for benchmark **structure**, which is identical
 for every player. Only scores are player-specific, and scores come from
-kovaaks.com's public API by username; the rank badge is then computed locally from
-those scores (see "Rank is computed locally"), and volts is no longer shown. So a new user's entire onboarding is:
+kovaaks.com's public API by username; the rank badge and volts are then computed
+locally from those scores (see "Rank is computed locally"). So a new user's entire onboarding is:
 open the file, click Sync Scores, enter their KovaaK's username. No scrape, no JSON,
 no AI assistant.
 

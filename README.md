@@ -13,15 +13,16 @@ copy, for free, with their own data.
 
 1. Open `template.html` in a browser (double-click it, or serve it with anything
    static — GitHub Pages works too, see below).
-2. Click **⟳ Sync Scores Locally** (top right) and pick your KovaaK's stats folder
-   in the native dialog (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
+2. Click **⟳ Sync Scores Online** (top right) and enter your KovaaK's username
+   (Settings → Profile in-game — often *not* your Steam name). Or, if you'd rather
+   not touch the network, **⟳ Sync Scores Locally** and pick your KovaaK's stats
+   folder (`...\FPSAimTrainer\FPSAimTrainer\stats\`).
 
 That's it. `template.html` ships pre-loaded with every evxl-tracked playlist's
 structure — scenario lists, category groupings, tier thresholds — the same
 benchmark metadata for every player, already baked in. Only the scores are yours to
-fill in, and syncing reads them straight off your own machine. No scraping, no JSON
-file, no AI assistant required for this path. Your data lives only in that browser's
-local storage, never uploaded anywhere.
+fill in. No scraping, no JSON file, no AI assistant required for this path. Your
+data lives only in that browser's local storage, never uploaded anywhere.
 
 There's also a **Settings** tab for saving your KovaaK's username, Steam/evxl
 profile links, and your stats folder path as a note — see "Keeping it fresh" below
@@ -42,8 +43,9 @@ not just scores.
 
 ## Keeping it fresh
 
-There are three ways to pull scores in, in the order you should actually reach for
-them:
+There are three ways to pull scores in. **Sync Scores Online** is the everyday
+one (whole history, one username); **Sync Scores Locally** is the network-free
+fallback; **Auto-check** keeps things current between syncs.
 
 **"Sync Scores Locally"** — click it, pick your KovaaK's stats folder
 (`...\FPSAimTrainer\FPSAimTrainer\stats\`) in the native picker, done. Uses a plain
@@ -186,6 +188,9 @@ open `http://localhost:8744`.
   template — an alternative to the in-browser Sync Scores button, see above.
 - `apply-scores.ps1` — bakes a Settings-page scores export into a tracker HTML
   file (see "Where your scores actually live").
+- `lib/kovaaks-table.ps1` — shared helpers the scripts above dot-source (reading
+  and writing the embedded dataset, number parsing that ignores your Windows
+  language settings). Keep it next to the scripts.
 - `docs/SCRAPING_GUIDE.md` — how to pull a dataset off evxl.app from scratch, only
   needed if you want playlists outside what's already pre-loaded in the template.
 
@@ -208,6 +213,8 @@ A JSON array, one entry per playlist+difficulty:
   "subcats": [["Category", "Subcategory", 3]],
   "evxlTiers": ["tier names in order"],
   "evxlRankOffset": 0,
+  "evxlDiffIndex": 0,
+  "selection": { "select": 24, "baseN": 9, "fullN": 18, "minCat": 8, "minSub": 4 },
   "rankReq": 6
 }
 ```
@@ -218,9 +225,11 @@ read and write. The second block is optional rank metadata, stamped by
 `apply-evxl-catalog.ps1` from evxl's catalog: `rankCalc` picks the rank rule,
 `evxlId` is KovaaK's benchmark id, `subcats` is the category/subcategory layout in
 table order (used by the `basic` rule), `evxlTiers` the tier names,
-`evxlRankOffset` the ladder offset the energy rules need, and `rankReq` a legacy
-per-entry "N scenarios at a tier" override. Without them the badge falls back to
-the "Complete" reading.
+`evxlRankOffset` the ladder offset the energy rules need, `evxlDiffIndex` the
+difficulty's position among its benchmark's difficulties (two modes read it),
+`selection` the pool rules for pool benchmarks like REVENGE (absent otherwise),
+and `rankReq` a legacy per-entry "N scenarios at a tier" override. Without them
+the badge falls back to the "Complete" reading.
 
 Other things worth knowing about the page itself: filters, sort, tags and the
 search box are all kept in the URL, so a filtered view can be bookmarked or
