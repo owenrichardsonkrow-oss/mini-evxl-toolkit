@@ -118,9 +118,11 @@ own calculation, covering 246 of the 251 playlists. For the remaining five (a
 benchmark that ranks *your own* scenario selection, and two that come from an
 external service), the badge shows the stricter "every scenario at that tier"
 reading, which is exactly evxl's "X Complete" rank — accurate, just conservative
-— and the playlist page marks it with a • so you know. Volts isn't shown: it isn't derivable from the
-tables, so cards show mean scenario completion instead. Neither sync method needs
-to touch evxl for any of this.
+— and the playlist page marks it with a • so you know. Volts is computed the same
+way evxl computes it (100 per scenario at max tier, uncapped) and shown next to
+each playlist's completion percentage. Neither sync method needs to touch evxl for
+any of this. The rank rules and the volts formula are evxl's own; this tracker
+reproduces them so the numbers match what you'd see there — credit to evxl.
 
 ## How the pieces fit together
 
@@ -212,8 +214,10 @@ the "Complete" reading.
 
 Other things worth knowing about the page itself: filters, sort, tags and the
 search box are all kept in the URL, so a filtered view can be bookmarked or
-shared; Home has a sort menu; the theme button (top right) cycles
-system → light → dark.
+shared; Home has a sort menu, a **Quick wins** panel (played scenarios closest
+to their next tier, most playlists first) and a **Recent improvements** panel
+(every score a sync or import raised, newest first — kept locally, not exported);
+the theme button (top right) cycles system → light → dark.
 
 ## Privacy
 

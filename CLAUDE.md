@@ -106,7 +106,7 @@ carry scores between copies.
 Score-only by design — tier thresholds belong to the playlist, so an orphaned
 scenario has nothing to draw a bar against and doesn't render.
 
-## Rank is computed locally; volts is gone
+## Rank is computed locally; volts is computed locally too
 
 `benchmarkStanding(items, b)` ports evxl's own engine (read out of its JS bundle;
 the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
@@ -121,15 +121,19 @@ comes from Aimbeast's service) and show the Complete reading only,
 flagged `modeSupported:false`; the detail page's Rank label carries a • that says
 so. `rankReq` survives only as a legacy per-entry override.
 
-Volts was dropped from the UI (not derivable from the tables; no formula anywhere
-client-side). Cards and the detail page show **mean scenario completion**
-(`scenarioCompletion()`) instead, and the home grid sorts by it. The `volts` field
-stays in the JSON format for compatibility; nothing reads it.
+Volts is back, computed from evxl's own formula (read out of its bundle): each
+scenario earns score ÷ top-tier threshold × 100 (uncapped), summed and rounded;
+"Viscose Benchmarks" uses (score − first) ÷ (top − first) × 100. Verified exact
+against the live page. Cards show completion and volts ("100% · 2,318 V"); the
+home grid sorts by completion by default, volts is a sort option. The dataset's
+legacy `volts` field is still unread.
 
-Consequence for the docs: neither `README.md`'s "Rank/Volts only refresh via a
-scrape" framing nor `docs/SCRAPING_GUIDE.md`'s Rank+Volts extraction step is
-load-bearing anymore. The scrape's only remaining purpose is **structure**
-(scenario names, tier names, thresholds — and, once wired up, `rankReq`).
+Home also has two panels: **Quick wins** (played scenarios ≥70% of the way to
+their next tier, most playlists first) and **Recent improvements** (a local
+score-history log written by every sync/import raise; not exported).
+
+The scrape's only remaining purpose is **structure**; the tracker repo's
+`refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice.
 
 **Dropped from the template (2026-08-16)**: `Black Dawn [Celestial Forge]` — it is
 empty at the source (KovaaK's returns no scenarios for that benchmark id, evxl

@@ -84,6 +84,21 @@
   .stat .label { margin-top:4px; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--text-faint); }
   @media (max-width:640px){ .stats{ grid-template-columns:repeat(2,1fr); } }
 
+  /* ---- home panels: quick wins / recent improvements ---- */
+  .panels { margin-top:14px; display:grid; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); gap:12px; }
+  .panel { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:14px 16px 12px; }
+  .panel-head { display:flex; align-items:baseline; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .panel-title { font-family:ui-monospace,monospace; font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-faint); }
+  .panel-sub { font-size:11.5px; color:var(--text-faint); }
+  .panel-row { display:flex; align-items:baseline; gap:10px; padding:5px 0; border-top:1px solid var(--border-soft); font-size:13px; }
+  .panel-row:first-of-type { border-top:none; }
+  .panel-row .pr-name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .panel-row .pr-name a { color:var(--text); text-decoration:none; }
+  .panel-row .pr-name a:hover { color:var(--accent-text); }
+  .panel-row .pr-meta { font-family:ui-monospace,monospace; font-size:11px; color:var(--text-faint); white-space:nowrap; }
+  .panel-row .pr-val { font-family:ui-monospace,monospace; font-variant-numeric:tabular-nums; font-size:12px; color:var(--accent-text); white-space:nowrap; }
+  .panel-empty { font-size:12.5px; color:var(--text-faint); padding:6px 0; }
+
   /* ---- search + grid ---- */
   .searchbar { margin-top:34px; display:flex; gap:10px; flex-wrap:wrap; }
   .searchbar input {
@@ -413,15 +428,42 @@
       localStorage.setItem(SCORES_KEY, JSON.stringify(obj));
     }catch(e){}
   }
+  // ---- Score history --------------------------------------------------
+  // The store is max-only, so on its own it can't say what improved when. This
+  // log records every raise that comes from a sync or an import (not the seed
+  // from the file's own rows, which isn't a play event): {t, name, from, to,
+  // src}. Capped; cleared with the store on reset-to-demo. Local telemetry —
+  // deliberately not part of the scores export.
+  const HISTORY_KEY = 'mini-evxl-score-history';
+  const HISTORY_CAP = 4000;
+  let HISTORY = [];
+  try{ const h = JSON.parse(localStorage.getItem(HISTORY_KEY)||'[]'); if(Array.isArray(h)) HISTORY = h.filter(e=>e && Number.isFinite(e.t) && e.name); }catch(e){}
+  function persistHistory(){ try{ localStorage.setItem(HISTORY_KEY, JSON.stringify(HISTORY)); }catch(e){} }
+  function logRaises(events){
+    if(!events.length) return;
+    HISTORY.push(...events);
+    if(HISTORY.length > HISTORY_CAP) HISTORY = HISTORY.slice(HISTORY.length - HISTORY_CAP);
+    persistHistory();
+  }
+
   // Never lowers a stored score — a playlist whose embedded rows are stale
   // (or zeroed, as in the toolkit template) can't clobber a real result.
-  function recordScores(map){
+  // `src` names where the raise came from ('seed' | 'online' | 'local' |
+  // 'import'); anything but 'seed' is logged to the history.
+  function recordScores(map, src){
     let changed = 0;
+    const events = [];
+    const now = Date.now();
     map.forEach((v,k)=>{
       if(!Number.isFinite(v) || v<=0) return;
-      if(!SCORES.has(k) || SCORES.get(k) < v){ SCORES.set(k, v); changed++; }
+      const prev = SCORES.has(k) ? SCORES.get(k) : 0;
+      if(prev < v){
+        SCORES.set(k, v); changed++;
+        if(src && src!=='seed') events.push({ t: now, name: k, from: prev, to: v, src });
+      }
     });
     if(changed) persistScores();
+    if(events.length) logRaises(events);
     return changed;
   }
 
@@ -446,7 +488,7 @@
     let ignored = 0;
     Object.keys(obj).forEach(k=>{ const v = Number(obj[k]); if(k && Number.isFinite(v) && v>0) map.set(k.trim(), v); else ignored++; });
     if(map.size===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
-    const raised = recordScores(map);
+    const raised = recordScores(map, 'import');
     if(raised>0) invalidateCaches();
     return { raised, unchanged: map.size - raised, ignored };
   }
@@ -1481,6 +1523,7 @@
     // synced data behind, or the demo would still be showing your results.
     // Exclusions survive: they're a preference, not data.
     SCORES.clear();
+    HISTORY = []; try{ localStorage.removeItem(HISTORY_KEY); }catch(e){}
     try{ localStorage.removeItem(SCORES_KEY); }catch(e){}
     invalidateCaches();
     seedScoresFromData(BENCHMARKS);
@@ -1579,7 +1622,7 @@
     forEachScenarioRow(data, (scenario, score)=>{
       if(score>0 && (!found.has(scenario) || found.get(scenario)<score)) found.set(scenario, score);
     });
-    return recordScores(found);
+    return recordScores(found, 'seed');
   }
 
   // Unique scenarios "cleared" — score > 0 in at least one playlist that
@@ -1702,7 +1745,7 @@
   // from a loaded, non-excluded playlist are checked and updated. A scenario
   // whose playlist was excluded or dropped keeps whatever score it already
   // had, frozen, until a playlist that carries it comes back.
-  function patchScoresFromMap(scoreMap){
+  function patchScoresFromMap(scoreMap, src){
     const changes = [];
     const updates = new Map();
     getParsedBenchmarks().forEach(({benchmark, items})=>{
@@ -1722,7 +1765,7 @@
       });
     });
     if(updates.size > 0){
-      recordScores(updates);
+      recordScores(updates, src||'online');
       invalidateCaches();
       updateTopnavSource();
     }
@@ -1839,7 +1882,7 @@
     // Phase 1 — total-play. Cheap (3 paginated requests) but incomplete.
     const { scoreMap, newestEpoch } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
-    let changes = patchScoresFromMap(scoreMap);
+    let changes = patchScoresFromMap(scoreMap, 'online');
 
     // Phase 2 — everything total-play missed, one request per scenario.
     let deep = null;
@@ -1861,8 +1904,8 @@
         // whereas the rest are only possibly stale.
         candidates.sort((a,b)=> (current.get(a)>0?1:0) - (current.get(b)>0?1:0));
         if(candidates.length>0){
-          deep = await deepSync(username, candidates, onProgress, (batch)=>{ changes = changes.concat(patchScoresFromMap(batch)); });
-          changes = changes.concat(patchScoresFromMap(deep.found));
+          deep = await deepSync(username, candidates, onProgress, (batch)=>{ changes = changes.concat(patchScoresFromMap(batch, 'online')); });
+          changes = changes.concat(patchScoresFromMap(deep.found, 'online'));
         }
       }
     }
@@ -1915,7 +1958,7 @@
       }
     }
 
-    const changes = patchScoresFromMap(localMap);
+    const changes = patchScoresFromMap(localMap, 'local');
     if(newest > mark){ try{ localStorage.setItem(LOCAL_SYNC_MARK_KEY, String(newest)); }catch(e){} }
     return { changes, filesScanned: files.length, filesSkipped: skipped };
   }
@@ -2166,6 +2209,43 @@
         + '. From the last Sync Scores Online.'
       : 'Filled in by Sync Scores Online.';
 
+    // ---- Quick wins: played scenarios closest to their next tier, ranked by
+    // how many playlists that tier move would touch, then by closeness. The
+    // merged ruler is the same one the Shared page draws.
+    const allScen = computeSharedScenarios().concat(computeUniqueScenarios());
+    const wins = [];
+    allScen.forEach(sc=>{
+      if(!(sc.score>0)) return;
+      const p = sc._prog || (sc._prog = mergedProgress(sc.playlists, sc.score));
+      if(p.maxed || !(p.toNext>=0.7)) return;
+      // the next merged threshold: name + which playlist it belongs to
+      let next=null;
+      sc.playlists.forEach(pl=>{ pl.tiers.forEach(([tn,th])=>{ if(th>sc.score && (!next || th<next.th)) next={tn, th, pl:pl.playlist}; }); });
+      if(!next) return;
+      wins.push({ sc, p, next, gap: next.th - sc.score });
+    });
+    wins.sort((a,b)=> b.sc.playlists.length - a.sc.playlists.length || b.p.toNext - a.p.toNext);
+    const winRows = wins.slice(0,8).map(w=>{
+      const href = w.sc.playlists.length>1 ? '#/shared?q='+encodeURIComponent(w.sc.name) : '#/unique?q='+encodeURIComponent(w.sc.name);
+      return '<div class="panel-row"><span class="pr-name"><a href="'+href+'">'+esc(w.sc.name)+'</a></span>'
+        + '<span class="pr-meta">'+w.sc.playlists.length+' pl &middot; &rarr; '+esc(w.next.tn)+' ('+esc(w.next.pl)+')</span>'
+        + '<span class="pr-val">+'+fmt(Math.round(w.gap*100)/100)+'</span></div>';
+    }).join('');
+
+    // ---- Recent improvements: the score-history log, newest first.
+    const weekAgo = Date.now() - 7*24*60*60*1000;
+    const recent = HISTORY.slice(-400).reverse();
+    const raised7d = HISTORY.filter(e=>e.t>=weekAgo).length;
+    const sharedNames = new Set(computeSharedScenarios().map(s=>s.name));
+    const ago = t => { const d=Date.now()-t; const m=Math.floor(d/60000); if(m<60) return m+'m'; const h=Math.floor(m/60); if(h<48) return h+'h'; return Math.floor(h/24)+'d'; };
+    const recentRows = recent.slice(0,8).map(e=>{
+      const href = sharedNames.has(e.name) ? '#/shared?q='+encodeURIComponent(e.name) : '#/unique?q='+encodeURIComponent(e.name);
+      const pct = e.from>0 ? ' (+'+((e.to-e.from)/e.from*100).toFixed(1)+'%)' : ' (new)';
+      return '<div class="panel-row"><span class="pr-name"><a href="'+href+'">'+esc(e.name)+'</a></span>'
+        + '<span class="pr-meta">'+ago(e.t)+' ago &middot; '+esc(e.src)+'</span>'
+        + '<span class="pr-val">'+fmt(e.from)+' &rarr; '+fmt(e.to)+esc(pct)+'</span></div>';
+    }).join('');
+
     const wrap = document.createElement('div');
     wrap.className='wrap';
     wrap.innerHTML = `
@@ -2179,6 +2259,16 @@
         <div class="stat"><div class="val">${playedCount} <span style="color:var(--text-faint);font-size:14px;">/ ${activeCount()}</span></div><div class="label">Benchmarks played</div></div>
         <div class="stat"><div class="val">${clearedCount}</div><div class="label">Scenario clears</div></div>
         <div class="stat"><div class="val">${sharedCount}</div><div class="label">Shared scenarios</div></div>
+      </div>
+      <div class="panels">
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Quick wins</span><span class="panel-sub">played, &ge;70% of the way to the next tier &middot; most playlists first</span></div>
+          ${winRows || '<div class="panel-empty">Nothing within reach yet &mdash; sync some scores.</div>'}
+        </div>
+        <div class="panel">
+          <div class="panel-head"><span class="panel-title">Recent improvements</span><span class="panel-sub">${raised7d} raised in the last 7 days</span></div>
+          ${recentRows || '<div class="panel-empty">No raises recorded yet &mdash; they show up here after a sync or import.</div>'}
+        </div>
       </div>
       <div class="searchbar">
         <input id="search-input" type="text" placeholder="Search benchmarks by name or pack..." value="${esc(filter)}" />
