@@ -179,10 +179,10 @@ open `http://localhost:8744`.
 
 - `template.html` — the tracker itself. Ships pre-loaded with every evxl-tracked
   playlist's structure (scenarios, tier thresholds, category labels) but every
-  score zeroed and every rank reset to Unranked — a blank template waiting for
+  score absent (an empty scores block) — a blank template waiting for
   **Sync Scores** to fill it in with a real username.
 - `generate-template.ps1` — regenerates `template.html` from a personal copy of
-  this tracker (genericizes branding, zeroes every score/rank, flips a couple of
+  this tracker (genericizes branding, empties the scores block, flips a couple of
   internal flags that change some wording). Only relevant if you're maintaining
   this toolkit itself, not using it.
 - `sync.ps1` / `sync-state.example.json` — the local-sync script and its config
@@ -197,22 +197,23 @@ open `http://localhost:8744`.
 
 ## Data format
 
-A JSON array, one entry per playlist+difficulty:
+The page embeds two JSON blocks: `benchmarks-data` (structure — a JSON array,
+one entry per playlist+difficulty, the same for every player) and `scores-data`
+(`{"scenario name": score}` — yours; `{}` in the template). An entry:
 
 ```json
 {
   "name": "playlist name",
   "pack": "cosmetic group label (optional, falls back to name)",
   "difficulty": "difficulty label",
-  "rank": "legacy: evxl's badge at scrape time (optional; nothing reads it now)",
-  "volts": 0,
-  "hdrs": ["evxl's scenario table header cells"],
-  "rows": [["one array per scenario row, matching hdrs"]],
+  "tiers": ["Iron", "Bronze", "Silver", "Gold"],
+  "groups": [
+    { "category": "Clicking", "subcategory": "Static",
+      "scenarios": [ { "name": "Gridshot", "thresholds": [140, 152, 162, 171] } ] }
+  ],
 
   "rankCalc": "evxl's rank-calculation mode, e.g. \"basic\" (optional)",
   "evxlId": 829,
-  "subcats": [["Category", "Subcategory", 3]],
-  "evxlTiers": ["tier names in order"],
   "evxlRankOffset": 0,
   "evxlDiffIndex": 0,
   "selection": { "select": 24, "baseN": 9, "fullN": 18, "minCat": 8, "minSub": 4 },
@@ -220,17 +221,25 @@ A JSON array, one entry per playlist+difficulty:
 }
 ```
 
-`hdrs`/`rows` mirror evxl's own table exactly — see the scraping guide for how
-they're read off the page. This is the same shape `sync.ps1` and `apply-scores.ps1`
-read and write. The second block is optional rank metadata, stamped by
-`apply-evxl-catalog.ps1` from evxl's catalog: `rankCalc` picks the rank rule,
-`evxlId` is KovaaK's benchmark id, `subcats` is the category/subcategory layout in
-table order (used by the `basic` rule), `evxlTiers` the tier names,
+`groups` are evxl's own category/subcategory layout in table order (the rank
+rules that work per subcategory or per category read them; an unnamed group is
+still a group). No score lives inside an entry — the scores block and the page's
+per-browser store hold them, keyed by scenario name. This is the shape
+`sync.ps1` and `apply-scores.ps1` read and write. The second block is optional
+rank metadata, stamped by `apply-evxl-catalog.ps1` from evxl's catalog:
+`rankCalc` picks the rank rule, `evxlId` is KovaaK's benchmark id,
 `evxlRankOffset` the ladder offset the energy rules need, `evxlDiffIndex` the
 difficulty's position among its benchmark's difficulties (two modes read it),
 `selection` the pool rules for pool benchmarks like REVENGE (absent otherwise),
 and `rankReq` a legacy per-entry "N scenarios at a tier" override. Without them
 the badge falls back to the "Complete" reading.
+
+**Older files.** Before 2026-08-16 entries carried evxl's scraped table verbatim
+(`hdrs`/`rows`, a score in every row). *Load Your Data* still accepts that shape
+and converts it on the way in, and an object `{"benchmarks": […], "scores": {…}}`
+also works. The scripts here read only the current shape; if you have an old
+copy of `template.html` with scores in it, open it, **Settings → Export**, take
+the new template, **Settings → Import**.
 
 Other things worth knowing about the page itself: filters, sort, tags and the
 search box are all kept in the URL, so a filtered view can be bookmarked or

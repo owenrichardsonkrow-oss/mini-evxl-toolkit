@@ -2,8 +2,8 @@
 
 The public, genericized version of a personal KovaaK's benchmark tracker.
 `template.html` is a single-file, hash-routed SPA shipping the full 251-entry (2026-08-16)
-*structure* (scenario lists, category groupings, tier thresholds) with every score
-zeroed and every rank reset to Unranked. No build step. MIT licensed.
+*structure* (scenario lists, category groupings, tier thresholds) and an empty
+scores block. No build step. MIT licensed.
 
 Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
 `origin`, branch `master`; first push 2026-08-16). GitHub Pages is meant to serve
@@ -17,7 +17,8 @@ The personal copy this is generated from lives in the sibling folder
 ## Generated, not hand-edited
 
 `template.html` is produced by `generate-template.ps1` from the personal copy. It
-zeroes scores, resets rank/volts, and swaps the page's **`SITE` identity block**
+empties the scores block (the v2 dataset is structure only, so it ships
+verbatim), and swaps the page's **`SITE` identity block**
 (the only personal strings in the script: `template`, `owner`,
 `defaultUsername`, `steamUrl`/`steamLabel`, `evxlProfileUrl`) plus the `<title>`
 and brand text for generic values — every replacement asserted, and it refuses
@@ -94,7 +95,7 @@ preview tabs cache aggressively. `static-server.ps1`'s MIME map must keep
 1. **Playlist structure** — `BENCHMARKS`, replaced wholesale by an upload.
 2. **Scenario scores** — `SCORES` (`localStorage['mini-evxl-scenario-scores']`),
    an **append-only** name→score map. `recordScores()` never lowers a value, so
-   the template's zeroed rows can't wipe a synced score, and an upload that
+   the template's empty seed can't wipe a synced score, and an upload that
    drops playlists never destroys their scores. Cleared only by an explicit
    reset.
 3. **Exclusions** — `EXCLUDED` (`localStorage['mini-evxl-excluded-playlists']`),
@@ -106,13 +107,13 @@ orphaning and exclusion are the same mechanism and neither touches scores. It
 assigns `index` before filtering so `#/bench/N` links stay stable.
 
 **Every score display goes through `parsedItemsFor(b)`** (the store overlay). The
-detail page once parsed raw rows instead — in this template, where every row is
-zeroed, that meant every detail page showed 0 after a sync. Fixed 2026-08-16.
+detail page once parsed the raw table instead — in this template, where nothing
+ships a score, that meant every detail page showed 0 after a sync. Fixed 2026-08-16.
 
 **The store is per browser and per origin** (`file://`, `localhost:9500`, a Pages
 URL are separate stores). Settings → *Your scores* has Export / Import (JSON,
 max-merge), and `apply-scores.ps1 -Scores <export.json> -Html <copy.html>` bakes
-an export into a tracker file's rows. That's the user's backup and their way to
+an export into a tracker file's scores block. That's the user's backup and their way to
 carry scores between copies.
 
 Score-only by design — tier thresholds belong to the playlist, so an orphaned
@@ -123,7 +124,7 @@ scenario has nothing to draw a bar against and doesn't render.
 `benchmarkStanding(items, b)` ports evxl's own engine (read out of its JS bundle;
 the tracker repo's CLAUDE.md has the full account). Every benchmark declares a
 `rankCalculation` mode and the badge is **max(mode rank, "Complete" rank)**. Each
-dataset entry carries `rankCalc`, `evxlId`, `subcats`, `evxlTiers`,
+dataset entry carries `rankCalc`, `evxlId`, `groups` (the catalog layout),
 `evxlRankOffset`, stamped by `apply-evxl-catalog.ps1` (identical copy here; the
 catalog it reads lives in the tracker repo's `dev/`). Ported and verified exact:
 40 of evxl's 41 modes — 249 of 251 playlists (each proven against evxl's own

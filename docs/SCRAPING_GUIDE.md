@@ -1,4 +1,4 @@
-# Scraping your evxl.app data
+# Scraping your evxl.app data (historical)
 
 **Most people don't need this.** `template.html` already ships pre-loaded with every
 playlist evxl.app tracks — scenario lists, category groupings, tier thresholds, the
@@ -8,11 +8,20 @@ guide is only for building that structural dataset in the first place — releva
 you want playlists that aren't in the pre-loaded template (a private/community
 benchmark, or a fully custom list), or you're maintaining this toolkit itself.
 
+**Status (2026-08-16):** the page-by-page scrape described further down is how the
+dataset was *first* built; it is no longer how it is maintained. Structure now
+comes from KovaaK's own benchmark endpoint sliced by evxl's catalog layout (the
+"easier way" below), which the maintainer's `refresh-all-from-kovaaks.ps1` runs
+weekly. The scrape snippet still works and still emits the older `hdrs`/`rows`
+table shape — **Load Your Data accepts that shape and converts it**, so nothing
+here is broken, but if you're adding a playlist today, fetch the endpoint rather
+than scraping the page. The current dataset shape (`tiers` + `groups`) is in the
+README's "Data format".
+
 This tracker's dataset is just a JSON array of benchmark playlists, each with its
-scenario table (the `rank` and `volts` fields are still in the format but no longer
-drive the UI — rank is computed locally from scores). Getting this structural data
-means reading what evxl.app shows to anyone with a profile URL — no login, no
-private data, no bypassing anything. There are two ways to do it.
+scenario structure. Getting this structural data means reading what evxl.app shows
+to anyone with a profile URL — no login, no private data, no bypassing anything.
+There are two ways to do it.
 
 ### The easier way (2026-08-16): evxl's catalog + KovaaK's benchmark endpoint
 
@@ -35,7 +44,7 @@ fetch yourself:
 3. **Table order** = the API's scenarios flattened in order, then sliced by the
    catalog's subcategory counts (that's what evxl's own renderer does). The tracker
    repo's `rebuild-entry-from-kovaaks.ps1` is a working reference for turning one
-   API response into this dataset's `hdrs`/`rows`.
+   API response into a dataset entry (`tiers` + `groups`).
 
 Caveats: neither endpoint is documented or contractual; the page scrape below stays
 as the fallback and as the way to verify the API when they disagree. When

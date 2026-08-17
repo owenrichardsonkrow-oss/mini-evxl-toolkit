@@ -85,29 +85,17 @@ foreach ($needle in @("'Owen'", 'sinseriously', '76561198251208570', "mini's")) 
     if ($content.Contains($needle)) { throw "generate-template: personal string $needle still present after replacement -- something outside the SITE block hard-codes identity." }
 }
 
-# ---- 3. zero the dataset ----------------------------------------------------
-$startTag = '<script id="benchmarks-data" type="application/json">'
-$endTag = '</script>'
-$startIdx = $content.IndexOf($startTag) + $startTag.Length
-$endIdx = $content.IndexOf($endTag, $startIdx)
-$data = ($content.Substring($startIdx, $endIdx - $startIdx)) | ConvertFrom-Json
-
-foreach ($b in $data) {
-    $b.rank = "Unranked"
-    $b.volts = 0
-    for ($ri = 0; $ri -lt $b.rows.Count; $ri++) {
-        $row = $b.rows[$ri]
-        if ($row.Count -le 1) { continue }
-        $p = -1
-        for ($i = 0; $i -lt $row.Count; $i++) { if ([string]$row[$i] -match $PctRegex) { $p = $i; break } }
-        if ($p -lt 2) { continue }
-        $row[$p - 1] = "0"
-        $b.rows[$ri] = $row
-    }
-}
-$zeroedJson = ConvertTo-DatasetJson $data
-$content = $content.Substring(0, $startIdx) + $zeroedJson + $content.Substring($endIdx)
+# ---- 3. the dataset: structure as-is, scores block emptied ------------------
+# The v2 dataset is structure only, so the template keeps it verbatim; the
+# owner's scores live in the separate scores block, which becomes {}.
+$s = $content.IndexOf($DataTag); if ($s -lt 0) { throw 'generate-template: no benchmarks-data block' }
+$s += $DataTag.Length; $e = $content.IndexOf('</script>', $s)
+$data = @($content.Substring($s, $e - $s) | ConvertFrom-Json)
+if (@($data | Where-Object { $_.PSObject.Properties['rows'] }).Count) { throw 'generate-template: the personal copy is still in the v1 (hdrs/rows) format -- run dev\migrate-v2.ps1 there first.' }
+$ss = $content.IndexOf($ScoresTag); if ($ss -lt 0) { throw 'generate-template: no scores-data block in the personal copy' }
+$ss += $ScoresTag.Length; $se = $content.IndexOf('</script>', $ss)
+$content = $content.Substring(0, $ss) + '{}' + $content.Substring($se)
 
 [System.IO.File]::WriteAllText($dst, $content, $Utf8NoBom)
-Write-Output "Wrote $dst ($($data.Count) playlists, all scores zeroed)."
+Write-Output "Wrote $dst ($($data.Count) playlists, scores block emptied)."
 if ($copied.Count) { Write-Output ("Refreshed shared scripts from the tracker repo: " + ($copied -join ', ')) } else { Write-Output "Shared scripts already identical." }

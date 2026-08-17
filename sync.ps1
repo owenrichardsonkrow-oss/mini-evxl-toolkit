@@ -72,36 +72,14 @@ foreach ($f in $newFiles) {
 }
 
 $ds = Read-TrackerDataset $htmlPath
-$data = $ds.data
 
-$changes = @()
-
-foreach ($b in $data) {
-    for ($ri = 0; $ri -lt $b.rows.Count; $ri++) {
-        $row = $b.rows[$ri]
-        if ($row.Count -le 1) { continue }
-        $p = -1
-        for ($i = 0; $i -lt $row.Count; $i++) {
-            if ([string]$row[$i] -match $PctRegex) { $p = $i; break }
-        }
-        if ($p -lt 2) { continue }
-        $scenario = ([string]$row[$p-2]).Trim()
-        $scoreStr = $row[$p-1]
-        if ($localMap.ContainsKey($scenario)) {
-            $localScore = $localMap[$scenario]
-            $currentScore = [math]::Round((ConvertTo-Num $scoreStr), 2)
-            if ($localScore -gt $currentScore) {
-                $newScoreStr = Format-Num $localScore
-                $changes += [PSCustomObject]@{
-                    benchmark = $b.name; difficulty = $b.difficulty
-                    scenario = $scenario; oldScore = $scoreStr; newScore = $newScoreStr
-                }
-                $row[$p-1] = $newScoreStr
-                $b.rows[$ri] = $row
-            }
-        }
-    }
-}
+# Scores live in the file's own scores block (one value per scenario, shared by
+# every playlist that carries it); raise what the CSVs beat, never lower.
+$before = @{}; foreach ($k in $ds.scores.Keys) { $before[$k] = $ds.scores[$k] }
+$raised = Merge-Scores $ds $localMap
+$changes = @($raised | Sort-Object | ForEach-Object {
+    [PSCustomObject]@{ scenario = $_; oldScore = $(if ($before.ContainsKey($_)) { Format-Num $before[$_] } else { '-' }); newScore = Format-Num $ds.scores[$_] }
+})
 
 if ($changes.Count -gt 0) {
     Write-TrackerDataset $ds $htmlPath
