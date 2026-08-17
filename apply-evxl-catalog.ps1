@@ -26,21 +26,21 @@
 # are left untouched and listed. Legacy v1 fields (subcats, evxlTiers, rank,
 # volts) are dropped if still present.
 #
-# Usage:  .\apply-evxl-catalog.ps1                       # mini_evxl.html
+# Usage:  .\apply-evxl-catalog.ps1                       # data\ (tracker repo) or mini_evxl.html
 #         .\apply-evxl-catalog.ps1 -Html other.html -Catalog fresh.json
 #         .\apply-evxl-catalog.ps1 -WhatIf
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [string]$Html    = (Join-Path $PSScriptRoot 'mini_evxl.html'),
+    [Alias('Html')][string]$Target,             # data\ folder (tracker repo) or a tracker .html; default: see Resolve-TrackerTarget
     [string]$Catalog = (Join-Path $PSScriptRoot 'dev\evxl-bundle-catalog.json')
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
-$Html = Resolve-FullPath $Html
+$Html = Resolve-TrackerTarget $PSScriptRoot $Target
 $Catalog = Resolve-FullPath $Catalog
-if (-not (Test-Path -LiteralPath $Html))    { Write-Output "Tracker HTML not found: $Html"; exit 1 }
+if (-not $Html -or -not (Test-Path -LiteralPath $Html)) { Write-Output "Tracker not found (give -Html <file or data folder>): $Html"; exit 1 }
 if (-not (Test-Path -LiteralPath $Catalog)) { Write-Output "Catalog not found: $Catalog"; exit 1 }
 
 $cat = ([System.IO.File]::ReadAllText($Catalog, $Utf8NoBom) | ConvertFrom-Json).benchmarks

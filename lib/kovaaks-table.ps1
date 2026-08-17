@@ -58,10 +58,45 @@ function ConvertTo-JsonNum($n, [switch]$Round2) {
 }
 
 # ---- dataset in / out --------------------------------------------------------
-# Returns @{ content; start; end; data; scoresStart; scoresEnd; scores (hashtable name->double); legacy (bool) }.
+# A dataset lives in one of two places:
+#   - a tracker HTML file (the two embedded blocks) -- what toolkit users have;
+#   - the tracker repo's data/ folder (benchmarks.json, one entry per line;
+#     scores.json, one score per line) -- the canonical source there, which
+#     build.ps1 assembles into mini_evxl.html / template.html.
+# Read-TrackerDataset takes either (a folder path or an .html path) and
+# Write-TrackerDataset writes back to wherever it came from ($ds.kind).
+# Returns @{ kind; path; data; scores (hashtable name->double); legacy (bool);
+#            + content/start/end/scoresStart/scoresEnd for HTML }.
 # A v1 file (no scores block, entries with hdrs/rows) is refused unless -AllowLegacy:
 # writing v2 data into a page whose script still expects v1 would break it.
-function Read-TrackerDataset([string]$Html, [switch]$AllowLegacy) {
+#
+# Where a script should look when given nothing: the repo's data/ folder if it
+# sits next to the script, else mini_evxl.html next to it, else sync-state.json's
+# trackerHtml (the toolkit convention). Empty string = nothing found.
+function Resolve-TrackerTarget([string]$ScriptRoot, [string]$Given) {
+    if ($Given) { return (Resolve-FullPath $Given) }
+    $d = Join-Path $ScriptRoot 'data'
+    if ((Test-Path -LiteralPath (Join-Path $d 'benchmarks.json')) -and (Test-Path -LiteralPath (Join-Path $d 'scores.json'))) { return $d }
+    $h = Join-Path $ScriptRoot 'mini_evxl.html'
+    if (Test-Path -LiteralPath $h) { return $h }
+    $st = Join-Path $ScriptRoot 'sync-state.json'
+    if (Test-Path -LiteralPath $st) { $s = Get-Content -Raw -LiteralPath $st | ConvertFrom-Json; if ($s.trackerHtml) { return (Resolve-FullPath $s.trackerHtml) } }
+    ''
+}
+function Read-TrackerDataset([string]$Path, [switch]$AllowLegacy) {
+    if (Test-Path -LiteralPath $Path -PathType Container) {
+        $bj = Join-Path $Path 'benchmarks.json'; $sj = Join-Path $Path 'scores.json'
+        if (-not (Test-Path -LiteralPath $bj)) { throw "No benchmarks.json in $Path" }
+        $data = @([System.IO.File]::ReadAllText($bj, $Utf8NoBom) | ConvertFrom-Json)
+        $scores = @{}
+        if (Test-Path -LiteralPath $sj) {
+            $obj = [System.IO.File]::ReadAllText($sj, $Utf8NoBom) | ConvertFrom-Json
+            if ($obj) { foreach ($p in $obj.PSObject.Properties) { $v = ConvertTo-Num $p.Value; if ($v -gt 0) { $scores[$p.Name] = $v } } }
+        }
+        if (@($data | Where-Object { $_.PSObject.Properties['rows'] -and -not $_.PSObject.Properties['groups'] }).Count) { throw "$bj holds v1 (hdrs/rows) entries" }
+        return [pscustomobject]@{ kind = 'dir'; path = $Path; data = $data; scores = $scores; legacy = $false }
+    }
+    $Html = $Path
     $content = [System.IO.File]::ReadAllText($Html, $Utf8NoBom)
     $s = $content.IndexOf($DataTag)
     if ($s -lt 0) { throw "No embedded benchmarks-data block in $Html" }
@@ -80,7 +115,7 @@ function Read-TrackerDataset([string]$Html, [switch]$AllowLegacy) {
         $obj = $content.Substring($ss, $se - $ss) | ConvertFrom-Json
         if ($obj) { foreach ($p in $obj.PSObject.Properties) { $v = ConvertTo-Num $p.Value; if ($v -gt 0) { $scores[$p.Name] = $v } } }
     }
-    [pscustomobject]@{ content = $content; start = $s; end = $e; data = $data; scoresStart = $ss; scoresEnd = $se; scores = $scores; legacy = $legacy }
+    [pscustomobject]@{ kind = 'html'; path = $Html; content = $content; start = $s; end = $e; data = $data; scoresStart = $ss; scoresEnd = $se; scores = $scores; legacy = $legacy }
 }
 # Serialise for embedding in a <script> block: escape "</" so a scenario named
 # "</script>" (names on KovaaK's are user-created) can't end the tag early.
@@ -95,9 +130,20 @@ function ConvertTo-ScoresJson($scores) {
     if ($o.Count -eq 0) { return '{}' }
     ConvertTo-EmbeddedJson $o 3
 }
-# Writes both blocks. If the file has no scores block yet (a v2 page being
-# migrated), one is inserted right after the benchmarks block.
-function Write-TrackerDataset($ds, [string]$Html) {
+# Writes back to where the dataset came from: the data/ folder (one entry / one
+# score per line, so git diffs read), or the HTML's two blocks. If an HTML file
+# has no scores block yet (a v2 page being migrated), one is inserted right after
+# the benchmarks block. $Path defaults to $ds.path.
+function Write-TrackerDataset($ds, [string]$Path) {
+    if (-not $Path) { $Path = $ds.path }
+    if ($ds.kind -eq 'dir' -or (Test-Path -LiteralPath $Path -PathType Container)) {
+        $entryLines = @($ds.data | ForEach-Object { (($_ | ConvertTo-Json -Depth 10 -Compress) -replace '</', '<\/') })
+        [System.IO.File]::WriteAllText((Join-Path $Path 'benchmarks.json'), "[`n" + ($entryLines -join ",`n") + "`n]`n", $Utf8NoBom)
+        $scoreLines = @($ds.scores.Keys | Sort-Object | ForEach-Object { if ([double]$ds.scores[$_] -gt 0) { '  ' + ($_ | ConvertTo-Json -Compress) + ': ' + (ConvertTo-JsonNum $ds.scores[$_] -Round2) } })
+        [System.IO.File]::WriteAllText((Join-Path $Path 'scores.json'), $(if ($scoreLines.Count) { "{`n" + ($scoreLines -join ",`n") + "`n}`n" } else { "{}`n" }), $Utf8NoBom)
+        return
+    }
+    $Html = $Path
     $json = ConvertTo-DatasetJson $ds.data
     $scoresJson = ConvertTo-ScoresJson $ds.scores
     $c = $ds.content
@@ -198,6 +244,11 @@ function Get-EntryTierNames($entry) { , @(@($entry.tiers) | ForEach-Object { [st
 # The layout, catalog-shaped: [[category, subcategory, count], ...]
 function Get-EntryLayout($entry) { , @(@($entry.groups) | ForEach-Object { , @([string]$_.category, [string]$_.subcategory, @($_.scenarios).Count) }) }
 function Get-EntryScenarioCount($entry) { $n = 0; foreach ($g in @($entry.groups)) { $n += @($g.scenarios).Count }; $n }
+# A layout as one comparable string ("cat~sub~n|cat~sub~n"). foreach, not a
+# pipeline: piping a function's comma-wrapped array return hands the WHOLE array
+# to ForEach-Object as one item and joins "System.Object[]"s -- which made every
+# entry read as "layout changed" once.
+function Get-LayoutKey($layout) { $parts = @(); foreach ($l in @($layout)) { $parts += (@($l) -join '~') }; $parts -join '|' }
 # evxl displays catalog tier keys with underscores as spaces ("One_Above_All" -> "One Above All").
 function Get-DisplayTierNames($catalogTiers, $apiTiers, $entry) {
     if ($catalogTiers -and @($catalogTiers).Count) { return , @($catalogTiers | ForEach-Object { ([string]$_) -replace '_', ' ' }) }

@@ -12,9 +12,9 @@
 #   .\apply-scores.ps1 -Scores export.json -Html my-benchmarks.html
 #   .\apply-scores.ps1 -Scores export.json -WhatIf        # report only, write nothing
 #
-# -Html defaults to mini_evxl.html next to this script (the personal tracker),
-# else the trackerHtml path in sync-state.json next to this script (the toolkit
-# convention); otherwise it must be given.
+# -Html (alias of -Target) is a tracker .html or, in the tracker repo, the data\
+# folder. Default: the data\ folder next to this script, else mini_evxl.html next
+# to it, else the trackerHtml path in sync-state.json (the toolkit convention).
 #
 # Accepts either the Settings-page export ({"format":"mini-evxl-scores", ...,
 # "scores":{name:score}}) or a bare {name: score} object. The tracker file must
@@ -23,27 +23,18 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
     [Parameter(Mandatory = $true)][string]$Scores,
-    [string]$Html
+    [Alias('Html')][string]$Target              # data\ folder (tracker repo) or a tracker .html; default: see Resolve-TrackerTarget
 )
 
 $ErrorActionPreference = 'Stop'
 # Shared helpers (dataset in/out, culture-proof number parsing/formatting).
 . (Join-Path $PSScriptRoot 'lib\kovaaks-table.ps1')
 
-if (-not $Html) {
-    $personal = Join-Path $PSScriptRoot 'mini_evxl.html'
-    $statePath = Join-Path $PSScriptRoot 'sync-state.json'
-    if (Test-Path $personal) { $Html = $personal }
-    elseif (Test-Path $statePath) {
-        $st = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
-        if ($st.trackerHtml) { $Html = $st.trackerHtml }
-    }
-    if (-not $Html) { Write-Output "Give -Html <your tracker .html> (no mini_evxl.html or sync-state.json trackerHtml found next to this script)."; exit 1 }
-}
+$Html = Resolve-TrackerTarget $PSScriptRoot $Target
+if (-not $Html) { Write-Output "Give -Html <your tracker .html> (no data\ folder, mini_evxl.html or sync-state.json trackerHtml found next to this script)."; exit 1 }
 $Scores = Resolve-FullPath $Scores
-$Html = Resolve-FullPath $Html
 if (-not (Test-Path -LiteralPath $Scores)) { Write-Output "Scores file not found: $Scores"; exit 1 }
-if (-not (Test-Path -LiteralPath $Html)) { Write-Output "Tracker HTML not found: $Html"; exit 1 }
+if (-not (Test-Path -LiteralPath $Html)) { Write-Output "Tracker not found: $Html"; exit 1 }
 
 $export = [System.IO.File]::ReadAllText($Scores, $Utf8NoBom) | ConvertFrom-Json
 $scoreObj = if ($export.PSObject.Properties.Name -contains 'scores') { $export.scores } else { $export }
