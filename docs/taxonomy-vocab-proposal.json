@@ -1,0 +1,916 @@
+{
+ "status": "proposal",
+ "date": "2026-08-18",
+ "see": "docs/taxonomy-proposal-2026-08-18.md",
+ "categories": {
+  "1": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "2": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "3": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "4": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "tracking": {
+   "m": "tracking"
+  },
+  "switching": {
+   "m": "switching"
+  },
+  "clicking": {
+   "m": "clicking"
+  },
+  "smoothness": {
+   "m": "tracking",
+   "mod": [
+    "smooth"
+   ]
+  },
+  "control tracking": {
+   "m": "tracking",
+   "mod": [
+    "control"
+   ]
+  },
+  "flick tech": {
+   "m": "clicking",
+   "mod": [
+    "flick"
+   ],
+   "c": "m",
+   "n": "RULING: fold flicks under clicking (community convention) or standalone mechanic?"
+  },
+  "static": {
+   "mod": [
+    "static"
+   ],
+   "c": "m",
+   "n": "mechanic unstated by label; usually static clicking in context"
+  },
+  "static clicking": {
+   "m": "clicking",
+   "mod": [
+    "static"
+   ]
+  },
+  "reactive tracking": {
+   "m": "tracking",
+   "mod": [
+    "reactive"
+   ]
+  },
+  "dynamic clicking": {
+   "m": "clicking",
+   "mod": [
+    "dynamic"
+   ]
+  },
+  "aoiaim": {
+   "a": "nofacet",
+   "n": "curator/pack label"
+  },
+  "flicking": {
+   "m": "clicking",
+   "mod": [
+    "flick"
+   ],
+   "c": "m",
+   "n": "same ruling as flick tech"
+  },
+  "micros": {
+   "mod": [
+    "micro"
+   ]
+  },
+  "micro": {
+   "mod": [
+    "micro"
+   ]
+  },
+  "click timing": {
+   "m": "clicking",
+   "mod": [
+    "timing"
+   ]
+  },
+  "linear radial smoothness": {
+   "m": "tracking",
+   "mod": [
+    "smooth"
+   ],
+   "n": "linear/radial = pattern detail"
+  },
+  "precise tracking": {
+   "m": "tracking",
+   "mod": [
+    "precise"
+   ]
+  },
+  "target switching": {
+   "m": "switching"
+  },
+  "angelic tac fps": {
+   "f": [
+    "game",
+    "tacfps"
+   ],
+   "n": "curator: angelic"
+  },
+  "normal": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "easy": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "advanced": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "hard": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "beginner": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "beginner+": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "intermediate": {
+   "a": "evict",
+   "n": "difficulty word"
+  },
+  "cs/val": {
+   "f": [
+    "game",
+    "cs/val"
+   ]
+  },
+  "ground": {
+   "f": [
+    "env",
+    "ground"
+   ]
+  },
+  "air": {
+   "f": [
+    "env",
+    "air"
+   ]
+  },
+  "reactive": {
+   "mod": [
+    "reactive"
+   ]
+  },
+  "flick-tech": {
+   "m": "clicking",
+   "mod": [
+    "flick"
+   ],
+   "c": "m",
+   "n": "same ruling as flick tech"
+  },
+  "evasive switching": {
+   "m": "switching",
+   "mod": [
+    "evasive"
+   ]
+  },
+  "动态点击": {
+   "m": "clicking",
+   "mod": [
+    "dynamic"
+   ],
+   "n": "zh: dynamic clicking"
+  },
+  "(:": {
+   "a": "nofacet",
+   "n": "joke/section label"
+  },
+  "<:": {
+   "a": "nofacet",
+   "n": "joke/section label"
+  },
+  "stability": {
+   "mod": [
+    "stability"
+   ]
+  },
+  "blend": {
+   "mod": [
+    "blending"
+   ],
+   "c": "m",
+   "n": "RULING: blending = smooth+reactive hybrid style?"
+  },
+  "strafes": {
+   "mod": [
+    "strafe"
+   ],
+   "c": "m",
+   "n": "target-movement pattern; mechanic unstated (usually tracking)"
+  },
+  "control": {
+   "mod": [
+    "control"
+   ]
+  },
+  "speedts": {
+   "m": "switching",
+   "mod": [
+    "speed"
+   ]
+  },
+  "precise": {
+   "mod": [
+    "precise"
+   ]
+  },
+  "click": {
+   "m": "clicking"
+  },
+  "category": {
+   "a": "nofacet",
+   "n": "placeholder label"
+  },
+  "dynamic": {
+   "mod": [
+    "dynamic"
+   ]
+  },
+  "跟枪": {
+   "m": "tracking",
+   "n": "zh: tracking (\"follow gun\")"
+  },
+  "转火": {
+   "m": "switching",
+   "n": "zh: switching (\"transfer fire\")"
+  },
+  "matty ow benchmark": {
+   "f": [
+    "game",
+    "ow"
+   ],
+   "n": "curator: matty"
+  },
+  "shotgun": {
+   "f": [
+    "weapon",
+    "shotgun"
+   ]
+  },
+  "smg": {
+   "f": [
+    "weapon",
+    "smg"
+   ]
+  },
+  "ar": {
+   "f": [
+    "weapon",
+    "ar"
+   ]
+  },
+  "henwood benchmarks": {
+   "a": "nofacet",
+   "n": "curator/pack label"
+  },
+  "定位": {
+   "m": "clicking",
+   "mod": [
+    "static"
+   ],
+   "c": "l",
+   "n": "RULING: zh \"positioning\" — static clicking family?"
+  },
+  "control and smooth tracking": {
+   "m": "tracking",
+   "mod": [
+    "control",
+    "smooth"
+   ]
+  },
+  "reactive and anti movement": {
+   "mod": [
+    "reactive",
+    "anti-movement"
+   ],
+   "c": "m",
+   "n": "RULING: anti-movement as its own modifier?"
+  },
+  "specific": {
+   "a": "nofacet",
+   "c": "l",
+   "n": "placeholder-ish; scenarios keep name/sub evidence"
+  },
+  "track": {
+   "m": "tracking"
+  },
+  "switch": {
+   "m": "switching"
+  },
+  "arm": {
+   "f": [
+    "region",
+    "arm"
+   ]
+  },
+  "wrist": {
+   "f": [
+    "region",
+    "wrist"
+   ]
+  },
+  "revamp": {
+   "a": "nofacet",
+   "n": "pack season/track label"
+  },
+  "raw smoothness": {
+   "m": "tracking",
+   "mod": [
+    "smooth",
+    "raw"
+   ]
+  },
+  "movement": {
+   "mod": [
+    "movement"
+   ],
+   "c": "m",
+   "n": "RULING: player-movement (WASD) scenarios as a modifier?"
+  },
+  "跟踪": {
+   "m": "tracking",
+   "n": "zh: tracking"
+  },
+  "reflex": {
+   "mod": [
+    "reflex"
+   ]
+  },
+  "raw": {
+   "mod": [
+    "raw"
+   ]
+  },
+  "controlled": {
+   "mod": [
+    "control"
+   ]
+  },
+  "triad": {
+   "a": "nofacet",
+   "c": "l",
+   "n": "pack section label?"
+  },
+  "large angles": {
+   "mod": [
+    "wide"
+   ],
+   "c": "m",
+   "n": "angle size; proposing \"wide\" modifier"
+  },
+  "strafe and anti movement": {
+   "mod": [
+    "strafe",
+    "anti-movement"
+   ],
+   "c": "m"
+  },
+  "bouncesphere": {
+   "m": "tracking",
+   "mod": [
+    "bounce"
+   ],
+   "c": "m",
+   "n": "scenario family"
+  },
+  "flicks and click-timing": {
+   "m": "clicking",
+   "mod": [
+    "flick",
+    "timing"
+   ]
+  },
+  "reactivity": {
+   "mod": [
+    "reactive"
+   ]
+  },
+  "ts": {
+   "m": "switching",
+   "n": "TS = target switching"
+  },
+  "ground tracking": {
+   "m": "tracking",
+   "f": [
+    "env",
+    "ground"
+   ]
+  },
+  "horizontal": {
+   "f": [
+    "axis",
+    "horizontal"
+   ]
+  },
+  "diagonal": {
+   "f": [
+    "axis",
+    "diagonal"
+   ]
+  },
+  "strafe": {
+   "mod": [
+    "strafe"
+   ]
+  },
+  "strafing": {
+   "mod": [
+    "strafe"
+   ]
+  },
+  "smooth": {
+   "mod": [
+    "smooth"
+   ]
+  },
+  "hold": {
+   "a": "nofacet",
+   "c": "l",
+   "n": "RULING: crosshair-hold scenarios? unclear"
+  },
+  "speed": {
+   "mod": [
+    "speed"
+   ]
+  },
+  "transfer": {
+   "m": "switching",
+   "c": "m",
+   "n": "transfers = wide switches"
+  },
+  "dodge": {
+   "mod": [
+    "dodge"
+   ],
+   "c": "m",
+   "n": "RULING: dodge (player evasion) as modifier?"
+  },
+  "other": {
+   "a": "nofacet",
+   "n": "placeholder"
+  },
+  "no aim": {
+   "f": [
+    "special",
+    "no-aim"
+   ],
+   "c": "m",
+   "n": "RULING: exclude from aim profile entirely?"
+  },
+  "flick": {
+   "m": "clicking",
+   "mod": [
+    "flick"
+   ],
+   "c": "m"
+  },
+  "tempo": {
+   "mod": [
+    "timing"
+   ],
+   "c": "m"
+  },
+  "correction": {
+   "mod": [
+    "micro"
+   ],
+   "c": "m",
+   "n": "micro-correction"
+  },
+  "bonus": {
+   "a": "nofacet",
+   "n": "section label"
+  },
+  "static click": {
+   "m": "clicking",
+   "mod": [
+    "static"
+   ]
+  },
+  "dynamic click": {
+   "m": "clicking",
+   "mod": [
+    "dynamic"
+   ]
+  },
+  "tap": {
+   "m": "clicking",
+   "c": "l",
+   "n": "RULING: tap = click family?"
+  },
+  "rush": {
+   "a": "nofacet",
+   "c": "l",
+   "n": "RULING: unknown label"
+  },
+  "blink": {
+   "mod": [
+    "blink"
+   ],
+   "c": "m",
+   "n": "blinking/teleporting targets"
+  },
+  "scenarios": {
+   "a": "nofacet",
+   "n": "placeholder"
+  }
+ },
+ "subcategories": {
+  "1": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "2": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "3": {
+   "a": "nofacet",
+   "n": "numeric section"
+  },
+  "dynamic": {
+   "mod": [
+    "dynamic"
+   ]
+  },
+  "reactive": {
+   "mod": [
+    "reactive"
+   ]
+  },
+  "speed": {
+   "mod": [
+    "speed"
+   ]
+  },
+  "static": {
+   "mod": [
+    "static"
+   ]
+  },
+  "precise": {
+   "mod": [
+    "precise"
+   ]
+  },
+  "evasive": {
+   "mod": [
+    "evasive"
+   ]
+  },
+  "control": {
+   "mod": [
+    "control"
+   ]
+  },
+  "micro": {
+   "mod": [
+    "micro"
+   ]
+  },
+  "reading": {
+   "mod": [
+    "reading"
+   ]
+  },
+  "smooth": {
+   "mod": [
+    "smooth"
+   ]
+  },
+  "stability": {
+   "mod": [
+    "stability"
+   ]
+  },
+  "2 target": {
+   "f": [
+    "targets",
+    "2"
+   ]
+  },
+  "3 target": {
+   "f": [
+    "targets",
+    "3"
+   ]
+  },
+  "4 target": {
+   "f": [
+    "targets",
+    "4"
+   ]
+  },
+  "5 target": {
+   "f": [
+    "targets",
+    "5"
+   ]
+  },
+  "6 target": {
+   "f": [
+    "targets",
+    "6"
+   ]
+  },
+  "precision": {
+   "mod": [
+    "precise"
+   ]
+  },
+  "smoothness": {
+   "mod": [
+    "smooth"
+   ]
+  },
+  "reactivity": {
+   "mod": [
+    "reactive"
+   ]
+  },
+  "react": {
+   "mod": [
+    "reactive"
+   ]
+  },
+  "reaction": {
+   "mod": [
+    "reflex"
+   ],
+   "c": "m"
+  },
+  "micros": {
+   "mod": [
+    "micro"
+   ]
+  },
+  "sta": {
+   "mod": [
+    "static"
+   ],
+   "c": "m",
+   "n": "abbrev."
+  },
+  "ctrl": {
+   "mod": [
+    "control"
+   ]
+  },
+  "vertical": {
+   "f": [
+    "axis",
+    "vertical"
+   ]
+  },
+  "horizontal": {
+   "f": [
+    "axis",
+    "horizontal"
+   ]
+  },
+  "hybrid": {
+   "mod": [
+    "hybrid"
+   ],
+   "c": "m"
+  },
+  "reflex": {
+   "mod": [
+    "reflex"
+   ]
+  },
+  "linear": {
+   "a": "nofacet",
+   "c": "m",
+   "n": "movement-pattern detail"
+  },
+  "xyz": {
+   "a": "nofacet",
+   "n": "pack label (XYZ comps)"
+  },
+  "arm": {
+   "f": [
+    "region",
+    "arm"
+   ]
+  },
+  "wrist": {
+   "f": [
+    "region",
+    "wrist"
+   ]
+  },
+  "fingertip": {
+   "f": [
+    "region",
+    "fingertip"
+   ]
+  },
+  "blending": {
+   "mod": [
+    "blending"
+   ],
+   "c": "m"
+  },
+  "track": {
+   "m": "tracking"
+  },
+  "tracking": {
+   "m": "tracking"
+  },
+  "switch": {
+   "m": "switching"
+  },
+  "switching": {
+   "m": "switching"
+  },
+  "click": {
+   "m": "clicking"
+  },
+  "clicking": {
+   "m": "clicking"
+  },
+  "flick": {
+   "m": "clicking",
+   "mod": [
+    "flick"
+   ],
+   "c": "m",
+   "n": "same flick ruling as categories"
+  },
+  "strafe": {
+   "mod": [
+    "strafe"
+   ]
+  },
+  "technique": {
+   "a": "nofacet",
+   "c": "m",
+   "n": "section label"
+  },
+  "ground": {
+   "f": [
+    "env",
+    "ground"
+   ]
+  },
+  "air": {
+   "f": [
+    "env",
+    "air"
+   ]
+  },
+  "bounce": {
+   "mod": [
+    "bounce"
+   ],
+   "c": "m"
+  },
+  "raw": {
+   "mod": [
+    "raw"
+   ]
+  },
+  "fluidity": {
+   "mod": [
+    "smooth"
+   ],
+   "c": "m",
+   "n": "smoothness family"
+  },
+  "elusive": {
+   "mod": [
+    "evasive"
+   ],
+   "c": "m",
+   "n": "elusive strafes family"
+  },
+  "voxts": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "patts": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "devts": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "xents": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "pokeball": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "wide wall": {
+   "a": "nofacet",
+   "n": "scenario family"
+  },
+  "centering": {
+   "mod": [
+    "stability"
+   ],
+   "c": "m",
+   "n": "centering drills"
+  },
+  "micro-static": {
+   "mod": [
+    "micro",
+    "static"
+   ]
+  },
+  "micro-dynamic": {
+   "mod": [
+    "micro",
+    "dynamic"
+   ]
+  },
+  "micro-tracking": {
+   "m": "tracking",
+   "mod": [
+    "micro"
+   ]
+  },
+  "dodge": {
+   "mod": [
+    "dodge"
+   ],
+   "c": "m"
+  },
+  "wide": {
+   "mod": [
+    "wide"
+   ],
+   "c": "m"
+  },
+  "mix": {
+   "mod": [
+    "hybrid"
+   ],
+   "c": "m"
+  },
+  "thin": {
+   "a": "nofacet",
+   "c": "m",
+   "n": "target-shape detail"
+  },
+  "predict": {
+   "mod": [
+    "reading"
+   ],
+   "c": "m"
+  },
+  "mass": {
+   "a": "nofacet",
+   "c": "m",
+   "n": "many-targets structural"
+  },
+  "sphere": {
+   "a": "nofacet",
+   "n": "target-shape detail"
+  },
+  "regen": {
+   "a": "nofacet",
+   "c": "m",
+   "n": "regen-HP mechanic detail"
+  },
+  "entry": {
+   "a": "evict",
+   "c": "m",
+   "n": "difficulty word (rung 0 in DIFF vocab)"
+  },
+  "3x3": {
+   "a": "nofacet",
+   "n": "grid-size detail"
+  }
+ },
+ "oneOffSubcategoryDefault": "nofacet"
+}
