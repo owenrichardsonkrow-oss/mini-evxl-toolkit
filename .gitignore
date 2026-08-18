@@ -8,3 +8,6 @@ Thumbs.db
 # If you keep a personal copy of the tracker with your own data embedded,
 # consider naming it something like my-benchmarks.html and listing it here
 # so you don't accidentally commit your own scores to a public repo.
+
+# developer build written by the personal repo's build.ps1 on a non-master branch
+template.dev.html
