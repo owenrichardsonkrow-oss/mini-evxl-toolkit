@@ -1002,107 +1002,150 @@ const MiniEvxlEngine = (function(){
     return { toMax, to2nd, toNext, maxed };
   }
 
-  // Difficulty attribute (redefined 2026-08-17, Owen: "VT Controlsphere
-  // Advanced S5 is Advanced in its name and sits in Advanced playlists — it
-  // should read Hard"). The old rule read only "easy"/"hard" and defaulted
-  // everything else to Intermediate, so 1,721 of 3,038 scenarios wore a
-  // middle chip that really meant "unknown".
+  // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
+  // A NINE-rung scale, read as family × nudge:
+  //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
+  // plus -1 = unrated. Not a continuous index on purpose: the inputs are curators'
+  // words, name suffixes and one leaderboard percentile — nine ordered labels say
+  // "about here" and can be defended rung by rung; a 0-100 number could not.
   //
-  // New rule — a scenario's difficulty is where the playlists that carry it
-  // place it:
-  //   1. Every playlist difficulty LABEL is mapped through a vocabulary of the
-  //      level words actually used across the dataset (Easy ← easy/easier/
-  //      novice/newcomer/beginner/entry/genesis/level 1/轻松; Intermediate ←
-  //      intermediate/medium/normal/main/basic/pre-advanced/level 2/ascension/
-  //      中等; Hard ← hard/expert/advanced/adv/ultimate/boss/level 3/level 4/
-  //      enlightenment/elite/veteran/wallhack/evil/demonic/promax/困难).
-  //      Labels that are tracks or seasons rather than levels ("All", "S1",
-  //      "Static", "#2 Tracking", "Season 2", "catburg"…) say nothing — and
-  //      neither does the label's POSITION in its benchmark: most unknown
-  //      ladders are tracks, so index-based guessing would call TSK's
-  //      "Strafes" or xyz's "#5 Ground" Hard for no reason.
-  //   2. Across the playlists carrying the scenario, take the MEDIAN placement;
-  //      an even split between two different levels (Easy+Hard, or two
-  //      adjacent levels) reads Intermediate.
-  //   3. The scenario's own NAME is a MODIFIER, not a vote (Owen, 2026-08-17:
-  //      "VT Ground Novice S5 Hard" is a bonus variant of "VT Ground Novice S5"
-  //      built to be harder than its base so the base feels easier). Level
-  //      words in the name (tight whole-word list: easy/easier/novice/newcomer/
-  //      beginner → 0; intermediate/medium → 1; advanced/hard/expert → 2) are
-  //      read in order; the LAST one is the modifier (a name like "…Intermediate
-  //      S5 Hard" carries the family tier first and the modifier last). The
-  //      modifier shifts the playlist placement ONE step in its direction —
-  //      Novice-placed + "Hard" → Intermediate; Intermediate-placed + "Easy 90%"
-  //      → Easy; a modifier that agrees with the placement changes nothing.
-  //      With no placement at all the name stands alone: one word → that level;
-  //      family + modifier → the family shifted one step toward the modifier.
-  //   4. Otherwise '' — unrated. Shown as such rather than as Intermediate.
-  // Returns 'Easy' | 'Intermediate' | 'Hard' | ''.
+  //   1. PLACEMENT — every playlist difficulty LABEL maps through DIFF_LABEL_VOCAB
+  //      to a rung. Family from the word (Novice/Easy → Easy family, Medium/Main/
+  //      Intermediate → Intermediate, Hard/Advanced → Hard), rung from its
+  //      intensity: Newcomer/Entry/Level 1/Genesis sit below Easy (0); Expert/
+  //      Elite/Boss+/Boss++/Ultimate/Demonic sit above Hard (8); Pre-Advanced is
+  //      Intermediate+ (5); Deadman's Level 1..4/Boss/Boss+/Boss++ spread 0/2/4/6/
+  //      7/8/8. Track/season labels ("All", "S1", "Static", "#2 Tracking") say
+  //      nothing, and a label's POSITION in its ladder is deliberately not used
+  //      (most unknown ladders are tracks, not levels). Median across the playlists
+  //      carrying the scenario (even count → rounded mean of the middle two).
+  //   2. NAME TIER WORDS pull one rung TOWARD their level: "VT Ground Novice S5 Hard"
+  //      placed Easy (1) + "hard" (7) → Easy+ (2) — Owen: a bonus variant built to
+  //      be harder than its base, still an easy-family scenario. The last tier word
+  //      in the name is the one that acts (family word first, modifier last).
+  //   3. NAME MODIFIERS (size/speed/mechanic words) push by direction × magnitude
+  //      rungs and SUM: "Small & Slow" cancels, "20% Smaller & Faster" is +2. They
+  //      are read only from the part of the name AFTER its base scenario (longest
+  //      prefix that is itself a scenario in the dataset, via the caller's lookup)
+  //      or, without a base, after the first tier word — "Close Fast Strafes Easy
+  //      Invincible - Thin" reads only "Invincible - Thin", because Close/Fast are
+  //      the scenario's name, not modifiers of it. Directions come from
+  //      dev/modifier-survey.js (1,403 base+variant pairs, observed playlist-
+  //      placement delta) cross-checked against KovaaK's leaderboards at the
+  //      top-20% percentile (dev/kovaaks-modifier-check.ps1): bigger/slower/<100%
+  //      = easier, smaller/thinner/faster/>100% = harder; magnitude 2 where the
+  //      community ratio is strong.
+  //   4. NO PLACEMENT: the name's own tier words anchor it (first word's rung, one
+  //      rung toward the last); failing that a rated BASE scenario anchors it and
+  //      the remainder's modifiers apply; failing that -1 (unrated).
+  // classifyDifficulty(name, labels, lookupBase?) → label ('Hard+' … ''; '' = unrated)
+  // difficultyRung(name, labels, lookupBase?) → 0..8 or -1
+  // lookupBase(candidateName) → null if no such scenario, else its rung (-1 unrated)
+  // DIFF_LABELS[rung]; difficultyFamily(label) → 'Easy'|'Intermediate'|'Hard'|''
+  const DIFF_LABELS = ['Easy-', 'Easy', 'Easy+', 'Intermediate-', 'Intermediate', 'Intermediate+', 'Hard-', 'Hard', 'Hard+'];
+  const DIFF_FAMILY_OF = ['Easy','Easy','Easy','Intermediate','Intermediate','Intermediate','Hard','Hard','Hard'];
   const DIFF_LABEL_VOCAB = [
-    // order matters only where one phrase contains another ("pre-advanced" before "advanced")
-    ['pre-advanced', 1],
-    ['level 1', 0], ['level 2', 1], ['level 3', 2], ['level 4', 2],
-    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0], ['genesis', 0], ['fundamentals', 0], ['轻松', 0],
-    ['intermediate', 1], ['medium', 1], ['normal', 1], ['main', 1], ['basic', 1], ['ascension', 1], ['中等', 1],
-    ['hard', 2], ['expert', 2], ['advanced', 2], ['adv', 2], ['ultimate', 2], ['boss', 2], ['enlightenment', 2], ['elite', 2],
-    ['veteran', 2], ['wallhack', 2], ['evil', 2], ['demonic', 2], ['promax', 2], ['困难', 2]
+    // phrases first (a phrase must win over a word it contains)
+    ['pre-advanced', 5], ['beginner+', 2], ['boss++', 8], ['boss+', 8],
+    ['level 1', 0], ['level 2', 2], ['level 3', 4], ['level 4', 6],
+    ['newcomer', 0], ['entry', 0], ['genesis', 0], ['fundamentals', 1],
+    ['easier', 1], ['easy', 1], ['novice', 1], ['beginner', 1], ['轻松', 1],
+    ['intermediate', 4], ['medium', 4], ['normal', 4], ['main', 4], ['basic', 4], ['ascension', 4], ['中等', 4],
+    ['hard', 7], ['advanced', 7], ['adv', 7], ['boss', 7], ['veteran', 7], ['enlightenment', 7], ['wallhack', 7], ['evil', 7], ['promax', 7], ['困难', 7],
+    ['expert', 8], ['elite', 8], ['ultimate', 8], ['demonic', 8]
   ];
-  const DIFF_NAME_VOCAB = [
-    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0],
-    ['intermediate', 1], ['medium', 1],
-    ['advanced', 2], ['hard', 2], ['expert', 2]
+  // Tier words that may act inside a scenario NAME (a subset — label words that
+  // also name mechanics or packs are left out: "static", "main", "basic", "boss"…).
+  const DIFF_NAME_TIER_WORDS = new Set(['newcomer','entry','easier','easy','novice','beginner','intermediate','medium','advanced','adv','hard','expert','elite','level 1','level 2','level 3','level 4']);
+  // Size / speed / mechanic modifiers in names: [phrase, rungs] (+ harder, − easier),
+  // longer phrases first. Lone percentages are handled by regex below.
+  const DIFF_NAME_MODIFIERS = [
+    ['even smaller', 2], ['extra small', 2], ['xsmall', 2], ['x-small', 2], ['very thin', 2], ['extra thin', 2],
+    ['slightly smaller', 1], ['smaller', 1], ['small', 1], ['thin', 1], ['tiny', 1], ['faster', 1], ['close', 1], ['harder', 1],
+    ['slightly larger', -1], ['larger', -1], ['large', -1], ['bigger', -1], ['big', -1], ['jumbo', -1], ['massive', -1], ['huge', -1], ['giant', -1],
+    ['slower', -1], ['slowed', -1], ['slow', -1], ['no ufo', -1], ['less blinks', -1]
   ];
-  const DIFF_NAMES = ['Easy', 'Intermediate', 'Hard'];
-  function difficultyLevelOfLabel(label){
+  const wordRe = w => new RegExp('(^|[^a-z0-9%])'+w.replace(/[-\s]/g,'[-\\s]?').replace(/\+/g,'\\+')+'(?=[^a-z0-9%]|$)');
+  function difficultyRungOfLabel(label){
     const t = String(label||'').toLowerCase().trim();
     if(!t) return -1;
-    // whole-word for latin phrases (so "adv" doesn't fire inside "advantage"),
-    // plain substring for the CJK words
-    for(const [w, lvl] of DIFF_LABEL_VOCAB){
-      if(/[a-z]/.test(w) ? new RegExp('(^|[^a-z])'+w.replace(/[-\s]/g,'[-\\s]?')+'([^a-z]|$)').test(t) : t.includes(w)) return lvl;
+    for(const [w, r] of DIFF_LABEL_VOCAB){
+      if(/[a-z]/.test(w) ? wordRe(w).test(t) : t.includes(w)) return r;
     }
     return -1;
   }
-  // Level words in a scenario name, in order of appearance.
-  function difficultyNameWords(name){
+  // Tier words in a name, in order of appearance: [{r, pos, end}]
+  function difficultyNameTierWords(name){
     const t = String(name||'').toLowerCase();
     const found = [];
-    for(const [w, lvl] of DIFF_NAME_VOCAB){
-      const m = new RegExp('(^|[^a-z])'+w+'([^a-z]|$)').exec(t);
-      if(m) found.push({ lvl, pos: m.index });
+    for(const [w, r] of DIFF_LABEL_VOCAB){
+      if(!DIFF_NAME_TIER_WORDS.has(w)) continue;
+      const m = wordRe(w).exec(t);
+      if(m) found.push({ r, pos: m.index + m[1].length, end: m.index + m[0].length });
     }
+    const mi = wordRe('int').exec(t); if(mi) found.push({ r: 4, pos: mi.index + mi[1].length, end: mi.index + mi[0].length });   // Revosect "… Int"
     found.sort((a,b)=>a.pos-b.pos);
-    return found.map(f=>f.lvl);
+    return found;
   }
-  function shiftToward(base, modifier){
-    if(modifier>base) return Math.min(2, base+1);
-    if(modifier<base) return Math.max(0, base-1);
-    return base;
+  // Net modifier push for a piece of name text, in rungs.
+  function difficultyNameModifiers(text){
+    let t = String(text||'').toLowerCase();
+    let sum = 0;
+    // "N% smaller|larger|…" — the word decides, the number is dropped
+    t = t.replace(/(\d+)\s*%\s*(smaller|larger|bigger|slower|faster|thinner)/g, ' $2 ');
+    // a lone "N%" (size or speed scale): ≤85 → easier, ≥115 → harder, else nothing
+    t = t.replace(/(\d+)\s*%/g, (m, n)=>{ const v=Number(n); if(v<=85) sum -= 1; else if(v>=115) sum += 1; return ' '; });
+    for(const [w, r] of DIFF_NAME_MODIFIERS){
+      const re = wordRe(w);
+      if(re.test(t)){ sum += r; t = t.replace(new RegExp(re.source, 'g'), ' '); }
+    }
+    return sum;
   }
-  function medianLevel(levels){
-    const s = levels.slice().sort((a,b)=>a-b);
+  const clampRung = r => Math.max(0, Math.min(8, r));
+  function towardRung(from, target){ return target>from ? from+1 : target<from ? from-1 : from; }
+  function medianRung(rungs){
+    const s = rungs.slice().sort((a,b)=>a-b);
     const n = s.length;
     if(!n) return -1;
     if(n%2) return s[(n-1)/2];
-    const a = s[n/2-1], b = s[n/2];
-    return a===b ? a : 1;
+    return Math.round((s[n/2-1] + s[n/2]) / 2);
   }
-  function classifyDifficulty(name, difficulties){
-    const placement = medianLevel((difficulties||[]).map(difficultyLevelOfLabel).filter(l=>l>=0));
-    const words = difficultyNameWords(name);
-    let lvl;
-    if(placement>=0){
-      lvl = words.length ? shiftToward(placement, words[words.length-1]) : placement;
-    } else if(words.length===0){
-      lvl = -1;
-    } else if(words.length===1){
-      lvl = words[0];
-    } else {
-      lvl = shiftToward(words[0], words[words.length-1]);   // family word first, modifier last
+  // Longest prefix of `name` (on word boundaries) that lookupBase knows as a scenario.
+  function splitAtBase(name, lookupBase){
+    if(typeof lookupBase!=='function') return null;
+    const words = String(name||'').split(/\s+/);
+    for(let k=words.length-1; k>=1; k--){
+      const base = words.slice(0,k).join(' ');
+      const r = lookupBase(base);
+      if(r!==null && r!==undefined) return { base, baseRung: r, rest: words.slice(k).join(' ') };
     }
-    return lvl<0 ? '' : DIFF_NAMES[lvl];
+    return null;
   }
+  function difficultyRung(name, difficulties, lookupBase){
+    const placement = medianRung((difficulties||[]).map(difficultyRungOfLabel).filter(r=>r>=0));
+    const tier = difficultyNameTierWords(name);
+    const split = splitAtBase(name, lookupBase);
+    // modifiers count only past the base, or past the first tier word, or (no anchor in the name) everywhere
+    const modText = split ? split.rest : (tier.length ? String(name).slice(tier[0].end) : String(name||''));
+    const mods = difficultyNameModifiers(modText);
+    if(placement>=0){
+      const r = tier.length ? towardRung(placement, tier[tier.length-1].r) : placement;
+      return clampRung(r + mods);
+    }
+    if(tier.length){
+      const r = tier.length===1 ? tier[0].r : towardRung(tier[0].r, tier[tier.length-1].r);
+      return clampRung(r + mods);
+    }
+    if(split && split.baseRung>=0) return clampRung(split.baseRung + mods);
+    return -1;
+  }
+  function classifyDifficulty(name, difficulties, lookupBase){
+    const r = difficultyRung(name, difficulties, lookupBase);
+    return r<0 ? '' : DIFF_LABELS[r];
+  }
+  function difficultyFamily(label){ const i = DIFF_LABELS.indexOf(label); return i<0 ? '' : DIFF_FAMILY_OF[i]; }
+  function difficultyRungOfText(label){ return DIFF_LABELS.indexOf(label); }   // 'Hard+' → 8, '' → -1
 
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, countScenarios };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
