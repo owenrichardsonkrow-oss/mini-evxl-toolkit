@@ -1,6 +1,6 @@
 # Skill-facet taxonomy — PROPOSAL for ratification (2026-08-18)
 
-Status: **ratified 2026-08-18 except R21 (open) and R10/R11 (low confidence)** — see "Rulings" below; originally a proposal (drafted by the remote session per docs/DESIGN_INTENT.md;
+Status: **ratified 2026-08-18 (all 21 rulings; R10/R11 at low confidence, playlist unverifiable)** — see "Rulings" below; originally a proposal (drafted by the remote session per docs/DESIGN_INTENT.md;
 nothing here is consumed by any code until Owen ratifies). To ratify: correct
 rows inline or annotate, then the ratified vocabulary gets stamped into the
 dataset + an engine classifier following the difficulty-vocabulary pattern.
@@ -215,7 +215,7 @@ list — promote any that deserve a facet:
 
 + · 1 wall · 1wall · 1wxt · 4 · 5 · 6 · 7 · 8 · accuracy · acq · acquire · alpha · angles · anti m · anti move · app smth · arc · ascended · assorted · avg · basic · beginner · bonus · c rct · chaining · classic · click timing · cluster · clusters · control track dojo 控制場 · core · core. · cps · diagonal · diverse · elu · evasivets · fast · fast strafes · fing · flicking · flicks · floatts · flow · flu · fluid · focus · frenzy · fun · fundamentals · gauntlet · gridshot · ground track dojo 道場 · have · hyb · isolated · kinetic · kints · lin · long · long strafe · m ctrl · main · micro control · micro dynamic · micro static · micro-switching · mixed · multiform · mvmnt · narrow · normal · omni · one  step · other · pacing · parabola · pasu track · pasu track dojo 道場 · path · playing! · plaza · post-flick · pre · prec · precision + reactive · pressure · pure · r rct · r smth · raw control · raw smooth · rct · rea · read · ref · reflex. · run · rxn · short · small · smo · smoothbot · speedts · steady · stra · strafing · ta · taping · ten · tension · tgod · timing · tiny · traditional · traking · two  steps · underaim · vai · variable · varied · vss · widewall · ww small · 变向 · 平滑 · 微调 · 确认 · 确认感 · 精准 · 精准度 · 终极 · 终极目标 · 跟踪 · 速度
 
-## Rulings — Owen, 2026-08-18 evening (home, scenarios open) — 19 of 21 closed
+## Rulings — Owen, 2026-08-18 evening (home, scenarios open) — all 21 closed
 
 Answered against one representative scenario per ruling (the list is in the
 session transcript; e.g. R1 `1w3ts reload Larger`, R3 `6 Sphere Hipfire Small
@@ -262,13 +262,16 @@ Easy`, R17 `Ballsheet BB`, R18 `Smoothness Training Rush`). Status per ruling:
 - **R20 triad → pack/format label ("stage"-like scenarios); no facet from the
   label** — the facet comes from the scenario-name word (Dynamic / Evasive /
   Precise / Reactive / Speed Triad).
-- **R21 specific / MULTIFORM — OPEN.** All ten are RXZU – Valorant (`Rxzu -
-  Multiform I…V` × Ez/Adv); *SPECIFIC* is that pack's section name. Proposed:
-  no fixed facet (mixed-form) unless a look at `Rxzu - Multiform I EZ` shows one
-  dominant mechanic.
+- **R21 specific / MULTIFORM → clicking, staged format** (Owen: all the
+  Multiforms are clicking; the stage changes three times per run). All ten are
+  RXZU – Valorant (`Rxzu - Multiform I…V` × Ez/Adv); *SPECIFIC* is that pack's
+  section name and carries no facet of its own — like R18/R20, "stage" is a
+  format, not a skill.
+- **Q-strafe closed:** Owen accepted "strafe stays a modifier; promote to a
+  mechanic only if the emergence analysis separates strafing scenarios."
 
-Status after these rulings: **ratified except R21 (open) and R10/R11 (stand at
-low confidence, playlist unverifiable)**. Next: stamp the ratified vocabulary
+Status after these rulings: **ratified — all 21 answered; R10/R11 stand at low
+confidence because the 143 Skand playlist is unverifiable upstream.** Next: stamp the ratified vocabulary
 into the dataset + engine classifier following the difficulty-vocabulary
 pattern (personal copy first, then regenerate).
 ## Rulings requested (R1–R21 — Owen answers at home, scenarios open)
