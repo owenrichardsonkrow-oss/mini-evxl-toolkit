@@ -1,26 +1,41 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>mini-evxl golden test harness</title>
-<!-- Browser runner for test/golden.js (for machines without Node): serve this
-     folder (static-server.ps1) and open /test/harness.html -- or let the
-     personal repo's dev/run-tests.ps1 read the <pre> below from headless Edge.
-     ?write=1 prints the freshly computed golden table instead of comparing. -->
+<title>mini-evxl test harness</title>
+<!-- Browser runner for test/golden.js AND test/difficulty.js (for machines
+     without Node): serve this folder (static-server.ps1) and open
+     /test/harness.html -- or let the personal repo's dev/run-tests.ps1 read the
+     <pre> below from headless Edge. The RESULT line keeps its original keys
+     (golden results, problemCount) so existing parsers still work; the
+     difficulty run is nested under "difficulty" -- fully green means
+     problemCount === 0 AND difficulty.problemCount === 0.
+     ?write=1 prints the freshly computed golden table (GOLDEN line) and the
+     difficulty snapshot (DIFFSNAP line) instead of comparing. -->
 <script src="/src/engine.js"></script>
 <script src="/test/golden.js"></script>
+<script src="/test/difficulty.js"></script>
 <pre id="out">RUNNING</pre>
 <script>
 (async () => {
   const out = document.getElementById('out');
   try {
     const G = window.__miniEvxlGolden;
+    const D = window.__miniEvxlDifficulty;
     const html = await (await fetch('/template.html')).text();
     const data = G.extractData(html);
     const actual = G.compute(MiniEvxlEngine, data);
+    const dActual = D.compute(MiniEvxlEngine, data);
     const q = new URLSearchParams(location.search);
-    if (q.get('write')) { out.textContent = 'GOLDEN ' + JSON.stringify(actual); return; }
+    if (q.get('write')) { out.textContent = 'GOLDEN ' + JSON.stringify(actual) + '\nDIFFSNAP ' + D.serialize(dActual); return; }
     const golden = await (await fetch('/test/golden-standings.json')).json();
     const problems = G.compare(golden, actual);
-    out.textContent = 'RESULT ' + JSON.stringify({ goldenEntries: Object.keys(golden.entries).length, vectors: golden.vectors, actualEntries: Object.keys(actual.entries).length, problems: problems.slice(0, 20), problemCount: problems.length });
+    const dSnap = await (await fetch('/test/difficulty-snapshot.json')).json();
+    const dProblems = D.compare(dSnap, dActual);
+    out.textContent = 'RESULT ' + JSON.stringify({
+      goldenEntries: Object.keys(golden.entries).length, vectors: golden.vectors,
+      actualEntries: Object.keys(actual.entries).length,
+      problems: problems.slice(0, 20), problemCount: problems.length,
+      difficulty: { scenarios: Object.keys(dActual.entries).length,
+        problems: dProblems.slice(0, 20), problemCount: dProblems.length } });
   } catch (e) {
     out.textContent = 'ERROR ' + String(e && e.stack || e);
   }
