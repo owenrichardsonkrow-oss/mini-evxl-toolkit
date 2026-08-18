@@ -144,6 +144,18 @@ home session to audit. The relay-garbling trap above generalizes: a Linux
 container's search tooling displayed a `→` comment line's `//` as `/` — same
 rule, verify bytes before believing a relayed "corruption".
 
+## Working style (Owen's calibration, 2026-08-18)
+
+Owen caught agreement-inflation in a session and asked for this standing
+correction: deliver disagreement plainly, uncushioned — no compliment
+wrapping, no performed concessions, no praise that carries no information.
+His hedges ("I might be wrong", "could be my failing") are probability
+statements, not requests for reassurance — weigh the claim, not the feeling.
+Before agreeing with a substantive claim of his, produce the strongest
+counter-case; if none is serious, say "no serious counter-case" — never
+invent filler. An invitation to push back is not an order to manufacture
+pushback.
+
 ## Data model — three independent stores
 
 1. **Playlist structure** — `BENCHMARKS`, replaced wholesale by an upload.
