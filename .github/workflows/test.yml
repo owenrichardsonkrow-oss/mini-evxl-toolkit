@@ -1,12 +1,18 @@
-# Golden-standings regression test for the rank engine, on every push and PR.
-# test/golden.js loads src/engine.js and the dataset embedded in template.html,
-# throws seeded score vectors at every playlist and compares the standings with
-# test/golden-standings.json (recorded from an engine proven against evxl's own
-# rank code). Any drift fails the run.
+# Engine + template regression tests, on every push and PR.
+#   golden.js             -- rank-engine standings for seeded score vectors vs
+#                            test/golden-standings.json (recorded from an engine
+#                            proven against evxl's own rank code)
+#   difficulty.js         -- nine-rung difficulty labels for every scenario vs
+#                            test/difficulty-snapshot.json
+#   template-integrity.js -- shipped template.html invariants: every script block
+#                            parses, embedded engine matches src/engine.js,
+#                            SITE block generic, scores seed empty
+# Golden/snapshot files are regenerated only deliberately -- see each test's header.
+# claude/** covers remote working branches so away-from-home sessions get CI too.
 name: engine tests
 on:
   push:
-    branches: [master, dev]
+    branches: [master, dev, 'claude/**']
   pull_request:
 jobs:
   golden:
@@ -17,3 +23,5 @@ jobs:
         with:
           node-version: '20'
       - run: node test/golden.js
+      - run: node test/difficulty.js
+      - run: node test/template-integrity.js
