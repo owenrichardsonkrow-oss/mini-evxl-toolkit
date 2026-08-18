@@ -1,0 +1,93 @@
+# Whole-name modifier movers -- generated 2026-08-18 from the patched engine
+# (docs/remote-session-2026-08-18.md, Finding 4).
+# These 85 scenarios are placement-anchored with no dataset base and no
+# tier word in the name, so per the documented fallback their modifiers are read
+# from the WHOLE name, identity words included. Format:
+#   <push in rungs>  <scenario>  [carrying playlist labels] placement <rung> -> <final label>
+# Regenerate: the sweep method in the session notes (or ask a session to redo it).
+
+ +3  headshot precision long distance 3 targets small  [Main] placement 4 -> Hard
+ -3  voxTS-Huge Jumbo static  [Easy] placement 1 -> Easy-
+ +2  1w2t smallflicks small 60s  [Hard] placement 7 -> Hard+
+ +2  1wall 6targets small  [Hard|All|轻松|困难|中等] placement 7 -> Hard+
+ +2  1wall5targets_pasu_small  [困难|中等] placement 6 -> Hard+
+ +2  6wall18targets small reload  [Easy] placement 1 -> Intermediate-
+ +2  Air invincible 8 small  [Hard|Reactive by slapped] placement 7 -> Hard+
+ +2  Air Small 3478 rAim  [Advanced] placement 7 -> Hard+
+ +2  Cata IC Long Strafes Thin  [promax] placement 7 -> Hard+
+ +2  ClockTrack Close Small  [Easy] placement 1 -> Intermediate-
+ +2  ClockTrack Small  [Easy] placement 1 -> Intermediate-
+ +2  devTS Click Small  [Normal] placement 4 -> Hard-
+ +2  Frog House Smoother 50% smaller  [Advanced] placement 7 -> Hard+
+ +2  Jump Pad Small  [Hard] placement 7 -> Hard+
+ -2  Midrange Short Strafes Invincible Raspberry  [Hard] placement 7 -> Intermediate+
+ +2  pasu small reload  [Hard] placement 7 -> Hard+
+ +2  patCircleSwitch 90 NR Small  [Hard] placement 7 -> Hard+
+ -2  Piano Tiles I 50% SLOW  [Normal] placement 4 -> Easy+
+ +2  Pokeball 1w2ts Horizontalish small  [Advanced] placement 7 -> Hard+
+ +2  Pokeball 5 Sphere Hipfire Small  [Normal] placement 4 -> Hard-
+ +2  PTXS Small Fast  [All|Easy] placement 1 -> Intermediate-
+ +2  PTXS Small XFast  [Medium] placement 4 -> Hard-
+ +2  PTXS Small XXFast  [Hard] placement 7 -> Hard+
+ +2  Reflex Flick Horizontal Small  [Hard] placement 7 -> Hard+
+ +2  StaticSwitchingPat 90 Small  [Normal] placement 4 -> Hard-
+ +2  tamTargetSwitch Control Small  [Hard] placement 7 -> Hard+
+ +2  Valorant Small Horizontal Flicks - Don't Miss! (boON's)  [Ultimate Valorant Benchmark] placement 8 -> Hard+
+ +2  Vertical hell click small  [Hard] placement 7 -> Hard+
+ +2  VSTP Small TE  [Main|Extra Classic] placement 4 -> Hard-
+ +2  VT 1w2ts Horizontal Small  [Hard] placement 7 -> Hard+
+ +2  VT 1w2ts Vertical Small  [Hard] placement 7 -> Hard+
+ -2  WPV Mixed Short Strafes  [Hard] placement 7 -> Intermediate+
+ +1  10 Sphere Hipfire Extra Small  [Hard|Medium] placement 6 -> Hard
+ -1  1w4ts 30% larger  [Normal] placement 4 -> Intermediate-
+ -1  2 Tile Jumbo Microshot Speed  [Advanced ] placement 7 -> Hard-
+ -1  2 Tile Jumbo Tile Frenzy  [Normal] placement 4 -> Intermediate-
+ -1  3 Tile Jumbo Tile Frenzy  [promax] placement 7 -> Hard-
+ -1  360 Static TS  [Easy|Hard] placement 4 -> Intermediate-
+ -1  6 Sphere Hipfire 150% Size  [Advanced ] placement 7 -> Hard-
+ -1  6 Sphere Hipfire 200% Size  [Normal|Advanced ] placement 6 -> Intermediate+
+ +1  6wall18targets extra small reload  [Hard] placement 7 -> Hard+
+ -1  aimerz+ Static Switching  [轻松|Expert] placement 5 -> Intermediate
+ -1  Aimerz+ Week #5 - Static Switching  [Easy|roa Ultimate|Hard] placement 7 -> Hard-
+ -1  Air no UFO no SKYBOTS  [Easier|All|S1|Normal|Main] placement 4 -> Intermediate-
+ +1  beanClick 250% Speed  [Hard] placement 7 -> Hard+
+ +1  ClockTrack Close XSmall  [Hard] placement 7 -> Hard+
+ +1  ClockTrack XSmall  [Hard] placement 7 -> Hard+
+ +1  Close Long Strafes Invincible  [S2|Fundamentals] placement 1 -> Easy+
+ -1  devTS Static Click Angelic  [All|Ultimate Valorant Benchmark|Advanced|Intermediate|Normal] placement 6 -> Intermediate+
+ -1  devts static regen  [Normal] placement 4 -> Intermediate-
+ -1  eth 1w2tes Micro 20% Larger  [Normal] placement 4 -> Intermediate-
+ -1  Extra Whisphere 80%  [Advanced] placement 7 -> Hard-
+ +1  FHTS Click 30% Smaller  [Normal] placement 4 -> Intermediate+
+ +1  Floating Heads Timing 400%  [Main] placement 4 -> Intermediate+
+ -1  Huge Poke Tile Frenzy  [Normal] placement 4 -> Intermediate-
+ -1  Jumbo 1wall6targets TE  [Normal] placement 4 -> Intermediate-
+ -1  Jumbo Tile Frenzy  [Normal] placement 4 -> Intermediate-
+ +1  Kindaclose long stop strafes  [Beginner+] placement 2 -> Intermediate-
+ +1  Kindafar Long Strafes  [Intermediate] placement 4 -> Intermediate+
+ -1  kinTS V2 Static  [Easy] placement 1 -> Easy-
+ +1  midrange long strafe invincible demotori edition  [Hard] placement 7 -> Hard+
+ -1  Pokeball 1w4ts 30%  [Hard|Advanced] placement 7 -> Hard-
+ -1  Pokeball 1w4ts Voltaic 30% Larger  [Normal] placement 4 -> Intermediate-
+ +1  Pokeball 5 Sphere Hipfire Extra Small  [2026|Ultimate Valorant Benchmark|Hard] placement 8 -> Hard+
+ +1  PTXS Smaller Faster  [Medium] placement 4 -> Intermediate+
+ +1  PTXS XSmall XFast  [Hard] placement 7 -> Hard+
+ -1  remClick - OW 85%  [All|roa Ultimate] placement 8 -> Hard
+ -1  skyTS Static Angelic  [Intermediate] placement 4 -> Intermediate-
+ +1  Smooth Thin Strafe Always Left  [Extra Classic|Main Classic] placement 4 -> Intermediate+
+ +1  Smooth Thin Strafe Always Right  [Extra Classic|Main Classic] placement 4 -> Intermediate+
+ +1  Smooth Thin Strafes Raspberry  [Advanced|Reactive by slapped|Hard] placement 7 -> Hard+
+ -1  Star Clicking 30% Larger  [Easy] placement 1 -> Easy-
+ -1  Star Tracking Regen 40% Larger  [Easy] placement 1 -> Easy-
+ -1  Static Wide Reflex  [Intermediate] placement 4 -> Intermediate-
+ -1  StaticSwitchingPat 90 Jumbo  [Easy] placement 1 -> Easy-
+ -1  SYV Altered POV Slow  [Extra Classic|Main Classic] placement 4 -> Intermediate-
+ -1  Target Switching 90 static  [Easy] placement 1 -> Easy-
+ +1  Thin Gauntlet  [S1|Hard] placement 7 -> Hard+
+ -1  Trippez Smooth Switching Regen Slow+  [Easy] placement 1 -> Easy-
+ -1  Trippez Smooth Switching Regen Slower + Smaller  [Hard] placement 7 -> Hard-
+ +1  voxTargetClick 20% Small  [Intermediate|Base v1|Medium|Normal] placement 4 -> Intermediate+
+ -1  voxTS Static Click rAim  [Easy|Advanced] placement 1 -> Easy-
+ -1  VSTP huge Strafe  [轻松] placement 1 -> Easy-
+ +1  VT Controlstrafes Valorant Harder  [Normal] placement 4 -> Intermediate+
+ +1  ww2t 30% Smaller  [Hard] placement 7 -> Hard+

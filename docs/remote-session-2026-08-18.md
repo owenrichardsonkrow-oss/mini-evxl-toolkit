@@ -5,9 +5,15 @@ Branch **`claude/benchmarks-project-o5hn4z`**, forked from `master` @ `1bd1020`
 difficulty release). Written by the away-from-home Claude session for (a) Owen
 and (b) the home dev-session Claude that will audit this work. `master` was
 never written. The personal repo is unreachable from the remote container by
-design, so nothing was regenerated — every commit on this branch touches only
-files this repo owns outright (tests, CI, this doc). `template.html` and
-`src/engine.js` are untouched.
+design, so nothing was regenerated. The first wave of commits touches only
+files this repo owns outright (tests, CI, this doc). A second wave — after Owen
+reviewed these findings from his phone and said to act on the recommendations —
+applies Finding 1's engine patch to `src/engine.js` and the embedded engine as
+one synchronized edit (see the addendum at the end). **That change must be
+mirrored into the tracker repo's engine source before the next template
+rebuild**: the build copies the tracker's engine over this repo's, so an
+unported rebuild reverts it — loudly, because the snapshot test pins the
+patched labels.
 
 ## Why this session ran
 
@@ -72,7 +78,7 @@ Easy Invincible - Thin` → the base split leaves only `- Thin` as modifier text
 → Easy+. The theoretical "same tier word twice, only the first occurrence
 tracked" edge affects **zero** names in the shipped dataset.
 
-### Finding 1 — "N% Size" names invert the lone-percent rule (proposed patch)
+### Finding 1 — "N% Size" names invert the lone-percent rule (patch applied here; tracker port required)
 
 `difficultyNameModifiers` first reads worded percents (`N% smaller|thinner|
 larger|bigger|slower|faster`, the word giving direction), then a **lone** `N%`
@@ -80,22 +86,23 @@ as ≤90 → easier / ≥115 → harder. The lone rule was calibrated on speed-s
 names (`beanClick 250% Speed`, `Controlsphere OW 150%` — correctly harder).
 When the next word is **`Size`**, the percent is target scale and the direction
 inverts: `6 Sphere Hipfire 200% Size` (double-size spheres — the classic easier
-variant) currently reads **+1 harder**, and `RawMouseControlClicking3 70% Size`
-(smaller targets) reads **−1 easier**.
+variant) read, pre-patch, **+1 harder**, and `RawMouseControlClicking3 70% Size`
+(smaller targets), pre-patch, **−1 easier**.
 
-Proposed change to the personal repo's `src/engine.js` (**not applied here** —
-app-behavior changes belong in the personal copy first), inserted between the
-worded-percent rule and the lone-percent rule:
+The change below is **applied on this branch** (second wave — Owen green-lit
+acting on the recommendation mid-session): one synchronized edit to
+`src/engine.js` and the embedded engine, between the worded-percent rule and
+the lone-percent rule, snapshot regenerated in the same commit.
+template-integrity proves the two engine copies stayed byte-identical. What
+remains is the home half: **mirror this into the tracker repo's engine source
+before the next rebuild**, or the rebuild reverts it and the snapshot test
+turns red on exactly these three names. As committed:
 
 ```js
-// "N% size" (target scale): direction inverts the lone-percent rule --
-// bigger targets are easier. >=115 -> -1 (like "larger"); <=90 -> +1
-// (<=50 -> +2, like "smaller").
-t = t.replace(/(\d+)\s*%\s*size/g, (m, n)=>{
-  const v = Number(n);
-  if(v>=115) sum -= 1; else if(v<=90) sum += v<=50 ? 2 : 1;
-  return ' ';
-});
+    // "N% size" (target scale) inverts the bare-percent rule below -- bigger
+    // targets are easier: >=115 -> -1 (like "larger"); <=90 -> +1 (<=50 -> +2,
+    // like "smaller"). Speed-style names still read through the bare rule.
+    t = t.replace(/(\d+)\s*%\s*size/g, (m, n)=>{ const v=Number(n); if(v>=115) sum -= 1; else if(v<=90) sum += v<=50 ? 2 : 1; return ' '; });
 ```
 
 Measured effect on the shipped dataset — exactly **3 labels** move, all in the
@@ -110,18 +117,39 @@ intuitive direction:
 Caveat: `PGTI Voltaic Easy 80% Size 150%` is untouched either way — it anchors
 on its rated base `PGTI Voltaic Easy 80%` (itself in the dataset), so only
 `Size 150%` is read, and size-before-percent order matches neither rule (nor is
-it clearly interpretable). If the patch is adopted: change the personal
-`src/engine.js`, rebuild the template, and regenerate
-`test/difficulty-snapshot.json` (`node test/difficulty.js --write`) in the same
-commit. Golden standings are unaffected — difficulty feeds no rank math.
+it clearly interpretable). Golden standings are unaffected — difficulty feeds
+no rank math; verified before and after applying. To veto the rule instead:
+revert the engine commit and `node test/difficulty.js --write`.
 
 ### Finding 2 (question) — lone-percent far below its measured range
 
-`Pokeball 1w4ts 30%` / `Pokeball 1w4ts 30% Easy` read the lone `30%` as −1
-easier under a rule whose evidence was 80%/90% names. If that 30% is a size
-scale, the direction is wrong and the true magnitude large. Unresolvable
-remotely (API blocked); one home run of `dev/kovaaks-modifier-check.ps1` over
-the `N%`-only names below the measured range would settle it.
+`Pokeball 1w4ts 30%` reads its lone `30%` as −1 easier under a rule whose
+evidence was 80%/90% names. If that 30% is a size scale, the direction is
+wrong and the true magnitude large. (Correction to this finding's first draft:
+the variant `Pokeball 1w4ts 30% Easy` is NOT affected — it anchors on the
+rated base name, so its own `30%` is never read.) Unresolvable remotely (API
+blocked); one home run of `dev/kovaaks-modifier-check.ps1` over the `N%`-only
+names below the measured range would settle it.
+
+The exact worklist, computed post-patch — every rated name whose effective
+modifier text still carries a bare percent below 80:
+
+```
+20%  voxTargetClick 20% Small
+75%  SmoothBot Invincible Goated 75%
+55%  Whisphere Small & Slow 55%
+70%  Air Angelic 4 Voltaic Easy 70%
+30%  tamTS Control Hard (Faster TTK - 30%)
+30%  Pokeball 1w4ts 30%
+70%  Whisphere Small & Slow 70%
+70%  Whisphere Sky&Floorbot 70%
+75%  Leaptrack Goated 75% Slightly Larger
+75%  Whisphere Small & Slow 75%
+50%  Piano Tiles I 50% SLOW
+30%  WhisphereRawControl 30% small
+10%  1w3ts Pasu Perfected Micro Goated 10% small
+75%  Avasphere Hard 75%
+```
 
 ### Finding 3 (question) — even-count median rounds toward harder
 
@@ -130,26 +158,34 @@ JavaScript rounds .5 **up**: labels `[Easy(1), Intermediate(4)]` → 2.5 → run
 (Intermediate−); `[Intermediate(4), Hard(7)]` → 5.5 → 6 (Hard−). A consistent
 harder-side bias on family-straddling ties. It reads deliberate; confirm it is.
 
+Measured (second wave): flooring the tie — toward easier — would relabel **101
+of 3,040** scenarios (`1wall9000targets` Hard− → Intermediate+, `1wall6targets
+TE` Intermediate− → Easy+, `10 Sphere Hipfire Extra Small` Hard → Hard−, …).
+No data prefers either direction; it is a convention. Recommendation, adopted
+unless vetoed: **keep the current round-up.** Nothing was changed.
+
 ### Finding 4 (eyeball list) — whole-name modifier scans
 
 85 placement-anchored names have no dataset base and no tier word, so per the
 documented fallback their modifiers are read from the whole name — including
-words that are the scenario's identity. The strongest movers, for a human eye:
+words that are the scenario's identity.
 
-```
--3  voxTS-Huge Jumbo static                            Easy   -> Easy-  (clamped)
-+3  headshot precision long distance 3 targets small   Main   -> Hard
-+2  1wall 6targets small                               Hard   -> Hard+
-+2  PTXS Small Fast                                    Easy   -> Intermediate-
--2  WPV Mixed Short Strafes                            Hard   -> Intermediate+
--2  Piano Tiles I 50% SLOW                             Normal -> Easy+
-+2  VSTP Small TE                                      Main   -> Hard-
--2  Midrange Short Strafes Invincible Raspberry        Hard   -> Intermediate+
-```
+Second-wave scan of where the risky words actually fire (in effective modifier
+text, post-patch): **`long` fires on 7 rated names — 6 are the calibrated
+"Long Strafes" sense; the single true collision is `headshot precision long
+distance 3 targets small`** (`long` +1 reads range, not strafe length; with
+`small` +2 it jumps Main(4) → Hard). `short` fires twice, both the calibrated
+"Short Strafes" sense. `static` fires on ~10 names where it is arguably
+identity rather than a variant marker (`360 Static TS`, `Static Wide Reflex`,
+`aimerz+ Static Switching`, …) — defensible either way (static-type scenarios
+genuinely sit at the easier end of their playlists), but these are the main
+veto candidates.
 
-Most look defensible — that is what the calibration data said. The list exists
-so someone who knows the scenarios can veto individual words, not because the
-mechanism looks wrong.
+The complete 85-name list with labels, placements and pushes is committed as
+`docs/difficulty-wholename-movers.txt` (generated from the patched engine) —
+ten minutes of scenario-literate reading. Most entries look defensible — that
+is what the calibration data said; the list exists so individual words can be
+vetoed, not because the mechanism looks wrong.
 
 ### Finding 5 (by design, quantified) — the unrated 368
 
@@ -158,7 +194,12 @@ All are label-starved. Top carrying labels: "All" (200), "Static" (30), "S1"
 labels throughout — exactly the labels the design ignores on purpose. No action
 implied; the number is here so a future "why is this unrated?" has a baseline.
 
-## Changes made on this branch (all repo-owned; no app behavior touched)
+A second-wave check closed the vocabulary side: all 80 distinct carrying labels
+were scanned — the 27 that map to no rung are all track/season/year/pack names
+("All", "Static", "S1", "2026", "Improvement Bench", …). Zero missed difficulty
+words.
+
+## Changes made on this branch
 
 1. **`test/difficulty.js` + `test/difficulty-snapshot.json`** — snapshot test
    pinning all 3,040 labels. The classifier shipped with zero CI coverage
@@ -179,6 +220,15 @@ implied; the number is here so a future "why is this unrated?" has a baseline.
 3. **`.github/workflows/test.yml`** — runs all three tests; now also triggers
    on `claude/**`, so remote working branches like this one get CI runs
    visible from a phone.
+4. **`src/engine.js` + the embedded engine + `test/difficulty-snapshot.json`**
+   (second wave) — Finding 1's `% size` rule, applied as one synchronized edit
+   after Owen's go-ahead; the snapshot diff is exactly the three expected
+   relabels. **Mirror into the tracker engine before any rebuild.**
+5. **`test/difficulty.js`** (second wave) — on failure, a changed scenario set
+   prints the structure-refresh regenerate hint; label drift on an unchanged
+   set stays a hard investigate signal (verified in both directions).
+6. **`docs/difficulty-wholename-movers.txt`** (second wave) — Finding 4's full
+   veto-review list, generated from the patched engine.
 
 Maintenance note: a weekly structure refresh moves the difficulty snapshot the
 same way it moves the golden file (entries appear/vanish). Whatever step of the
@@ -188,22 +238,58 @@ will fail CI on the snapshot instead of the golden.
 
 ## Suggested audit checklist (home dev session)
 
-1. On this branch at home: `node test/golden.js && node test/difficulty.js &&
+1. **First, before any rebuild: mirror the `% size` rule into the tracker
+   repo's engine source** (Finding 1, applied here in the second wave). A
+   rebuild then proves itself — all three tests stay green only if the port
+   happened. To veto instead: revert the engine commit, `node
+   test/difficulty.js --write`.
+2. On this branch at home: `node test/golden.js && node test/difficulty.js &&
    node test/template-integrity.js` — all three should pass.
-2. Diff-review the two new tests; `difficulty.js compute()` versus the real
+3. Diff-review the two new tests; `difficulty.js compute()` versus the real
    call sites in `app.js` is the soundness of the whole snapshot — check the
    mirror, not just the output.
-3. Rule on Finding 1. If adopted: personal `src/engine.js` → rebuild → snapshot
-   `--write`, one commit, and the tests prove the rest.
-4. Answer Findings 2–3; skim Finding 4's list with scenario knowledge.
+4. Finding 2: run `dev\kovaaks-modifier-check.ps1` over the 14-name worklist
+   above. Finding 3 is closed as "keep round-up" unless vetoed. Finding 4:
+   read `docs/difficulty-wholename-movers.txt` with scenario knowledge.
 5. Decide where snapshot regeneration lands in the home tooling (a sibling of
-   `dev\run-tests.ps1 -WriteGolden`?), and whether the weekly chain needs it.
+   `dev\run-tests.ps1 -WriteGolden`?), and wire it into the weekly chain
+   wherever the golden gets re-blessed.
 6. Judge the workflow itself. Candidates observed from inside: CLAUDE.md could
    gain a short "remote sessions" paragraph (what is editable remotely vs
    personal-repo-first; kovaaks.com and pwsh unavailable there); and decide
    whether session docs like this one live on in `docs/` or get dropped at
    merge.
 
-Merge note: this branch is purely additive (two test files, one snapshot, the
-workflow, this doc). Nothing regeneration-owned changed, so the next template
-rebuild cannot silently discard anything here.
+Merge note: after the second wave this branch carries **one behavior change in
+regeneration-owned files** — the `% size` rule in `src/engine.js` and the
+embedded engine. The hard ordering constraint is checklist item 1: port it into
+the tracker engine before the next rebuild. An unported rebuild reverts the
+rule and the snapshot test turns red on the three relabeled scenarios — loud,
+not silent, but still a red master. Everything else (tests, snapshot, workflow,
+docs) is additive.
+
+## Addendum — second wave, same day
+
+Owen reviewed the findings from his phone and authorized acting on the
+recommendations ("whatever you think we can take care of in this session…
+I trust your recommendations"). Done in this wave, all on this branch:
+
+- **Finding 1 applied** — the `% size` rule, one synchronized edit to
+  `src/engine.js` + the embedded engine (byte-identity enforced by
+  template-integrity), snapshot regenerated; its diff is exactly the three
+  expected relabels. Golden green before and after.
+- **Finding 3 measured and closed (pending veto)** — floor-median would move
+  101 of 3,040 labels; no data prefers either tie direction; keeping round-up.
+- **Finding 4 sharpened** — word-sense scan: one true `long` collision, `short`
+  clean, ~10 identity-`static` names to eyeball; full list committed as
+  `docs/difficulty-wholename-movers.txt`.
+- **Finding 2 scoped and corrected** — the 14-name sub-range percent worklist
+  is in the finding; `Pokeball 1w4ts 30% Easy` was wrongly cited in the first
+  draft (it anchors on its rated base and never reads its own percent).
+- **`test/difficulty.js` failure output** now separates structure-refresh
+  failures (regenerate hint) from label drift on an unchanged scenario set
+  (investigate), verified in both directions.
+
+Still home-only after this wave: the Finding 2 leaderboard measurements, the
+Finding 4 veto read, the tracker-side port (checklist item 1), and wiring
+snapshot regeneration into the weekly chain.
