@@ -1410,26 +1410,175 @@ const MiniEvxlEngine = (function(){
     return { toMax, to2nd, toNext, maxed };
   }
 
-  // Difficulty attribute: derived from the scenario's own name plus every
-  // playlist difficulty label it's found under (a shared scenario can carry
-  // several). "Easy"/"Easier" in either signals Easy; "Hard"/"Expert" signals
-  // Hard. Anything else (Medium, Advanced, Novice, custom pack names like
-  // "roa Ultimate"...) contributes no signal either way. If a scenario picks
-  // up both an Easy and a Hard signal (e.g. named "...Easy" but only appears
-  // in a Hard-difficulty playlist) they cancel out to Intermediate, same as
-  // when there's no signal at all.
-  function hasEasySignal(s){ const t=String(s).toLowerCase(); return t.includes('easy') || t.includes('easier'); }
-  function hasHardSignal(s){ const t=String(s).toLowerCase(); return t.includes('hard') || t.includes('expert'); }
-  function classifyDifficulty(name, difficulties){
-    const easy = hasEasySignal(name) || difficulties.some(hasEasySignal);
-    const hard = hasHardSignal(name) || difficulties.some(hasHardSignal);
-    if(easy && hard) return 'Intermediate';
-    if(easy) return 'Easy';
-    if(hard) return 'Hard';
-    return 'Intermediate';
+  // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
+  // A NINE-rung scale, read as family × nudge:
+  //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
+  // plus -1 = unrated. Not a continuous index on purpose: the inputs are curators'
+  // words, name suffixes and one leaderboard percentile — nine ordered labels say
+  // "about here" and can be defended rung by rung; a 0-100 number could not.
+  //
+  //   1. PLACEMENT — every playlist difficulty LABEL maps through DIFF_LABEL_VOCAB
+  //      to a rung. Family from the word (Novice/Easy → Easy family, Medium/Main/
+  //      Intermediate → Intermediate, Hard/Advanced → Hard), rung from its
+  //      intensity: Newcomer/Entry/Level 1/Genesis sit below Easy (0); Expert/
+  //      Elite/Boss+/Boss++/Ultimate/Demonic sit above Hard (8); Pre-Advanced is
+  //      Intermediate+ (5); Deadman's Level 1..4/Boss/Boss+/Boss++ spread 0/2/4/6/
+  //      7/8/8. Track/season labels ("All", "S1", "Static", "#2 Tracking") say
+  //      nothing, and a label's POSITION in its ladder is deliberately not used
+  //      (most unknown ladders are tracks, not levels). Median across the playlists
+  //      carrying the scenario (even count → rounded mean of the middle two).
+  //   2. NAME TIER WORDS pull one rung TOWARD their level: "VT Ground Novice S5 Hard"
+  //      placed Easy (1) + "hard" (7) → Easy+ (2) — Owen: a bonus variant built to
+  //      be harder than its base, still an easy-family scenario. The last tier word
+  //      in the name is the one that acts (family word first, modifier last).
+  //   3. NAME MODIFIERS (size/speed/mechanic words) push by direction × magnitude
+  //      rungs and SUM: "Small & Slow" cancels, "20% Smaller & Faster" is +2. They
+  //      are read only from the part of the name AFTER its base scenario (longest
+  //      prefix that is itself a scenario in the dataset, via the caller's lookup)
+  //      or, without a base, after the first tier word — "Close Fast Strafes Easy
+  //      Invincible - Thin" reads only "Invincible - Thin", because Close/Fast are
+  //      the scenario's name, not modifiers of it. Directions come from
+  //      dev/modifier-survey.js (1,403 base+variant pairs, observed playlist-
+  //      placement delta) cross-checked against KovaaK's leaderboards at the
+  //      top-20% percentile (dev/kovaaks-modifier-check.ps1): bigger/slower/<100%
+  //      = easier, smaller/thinner/faster/>100% = harder; magnitude 2 where the
+  //      community ratio is strong.
+  //   4. NO PLACEMENT: the name's own tier words anchor it (first word's rung, one
+  //      rung toward the last); failing that a rated BASE scenario anchors it and
+  //      the remainder's modifiers apply; failing that -1 (unrated).
+  // classifyDifficulty(name, labels, lookupBase?) → label ('Hard+' … ''; '' = unrated)
+  // difficultyRung(name, labels, lookupBase?) → 0..8 or -1
+  // lookupBase(candidateName) → null if no such scenario, else its rung (-1 unrated)
+  // DIFF_LABELS[rung]; difficultyFamily(label) → 'Easy'|'Intermediate'|'Hard'|''
+  const DIFF_LABELS = ['Easy-', 'Easy', 'Easy+', 'Intermediate-', 'Intermediate', 'Intermediate+', 'Hard-', 'Hard', 'Hard+'];
+  const DIFF_FAMILY_OF = ['Easy','Easy','Easy','Intermediate','Intermediate','Intermediate','Hard','Hard','Hard'];
+  const DIFF_LABEL_VOCAB = [
+    // phrases first (a phrase must win over a word it contains)
+    ['pre-advanced', 5], ['beginner+', 2], ['boss++', 8], ['boss+', 8],
+    ['level 1', 0], ['level 2', 2], ['level 3', 4], ['level 4', 6],
+    ['newcomer', 0], ['entry', 0], ['genesis', 0], ['fundamentals', 1],
+    ['easier', 1], ['easy', 1], ['novice', 1], ['beginner', 1], ['轻松', 1],
+    ['intermediate', 4], ['medium', 4], ['normal', 4], ['main', 4], ['basic', 4], ['ascension', 4], ['中等', 4],
+    ['hard', 7], ['advanced', 7], ['adv', 7], ['boss', 7], ['veteran', 7], ['enlightenment', 7], ['wallhack', 7], ['evil', 7], ['promax', 7], ['困难', 7],
+    ['expert', 8], ['elite', 8], ['ultimate', 8], ['demonic', 8]
+  ];
+  // Tier words that may act inside a scenario NAME (a subset — label words that
+  // also name mechanics or packs are left out: "static", "main", "basic", "boss"…).
+  const DIFF_NAME_TIER_WORDS = new Set(['newcomer','entry','easier','easy','novice','beginner','intermediate','medium','advanced','adv','hard','expert','elite','level 1','level 2','level 3','level 4']);
+  // Size / speed / mechanic modifiers in names: [phrase, rungs] (+ harder, − easier),
+  // longer phrases first. Calibrated 2026-08-18 against KovaaK's leaderboards
+  // (dev/kovaaks-modifier-check.ps1: variant ÷ base score at the top-20% rank,
+  // 722 pairs, 0 failed requests): 2 rungs where the ratio was ≤0.75 or ≥1.35,
+  // 1 rung otherwise; a word the community scored the same as its base is 0.
+  //   harder: small 0.72 (10↑/2↓), thin 0.81 (8/0), extra small 0.76, xsmall 0.82,
+  //           30% smaller 0.91 (8/0), 50% smaller 0.57, long 0.82 (10/0)
+  //   easier: larger 1.26, massive 1.31, jumbo 1.25, big 1.19, large 1.18,
+  //           30% larger 1.32, short 1.70 (11/0), static 1.13 (5/0), 90% 1.20, 80% (6↓/1↑)
+  //   neutral by data: bare "smaller" 0.98 (11 same), slightly larger/smaller ~0.99,
+  //           close 0.98; "harder" 1.00 on 4 pairs is kept +1 on the author's word only.
+  //   ignored (different scoring, ratio meaningless): invincible N, micro, pure,
+  //           goated, viscose, diamond, regen, reload.
+  // Lone percentages are handled by regex below; "N% smaller/larger" by the word
+  // (N ≥ 50 smaller → 2; N < 15 → nothing).
+  const DIFF_NAME_MODIFIERS = [
+    ['even smaller', 1], ['extra small', 1], ['xsmall', 1], ['x-small', 1], ['very thin', 2], ['extra thin', 2],
+    ['slightly smaller', 0], ['slightly larger', 0], ['smaller', 0],
+    ['small', 2], ['thin', 1], ['tiny', 1], ['faster', 1], ['harder', 1], ['long', 1],
+    ['larger', -1], ['large', -1], ['bigger', -1], ['big', -1], ['jumbo', -1], ['massive', -1], ['huge', -1], ['giant', -1],
+    ['slower', -1], ['slowed', -1], ['slow', -1], ['short', -2], ['static', -1], ['no ufo', -1], ['less blinks', -1]
+  ];
+  const wordRe = w => new RegExp('(^|[^a-z0-9%])'+w.replace(/[-\s]/g,'[-\\s]?').replace(/\+/g,'\\+')+'(?=[^a-z0-9%]|$)');
+  function difficultyRungOfLabel(label){
+    const t = String(label||'').toLowerCase().trim();
+    if(!t) return -1;
+    for(const [w, r] of DIFF_LABEL_VOCAB){
+      if(/[a-z]/.test(w) ? wordRe(w).test(t) : t.includes(w)) return r;
+    }
+    return -1;
   }
+  // Tier words in a name, in order of appearance: [{r, pos, end}]
+  function difficultyNameTierWords(name){
+    const t = String(name||'').toLowerCase();
+    const found = [];
+    for(const [w, r] of DIFF_LABEL_VOCAB){
+      if(!DIFF_NAME_TIER_WORDS.has(w)) continue;
+      const m = wordRe(w).exec(t);
+      if(m) found.push({ r, pos: m.index + m[1].length, end: m.index + m[0].length });
+    }
+    const mi = wordRe('int').exec(t); if(mi) found.push({ r: 4, pos: mi.index + mi[1].length, end: mi.index + mi[0].length });   // Revosect "… Int"
+    found.sort((a,b)=>a.pos-b.pos);
+    return found;
+  }
+  // Net modifier push for a piece of name text, in rungs.
+  function difficultyNameModifiers(text){
+    let t = String(text||'').toLowerCase();
+    let sum = 0;
+    // "N% smaller|larger|…" — the word gives the direction, N the size:
+    // smaller/thinner N≥50 → +2, N≥15 → +1 (30% smaller measured 0.91, 50% 0.57);
+    // larger/bigger N≥15 → −1 (30% larger 1.32); slower −1 / faster +1; N<15 → nothing.
+    t = t.replace(/(\d+)\s*%\s*(smaller|thinner|larger|bigger|slower|faster)/g, (m, n, w)=>{
+      const v = Number(n);
+      if(w==='smaller' || w==='thinner') sum += v>=50 ? 2 : v>=15 ? 1 : 0;
+      else if(w==='larger' || w==='bigger') sum -= v>=15 ? 1 : 0;
+      else if(w==='slower') sum -= 1;
+      else if(w==='faster') sum += 1;
+      return ' ';
+    });
+    // a lone "N%" (size or speed scale): ≤90 → easier (80% and 90% both measured
+    // easier), ≥115 → harder (150%/200% 0.67 mean placement delta), else nothing
+    t = t.replace(/(\d+)\s*%/g, (m, n)=>{ const v=Number(n); if(v<=90) sum -= 1; else if(v>=115) sum += 1; return ' '; });
+    for(const [w, r] of DIFF_NAME_MODIFIERS){
+      const re = wordRe(w);
+      if(re.test(t)){ sum += r; t = t.replace(new RegExp(re.source, 'g'), ' '); }
+    }
+    return sum;
+  }
+  const clampRung = r => Math.max(0, Math.min(8, r));
+  function towardRung(from, target){ return target>from ? from+1 : target<from ? from-1 : from; }
+  function medianRung(rungs){
+    const s = rungs.slice().sort((a,b)=>a-b);
+    const n = s.length;
+    if(!n) return -1;
+    if(n%2) return s[(n-1)/2];
+    return Math.round((s[n/2-1] + s[n/2]) / 2);
+  }
+  // Longest prefix of `name` (on word boundaries) that lookupBase knows as a scenario.
+  function splitAtBase(name, lookupBase){
+    if(typeof lookupBase!=='function') return null;
+    const words = String(name||'').split(/\s+/);
+    for(let k=words.length-1; k>=1; k--){
+      const base = words.slice(0,k).join(' ');
+      const r = lookupBase(base);
+      if(r!==null && r!==undefined) return { base, baseRung: r, rest: words.slice(k).join(' ') };
+    }
+    return null;
+  }
+  function difficultyRung(name, difficulties, lookupBase){
+    const placement = medianRung((difficulties||[]).map(difficultyRungOfLabel).filter(r=>r>=0));
+    const tier = difficultyNameTierWords(name);
+    const split = splitAtBase(name, lookupBase);
+    // modifiers count only past the base, or past the first tier word, or (no anchor in the name) everywhere
+    const modText = split ? split.rest : (tier.length ? String(name).slice(tier[0].end) : String(name||''));
+    const mods = difficultyNameModifiers(modText);
+    if(placement>=0){
+      const r = tier.length ? towardRung(placement, tier[tier.length-1].r) : placement;
+      return clampRung(r + mods);
+    }
+    if(tier.length){
+      const r = tier.length===1 ? tier[0].r : towardRung(tier[0].r, tier[tier.length-1].r);
+      return clampRung(r + mods);
+    }
+    if(split && split.baseRung>=0) return clampRung(split.baseRung + mods);
+    return -1;
+  }
+  function classifyDifficulty(name, difficulties, lookupBase){
+    const r = difficultyRung(name, difficulties, lookupBase);
+    return r<0 ? '' : DIFF_LABELS[r];
+  }
+  function difficultyFamily(label){ const i = DIFF_LABELS.indexOf(label); return i<0 ? '' : DIFF_FAMILY_OF[i]; }
+  function difficultyRungOfText(label){ return DIFF_LABELS.indexOf(label); }   // 'Hard+' → 8, '' → -1
 
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, countScenarios };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
 (function(){
@@ -1456,7 +1605,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   const STORE_PREFIX = String(SITE.storePrefix||'mini-evxl');
   const storeKey = s => STORE_PREFIX+'-'+s;
   // The engine (src/engine.js, inlined just above this script by build.ps1).
-  const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios } = MiniEvxlEngine;
+  const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, countScenarios } = MiniEvxlEngine;
 
   // The embedded dataset (structure, format v2 — see entryItems()) and the
   // embedded scores ({name: score}; the owner's on the personal copy, {} in the
@@ -1709,8 +1858,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       // this scenario — the same scenario can be labeled differently per playlist.
       const tagSet = new Set();
       entries.forEach(e=>{ (e.tags||[]).forEach(t=>tagSet.add(t)); });
-      const diff = classifyDifficulty(name, entries.map(e=>e.difficulty));
-      shared.push({ name, score, playlists: entries, tags:[...tagSet], diff });
+      const diff = classifyDifficulty(name, entries.map(e=>e.difficulty), diffLookupBase);
+      shared.push({ name, score, playlists: entries, tags:[...tagSet], diff, diffRung: difficultyRungOfText(diff) });
     });
     shared.sort((a,b)=> b.playlists.length - a.playlists.length || a.name.localeCompare(b.name));
     _sharedCache = shared;
@@ -1745,11 +1894,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       // Same shape as a shared entry (a one-element `playlists` array) so the
       // one scenario-list renderer draws both pages through identical code —
       // the card-parity rule holds by construction rather than by discipline.
+      const diff = classifyDifficulty(name, [e.difficulty], diffLookupBase);
       unique.push({
         name, score: e.score, tiers: e.tiers, tags: e.tags||[],
         benchIndex: e.benchIndex, playlist: e.playlist, pack: e.pack, difficulty: e.difficulty,
         playlists: [e],
-        diff: classifyDifficulty(name, [e.difficulty])
+        diff, diffRung: difficultyRungOfText(diff)
       });
     });
     unique.sort((a,b)=> a.name.localeCompare(b.name));
@@ -1819,7 +1969,27 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     }
     return { benchmarks, scores };
   }
-  function invalidateCaches(){ _parsedCache=null; _sharedCache=null; _uniqueCache=null; }
+  function invalidateCaches(){ _parsedCache=null; _sharedCache=null; _uniqueCache=null; _diffIndexCache=null; }
+
+  // Difficulty index: every scenario name in the active pool → its rung WITHOUT
+  // base lookup (playlist placement + its own name). The Shared/Unique
+  // computations pass `diffLookupBase` so a variant can (a) read its modifiers
+  // only past its base scenario's name and (b) anchor on the base when it has
+  // no placement of its own. Keyed by a normalised name.
+  let _diffIndexCache = null;
+  const diffNorm = s => String(s||'').toLowerCase().replace(/\s+/g,' ').trim();
+  function getDiffIndex(){
+    if(_diffIndexCache) return _diffIndexCache;
+    const labels = new Map();
+    getParsedBenchmarks().forEach(({benchmark, items})=>{
+      items.forEach(it=>{ const k = diffNorm(it.name); if(!labels.has(k)) labels.set(k, { name: it.name, diffs: [] }); labels.get(k).diffs.push(benchmark.difficulty); });
+    });
+    const idx = new Map();
+    labels.forEach((v, k)=>{ idx.set(k, difficultyRung(v.name, v.diffs)); });
+    _diffIndexCache = idx;
+    return idx;
+  }
+  function diffLookupBase(candidate){ const idx = getDiffIndex(); const k = diffNorm(candidate); return idx.has(k) ? idx.get(k) : null; }
   function loadBenchmarks(norm, rawJsonString){
     BENCHMARKS = norm.benchmarks;
     usingImported = true;
@@ -2431,11 +2601,15 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     return track;
   }
 
+  // Nine rungs (Easy- … Hard+): colour by family, the ± shown in the text.
   function diffChipClass(diff){
-    if(diff==='Easy') return 'chip-diff-easy';
-    if(diff==='Hard') return 'chip-diff-hard';
-    return 'chip-diff-intermediate';
+    const fam = difficultyFamily(diff);
+    if(fam==='Easy') return 'chip-diff-easy';
+    if(fam==='Hard') return 'chip-diff-hard';
+    if(fam==='Intermediate') return 'chip-diff-intermediate';
+    return 'chip-unranked';   // '' = unrated: no playlist label, tier word or rated base says a level
   }
+  function diffChipLabel(diff){ return diff ? diff.replace('-', '−') : 'Unrated'; }   // typographic minus for display only
 
   // Chip colour from the standing itself, not from the display text (a tier
   // literally named "Complete" must not turn the chip green).
@@ -2903,9 +3077,18 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   const PROG_SORTS = [
     ['tomax-asc','Sort: lowest To Max first'], ['tomax-desc','Sort: highest To Max first'],
     ['to2nd-asc','Sort: lowest To 2nd first'], ['to2nd-desc','Sort: highest To 2nd first'],
-    ['tonext-asc','Sort: lowest To Next first'], ['tonext-desc','Sort: highest To Next first']
+    ['tonext-asc','Sort: lowest To Next first'], ['tonext-desc','Sort: highest To Next first'],
+    ['diff-desc','Sort: hardest first'], ['diff-asc','Sort: easiest first']
   ];
-  const DIFF_VALUES = ['Easy','Intermediate','Hard'];
+  // Filter values: each rung, each whole family ("Easy (any)"), and Unrated.
+  const DIFF_VALUES = ['Easy (any)','Easy-','Easy','Easy+','Intermediate (any)','Intermediate-','Intermediate','Intermediate+','Hard (any)','Hard-','Hard','Hard+','Unrated'];
+  function diffFilterMatches(value, sc){
+    if(value==='all') return true;
+    if(value==='Unrated') return sc.diff==='';
+    const any = value.match(/^(\w+) \(any\)$/);
+    if(any) return difficultyFamily(sc.diff)===any[1];
+    return sc.diff===value;
+  }
 
   function renderScenarioList(kind, params){
     const cfg = SCEN_LIST[kind];
@@ -2982,7 +3165,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
         <label for="sl-diff-select">Desired Difficulty:
           <select id="sl-diff-select" class="sort-select">
             <option value="all">All</option>
-            ${DIFF_VALUES.map(d=>'<option value="'+d+'"'+(d===st.diff?' selected':'')+'>'+d+'</option>').join('')}
+            ${DIFF_VALUES.map(d=>'<option value="'+d+'"'+(d===st.diff?' selected':'')+'>'+(/\(any\)$/.test(d) ? d : '&nbsp;&nbsp;'+d.replace(/-$/,'−'))+'</option>').join('')}
           </select>
         </label>
         <label for="sl-playlist-select">In Playlist:
@@ -3036,7 +3219,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       head.className='scen-head2';
       head.innerHTML = '<span class="scen-name2">'+esc(sc.name)+'</span>'
         + (cfg.countChip ? '<span class="scen-count mono">'+sc.playlists.length+' playlists</span>' : '')
-        + '<span class="chip '+diffChipClass(sc.diff)+'">'+esc(sc.diff)+'</span>'
+        + '<span class="chip '+diffChipClass(sc.diff)+'" title="Difficulty, nine rungs (Easy− … Hard+): family from where the playlists that carry this scenario place it (median of their difficulty labels), nudged by the words in its name — a tier word pulls one rung toward it, size/speed modifiers push (smaller/thinner/faster harder, larger/slower easier). Unrated = nothing says.">'+esc(diffChipLabel(sc.diff))+'</span>'
         + '<span class="scen-score2 mono">'+fmt(sc.score)+'</span>'
         + '<span class="scen-tomax mono">'+(prog.toMax*100).toFixed(1)+'%</span>'
         + '<span class="scen-to2nd mono">'+(prog.to2nd*100).toFixed(1)+'%</span>'
@@ -3089,7 +3272,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       'to2nd-asc':   (a,b)=> a._prog.to2nd-b._prog.to2nd,
       'to2nd-desc':  (a,b)=> b._prog.to2nd-a._prog.to2nd,
       'tonext-asc':  (a,b)=> a._prog.toNext-b._prog.toNext,
-      'tonext-desc': (a,b)=> b._prog.toNext-a._prog.toNext
+      'tonext-desc': (a,b)=> b._prog.toNext-a._prog.toNext,
+      // unrated (-1) always last, ties by name
+      'diff-desc':   (a,b)=> ((b.diffRung<0?-1:b.diffRung) - (a.diffRung<0?-1:a.diffRung)) || a.name.localeCompare(b.name),
+      'diff-asc':    (a,b)=> ((a.diffRung<0?99:a.diffRung) - (b.diffRung<0?99:b.diffRung)) || a.name.localeCompare(b.name)
     };
 
     function applyFilters(){
@@ -3108,7 +3294,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       }
       // Tag filter is OR: a scenario matches if it carries ANY selected tag.
       if(st.tags.size>0) stage = stage.filter(sc=>sc.tags.some(t=>st.tags.has(t)));
-      if(st.diff!=='all') stage = stage.filter(sc=>sc.diff===st.diff);
+      if(st.diff!=='all') stage = stage.filter(sc=>diffFilterMatches(st.diff, sc));
 
       // "In Playlist" options reflect exactly the playlist+difficulty pairs
       // present among the cards matching every other active filter — same
