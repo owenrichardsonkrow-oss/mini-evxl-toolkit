@@ -249,11 +249,16 @@ size/speed name modifiers, variants anchoring on their base via the app's
 `getDiffIndex()` (`_diffIndexCache`, reset in `invalidateCaches()`). Sorting
 sinks unrated in both directions; the filter has Unrated and per-family
 "(any)" values. 2026-08-18, remote branch: `"N% size"` names invert the
-bare-percent direction (bigger targets = easier) — **port that rule into the
-tracker's engine before the next rebuild** (an unported rebuild reverts it and
-difficulty.js turns red on three names); the open calibration questions and
-the whole-name veto list live in `docs/remote-session-2026-08-18.md` and
-`docs/difficulty-wholename-movers.txt`.
+bare-percent direction (bigger targets = easier) — **ported into the tracker's
+`src/engine.js` the same day** (home audit; the rebuild reproduced the branch's
+engine and the difficulty snapshot passed unchanged), so the regeneration rule
+is whole again. The open calibration questions and the whole-name veto list
+live in `docs/remote-session-2026-08-18.md` and
+`docs/difficulty-wholename-movers.txt`. Fixture maintenance: the tracker's
+`dev\run-tests.ps1 -WriteGolden` now regenerates BOTH `test/golden-standings.json`
+and `test/difficulty-snapshot.json` (harness `?write=1`), and its weekly job
+re-blesses both automatically when a refresh moved the dataset — the
+differential test against evxl's functions is the gate that stays.
 
 The scrape's only remaining purpose is **structure**; the tracker repo's
 `refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice, and
