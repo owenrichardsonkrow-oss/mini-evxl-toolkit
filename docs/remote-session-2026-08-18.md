@@ -293,6 +293,11 @@ will fail CI on the snapshot instead of the golden.
    vetoed; one-off subcategories default to no-facet. Per D12, the community
    taxonomy document stays in the drawer until the emergence protocol's
    comparison step.
+9. Account-wide calibration install: Owen will show
+   `docs/claude-communication-calibration.md` to the home session — follow
+   its "To the Claude session Owen shows this file to" section (merge the
+   block into `~/.claude/CLAUDE.md`, hand him the block for claude.ai
+   settings).
 
 Merge note: after the second wave this branch carries **one behavior change in
 regeneration-owned files** — the `% size` rule in `src/engine.js` and the
