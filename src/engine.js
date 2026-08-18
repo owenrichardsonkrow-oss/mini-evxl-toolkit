@@ -1024,18 +1024,25 @@ const MiniEvxlEngine = (function(){
   //   2. Across the playlists carrying the scenario, take the MEDIAN placement;
   //      an even split between two different levels (Easy+Hard, or two
   //      adjacent levels) reads Intermediate.
-  //   3. Only when no playlist label says anything, the scenario's own NAME is
-  //      read with a tighter whole-word list (easy/easier/novice/newcomer/
-  //      beginner → Easy; intermediate/medium → Intermediate; advanced/hard/
-  //      expert → Hard). Playlist labels win over name suffixes: the curator's
-  //      placement over the author's variant name.
+  //   3. The scenario's own NAME is a MODIFIER, not a vote (Owen, 2026-08-17:
+  //      "VT Ground Novice S5 Hard" is a bonus variant of "VT Ground Novice S5"
+  //      built to be harder than its base so the base feels easier). Level
+  //      words in the name (tight whole-word list: easy/easier/novice/newcomer/
+  //      beginner → 0; intermediate/medium → 1; advanced/hard/expert → 2) are
+  //      read in order; the LAST one is the modifier (a name like "…Intermediate
+  //      S5 Hard" carries the family tier first and the modifier last). The
+  //      modifier shifts the playlist placement ONE step in its direction —
+  //      Novice-placed + "Hard" → Intermediate; Intermediate-placed + "Easy 90%"
+  //      → Easy; a modifier that agrees with the placement changes nothing.
+  //      With no placement at all the name stands alone: one word → that level;
+  //      family + modifier → the family shifted one step toward the modifier.
   //   4. Otherwise '' — unrated. Shown as such rather than as Intermediate.
   // Returns 'Easy' | 'Intermediate' | 'Hard' | ''.
   const DIFF_LABEL_VOCAB = [
     // order matters only where one phrase contains another ("pre-advanced" before "advanced")
     ['pre-advanced', 1],
     ['level 1', 0], ['level 2', 1], ['level 3', 2], ['level 4', 2],
-    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0], ['genesis', 0], ['轻松', 0],
+    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0], ['genesis', 0], ['fundamentals', 0], ['轻松', 0],
     ['intermediate', 1], ['medium', 1], ['normal', 1], ['main', 1], ['basic', 1], ['ascension', 1], ['中等', 1],
     ['hard', 2], ['expert', 2], ['advanced', 2], ['adv', 2], ['ultimate', 2], ['boss', 2], ['enlightenment', 2], ['elite', 2],
     ['veteran', 2], ['wallhack', 2], ['evil', 2], ['demonic', 2], ['promax', 2], ['困难', 2]
@@ -1056,15 +1063,21 @@ const MiniEvxlEngine = (function(){
     }
     return -1;
   }
-  function difficultyLevelOfName(name){
+  // Level words in a scenario name, in order of appearance.
+  function difficultyNameWords(name){
     const t = String(name||'').toLowerCase();
     const found = [];
-    for(const [w, lvl] of DIFF_NAME_VOCAB){ if(new RegExp('(^|[^a-z])'+w+'([^a-z]|$)').test(t)) found.push(lvl); }
-    if(!found.length) return -1;
-    // a name carrying two levels ("Novice … Hard") is a variant name, not a
-    // placement — treat like an even split
-    const lo = Math.min(...found), hi = Math.max(...found);
-    return lo===hi ? lo : 1;
+    for(const [w, lvl] of DIFF_NAME_VOCAB){
+      const m = new RegExp('(^|[^a-z])'+w+'([^a-z]|$)').exec(t);
+      if(m) found.push({ lvl, pos: m.index });
+    }
+    found.sort((a,b)=>a.pos-b.pos);
+    return found.map(f=>f.lvl);
+  }
+  function shiftToward(base, modifier){
+    if(modifier>base) return Math.min(2, base+1);
+    if(modifier<base) return Math.max(0, base-1);
+    return base;
   }
   function medianLevel(levels){
     const s = levels.slice().sort((a,b)=>a-b);
@@ -1075,9 +1088,18 @@ const MiniEvxlEngine = (function(){
     return a===b ? a : 1;
   }
   function classifyDifficulty(name, difficulties){
-    const fromLabels = (difficulties||[]).map(difficultyLevelOfLabel).filter(l=>l>=0);
-    let lvl = medianLevel(fromLabels);
-    if(lvl<0) lvl = difficultyLevelOfName(name);
+    const placement = medianLevel((difficulties||[]).map(difficultyLevelOfLabel).filter(l=>l>=0));
+    const words = difficultyNameWords(name);
+    let lvl;
+    if(placement>=0){
+      lvl = words.length ? shiftToward(placement, words[words.length-1]) : placement;
+    } else if(words.length===0){
+      lvl = -1;
+    } else if(words.length===1){
+      lvl = words[0];
+    } else {
+      lvl = shiftToward(words[0], words[words.length-1]);   // family word first, modifier last
+    }
     return lvl<0 ? '' : DIFF_NAMES[lvl];
   }
 
