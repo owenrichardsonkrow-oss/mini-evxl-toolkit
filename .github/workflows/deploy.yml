@@ -1,0 +1,52 @@
+# Gated GitHub Pages deploy: the live page (served to real users) only updates
+# when all three test suites pass on the pushed master. Before this, Pages
+# served master/root directly ("deploy from a branch"), so a bad push went live
+# even while CI turned red; now a red push leaves the previous deploy up.
+#
+# One-time cutover: merging this to master runs it on the next master push;
+# actions/configure-pages switches the site to workflow-driven deployment (or,
+# if it cannot, flip Settings -> Pages -> Source to "GitHub Actions" once by
+# hand). To revert: delete this file and set the Pages source back to
+# "Deploy from a branch" (master / root).
+#
+# test.yml still runs the same suites on every push and PR (including
+# claude/** working branches); this workflow only gates what goes live.
+name: deploy pages
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node test/golden.js
+      - run: node test/difficulty.js
+      - run: node test/template-integrity.js
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - id: deployment
+        uses: actions/deploy-pages@v4
