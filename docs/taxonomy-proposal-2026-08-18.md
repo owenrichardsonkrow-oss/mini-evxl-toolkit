@@ -1,6 +1,6 @@
 # Skill-facet taxonomy — PROPOSAL for ratification (2026-08-18)
 
-Status: **proposal** (drafted by the remote session per docs/DESIGN_INTENT.md;
+Status: **ratified 2026-08-18 except R21 (open) and R10/R11 (low confidence)** — see "Rulings" below; originally a proposal (drafted by the remote session per docs/DESIGN_INTENT.md;
 nothing here is consumed by any code until Owen ratifies). To ratify: correct
 rows inline or annotate, then the ratified vocabulary gets stamped into the
 dataset + an engine classifier following the difficulty-vocabulary pattern.
@@ -215,6 +215,62 @@ list — promote any that deserve a facet:
 
 + · 1 wall · 1wall · 1wxt · 4 · 5 · 6 · 7 · 8 · accuracy · acq · acquire · alpha · angles · anti m · anti move · app smth · arc · ascended · assorted · avg · basic · beginner · bonus · c rct · chaining · classic · click timing · cluster · clusters · control track dojo 控制場 · core · core. · cps · diagonal · diverse · elu · evasivets · fast · fast strafes · fing · flicking · flicks · floatts · flow · flu · fluid · focus · frenzy · fun · fundamentals · gauntlet · gridshot · ground track dojo 道場 · have · hyb · isolated · kinetic · kints · lin · long · long strafe · m ctrl · main · micro control · micro dynamic · micro static · micro-switching · mixed · multiform · mvmnt · narrow · normal · omni · one  step · other · pacing · parabola · pasu track · pasu track dojo 道場 · path · playing! · plaza · post-flick · pre · prec · precision + reactive · pressure · pure · r rct · r smth · raw control · raw smooth · rct · rea · read · ref · reflex. · run · rxn · short · small · smo · smoothbot · speedts · steady · stra · strafing · ta · taping · ten · tension · tgod · timing · tiny · traditional · traking · two  steps · underaim · vai · variable · varied · vss · widewall · ww small · 变向 · 平滑 · 微调 · 确认 · 确认感 · 精准 · 精准度 · 终极 · 终极目标 · 跟踪 · 速度
 
+## Rulings — Owen, 2026-08-18 evening (home, scenarios open) — 19 of 21 closed
+
+Answered against one representative scenario per ruling (the list is in the
+session transcript; e.g. R1 `1w3ts reload Larger`, R3 `6 Sphere Hipfire Small
+Easy`, R17 `Ballsheet BB`, R18 `Smoothness Training Rush`). Status per ruling:
+
+- **R1 flick → clicking modifier** (not a fourth mechanic).
+- **R2 no-aim → exclude.** `Super Hoover Cart Racers` is a racing game built into
+  a scenario. Detection: the curator's *No Aim* label, plus KovaaK's `aimType`
+  as a flag list — it is author-set (Hoover is tagged *Clicking*; `Tennis` and
+  `Worm The Eater` are *Other*), so *Other* is a candidate list for Owen to
+  eyeball whenever scenario metadata is harvested, not an automatic exclusion.
+- **R3 bare "static" → modifier only, mechanic left empty.** Yes.
+- **R4 blend/blending → own modifier.** Yes.
+- **R5 anti-movement → own modifier.** Yes.
+- **R6 movement → modifier for player-WASD scenarios ("strafe").**
+- **R7 dodge → the same strafe modifier** (player-WASD), not a separate one.
+  Owen's note: older Voltaic benchmarks had *strafe* as a category beside
+  flicking / clicking / switching. Decision for now: **strafe stays a modifier**
+  (the mechanic axis is what the crosshair does; strafing is what the player
+  does — a separate axis, and a modifier facet still gets its own competency
+  number). Revisit → promote to a mechanic if the emergence analysis (D12)
+  clusters strafing scenarios apart. Recorded as open question Q-strafe.
+- **R8 large angles → wide.** Yes.
+- **R9 transfer → NO fixed mechanic** — a transfer scenario can be clicking or
+  switching; mechanic per scenario, "transfer" itself contributes nothing.
+- **R10 tempo → timing / R11 correction → micro: proposals stand at LOW
+  confidence, unverifiable** — every scenario of the *143 Skand Static
+  Benchmark* playlist (`143 TEMPO CLICK`, `143 STATIC VIBRATION`, `143
+  SKANDSHOT`) returns zero results on KovaaK's scenario search (2026-08-18):
+  renamed or removed upstream. Flag for the next structure refresh; if the
+  playlist is dead the rulings are moot.
+- **R12 blink → modifier.** Yes. **R13 centering → stability.** Yes.
+- **R14 entry → difficulty word, evicted** (entry = low difficulty).
+- **R15 fluidity → smooth; elusive → evasive.** Yes.
+- **R16 定位 → static modifier; mechanic per scenario.** `RawMouseControlClicking3`
+  is static clicking (Owen); the label also carries mouse-control scenarios, so
+  clicking is not assumed for the rest.
+- **R17 hold → modifier "hold-fire" on switching:** the mouse button is held and
+  a target dies the instant the crosshair crosses it (no health bar to tick
+  down, unlike regular switching) — `Ballsheet BB`.
+- **R18 rush → tracking, staged-progression format** (get through each stage by
+  tracking each bot as well as possible); a format, not an extra skill facet.
+- **R19 tap → clicking.** Yes.
+- **R20 triad → pack/format label ("stage"-like scenarios); no facet from the
+  label** — the facet comes from the scenario-name word (Dynamic / Evasive /
+  Precise / Reactive / Speed Triad).
+- **R21 specific / MULTIFORM — OPEN.** All ten are RXZU – Valorant (`Rxzu -
+  Multiform I…V` × Ez/Adv); *SPECIFIC* is that pack's section name. Proposed:
+  no fixed facet (mixed-form) unless a look at `Rxzu - Multiform I EZ` shows one
+  dominant mechanic.
+
+Status after these rulings: **ratified except R21 (open) and R10/R11 (stand at
+low confidence, playlist unverifiable)**. Next: stamp the ratified vocabulary
+into the dataset + engine classifier following the difficulty-vocabulary
+pattern (personal copy first, then regenerate).
 ## Rulings requested (R1–R21 — Owen answers at home, scenarios open)
 
 Numbering matches the list Owen was given in the 2026-08-18 session, so
