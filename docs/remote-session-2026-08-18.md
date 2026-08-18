@@ -286,6 +286,13 @@ will fail CI on the snapshot instead of the golden.
    the deploy job errors on Pages configuration, flip the source once by hand
    and re-run). From then on a red master push leaves the previous live page
    up instead of going live.
+8. Taxonomy ratification pass (Owen deferred this from the phone on purpose):
+   open each flagged scenario type in KovaaK's and answer the "Rulings
+   requested" section of `docs/taxonomy-proposal-2026-08-18.md` — rule from
+   the scenarios themselves, not memory. High-confidence rows stand unless
+   vetoed; one-off subcategories default to no-facet. Per D12, the community
+   taxonomy document stays in the drawer until the emergence protocol's
+   comparison step.
 
 Merge note: after the second wave this branch carries **one behavior change in
 regeneration-owned files** — the `% size` rule in `src/engine.js` and the
