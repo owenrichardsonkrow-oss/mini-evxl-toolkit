@@ -1058,12 +1058,26 @@ const MiniEvxlEngine = (function(){
   // also name mechanics or packs are left out: "static", "main", "basic", "boss"…).
   const DIFF_NAME_TIER_WORDS = new Set(['newcomer','entry','easier','easy','novice','beginner','intermediate','medium','advanced','adv','hard','expert','elite','level 1','level 2','level 3','level 4']);
   // Size / speed / mechanic modifiers in names: [phrase, rungs] (+ harder, − easier),
-  // longer phrases first. Lone percentages are handled by regex below.
+  // longer phrases first. Calibrated 2026-08-18 against KovaaK's leaderboards
+  // (dev/kovaaks-modifier-check.ps1: variant ÷ base score at the top-20% rank,
+  // 722 pairs, 0 failed requests): 2 rungs where the ratio was ≤0.75 or ≥1.35,
+  // 1 rung otherwise; a word the community scored the same as its base is 0.
+  //   harder: small 0.72 (10↑/2↓), thin 0.81 (8/0), extra small 0.76, xsmall 0.82,
+  //           30% smaller 0.91 (8/0), 50% smaller 0.57, long 0.82 (10/0)
+  //   easier: larger 1.26, massive 1.31, jumbo 1.25, big 1.19, large 1.18,
+  //           30% larger 1.32, short 1.70 (11/0), static 1.13 (5/0), 90% 1.20, 80% (6↓/1↑)
+  //   neutral by data: bare "smaller" 0.98 (11 same), slightly larger/smaller ~0.99,
+  //           close 0.98; "harder" 1.00 on 4 pairs is kept +1 on the author's word only.
+  //   ignored (different scoring, ratio meaningless): invincible N, micro, pure,
+  //           goated, viscose, diamond, regen, reload.
+  // Lone percentages are handled by regex below; "N% smaller/larger" by the word
+  // (N ≥ 50 smaller → 2; N < 15 → nothing).
   const DIFF_NAME_MODIFIERS = [
-    ['even smaller', 2], ['extra small', 2], ['xsmall', 2], ['x-small', 2], ['very thin', 2], ['extra thin', 2],
-    ['slightly smaller', 1], ['smaller', 1], ['small', 1], ['thin', 1], ['tiny', 1], ['faster', 1], ['close', 1], ['harder', 1],
-    ['slightly larger', -1], ['larger', -1], ['large', -1], ['bigger', -1], ['big', -1], ['jumbo', -1], ['massive', -1], ['huge', -1], ['giant', -1],
-    ['slower', -1], ['slowed', -1], ['slow', -1], ['no ufo', -1], ['less blinks', -1]
+    ['even smaller', 1], ['extra small', 1], ['xsmall', 1], ['x-small', 1], ['very thin', 2], ['extra thin', 2],
+    ['slightly smaller', 0], ['slightly larger', 0], ['smaller', 0],
+    ['small', 2], ['thin', 1], ['tiny', 1], ['faster', 1], ['harder', 1], ['long', 1],
+    ['larger', -1], ['large', -1], ['bigger', -1], ['big', -1], ['jumbo', -1], ['massive', -1], ['huge', -1], ['giant', -1],
+    ['slower', -1], ['slowed', -1], ['slow', -1], ['short', -2], ['static', -1], ['no ufo', -1], ['less blinks', -1]
   ];
   const wordRe = w => new RegExp('(^|[^a-z0-9%])'+w.replace(/[-\s]/g,'[-\\s]?').replace(/\+/g,'\\+')+'(?=[^a-z0-9%]|$)');
   function difficultyRungOfLabel(label){
@@ -1091,10 +1105,20 @@ const MiniEvxlEngine = (function(){
   function difficultyNameModifiers(text){
     let t = String(text||'').toLowerCase();
     let sum = 0;
-    // "N% smaller|larger|…" — the word decides, the number is dropped
-    t = t.replace(/(\d+)\s*%\s*(smaller|larger|bigger|slower|faster|thinner)/g, ' $2 ');
-    // a lone "N%" (size or speed scale): ≤85 → easier, ≥115 → harder, else nothing
-    t = t.replace(/(\d+)\s*%/g, (m, n)=>{ const v=Number(n); if(v<=85) sum -= 1; else if(v>=115) sum += 1; return ' '; });
+    // "N% smaller|larger|…" — the word gives the direction, N the size:
+    // smaller/thinner N≥50 → +2, N≥15 → +1 (30% smaller measured 0.91, 50% 0.57);
+    // larger/bigger N≥15 → −1 (30% larger 1.32); slower −1 / faster +1; N<15 → nothing.
+    t = t.replace(/(\d+)\s*%\s*(smaller|thinner|larger|bigger|slower|faster)/g, (m, n, w)=>{
+      const v = Number(n);
+      if(w==='smaller' || w==='thinner') sum += v>=50 ? 2 : v>=15 ? 1 : 0;
+      else if(w==='larger' || w==='bigger') sum -= v>=15 ? 1 : 0;
+      else if(w==='slower') sum -= 1;
+      else if(w==='faster') sum += 1;
+      return ' ';
+    });
+    // a lone "N%" (size or speed scale): ≤90 → easier (80% and 90% both measured
+    // easier), ≥115 → harder (150%/200% 0.67 mean placement delta), else nothing
+    t = t.replace(/(\d+)\s*%/g, (m, n)=>{ const v=Number(n); if(v<=90) sum -= 1; else if(v>=115) sum += 1; return ' '; });
     for(const [w, r] of DIFF_NAME_MODIFIERS){
       const re = wordRe(w);
       if(re.test(t)){ sum += r; t = t.replace(new RegExp(re.source, 'g'), ' '); }
