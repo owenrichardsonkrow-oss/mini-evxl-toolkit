@@ -243,6 +243,15 @@ words.
    CI, the difficulty attribute with the port-pending warning, a
    remote-sessions section, gated Pages. It is Owen's file — wording pass at
    home, reshape freely.
+10. **`docs/DESIGN_INTENT.md`** (fourth wave) — the product's *why*, born from
+    a live design conversation with Owen: tracker → interactive training
+    optimizer, the floor-biased objective, percentile-as-metric, attempt
+    capture, the transfer program, and a dated decision log (D1–D11).
+    CLAUDE.md now points to it.
+11. **`docs/taxonomy-proposal-2026-08-18.md` + `docs/taxonomy-vocab-proposal.json`**
+    (fourth wave) — the skill-facet mapping proposal: all 99 category labels,
+    all 72 multi-playlist subcategories, one-off veto list, rulings section.
+    Status: proposal — consumed by nothing until Owen ratifies.
 
 Maintenance note: a weekly structure refresh moves the difficulty snapshot the
 same way it moves the golden file (entries appear/vanish). Whatever step of the
@@ -331,3 +340,24 @@ snapshot regeneration into the weekly chain.
   points, and `esc()` escapes quotes); unrated scenarios sort to the bottom
   under both difficulty sort directions; README already matches the
   onboarding-first framing rule, `?user=` documented.
+
+### Fourth wave — the design session
+
+Owen laid out the product's next stage in a live conversation: from "fancy
+tracker sheet" (evxl-parity+) to an **interactive training optimizer** built
+around raising the floor across all skill types simultaneously. Eleven design
+decisions were ratified turn by turn and are logged with dates in
+**`docs/DESIGN_INTENT.md`** — now the canonical *why* document (CLAUDE.md
+points to it; read it before any feature work). Highlights: floor-biased
+expected gain (not strict maximin), percentile-as-the-competency-metric,
+attempt capture as a core data requirement, the return-and-collect ideal with
+the return-collect rate as the tool's self-KPI, and Owen's player-profile
+sampling design for the population similarity map.
+
+The first artifact of the propose→ratify→stamp loop is also on the branch:
+**`docs/taxonomy-proposal-2026-08-18.md`** maps every category label (99) and
+multi-playlist subcategory (72) to skill facets, with a rulings section for
+the ambiguous ones. Coverage if ratified as-is: 82% of scenarios get at least
+one facet; the rest await a later name-evidence proposal. Nothing
+engine/app-behavioral changed in this wave — both artifacts are docs, consumed
+by no code until ratified.
