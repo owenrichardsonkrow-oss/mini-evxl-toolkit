@@ -89,6 +89,10 @@ no AI assistant.
 `docs/SCRAPING_GUIDE.md` is therefore the **advanced** path (playlists outside the
 pre-loaded set), not the primary flow. Keep both docs framed that way.
 
+The longer-term product direction — tracker → interactive training optimizer —
+and every ratified design decision live in **`docs/DESIGN_INTENT.md`** (started
+2026-08-18). Read it before feature work: it holds the why, this file the how.
+
 ## Environment traps — read before debugging anything
 
 **Never trust Bash-relayed non-ASCII output.** Git Bash here runs codepage 437, so
