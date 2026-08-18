@@ -86,7 +86,17 @@
       const problems = compare(golden, actual);
       const rated = Object.values(actual.entries).filter(v=>v).length;
       console.log(`difficulty: ${Object.keys(actual.entries).length} scenarios (${rated} rated); problems ${problems.length}`);
-      if (problems.length) { problems.slice(0, 20).forEach(p => console.log('  ' + p)); process.exit(1); }
+      if (problems.length) {
+        problems.slice(0, 20).forEach(p => console.log('  ' + p));
+        // A structure refresh (weekly) adds/drops scenarios -- and that also
+        // shifts labels of survivors whose carrying playlists changed, so any
+        // structural problem points at the refresh remedy. Label drift with an
+        // UNCHANGED scenario set means the classifier itself moved: investigate,
+        // never regenerate to make it pass.
+        if (problems.some(p => p.startsWith('missing scenario:') || p.startsWith('new scenario')))
+          console.log('  scenario set changed (structure refresh?) -- if intended, regenerate: node test/difficulty.js --write');
+        process.exit(1);
+      }
     }
   } else {
     root.__miniEvxlDifficulty = api;
