@@ -16,6 +16,16 @@ The personal copy this is generated from lives in the sibling folder
 
 ## Generated, not hand-edited
 
+**Branches (2026-08-17):** `master` is what the live Pages link serves — a friend
+(`mayogobbler`) uses it — and is written only by releases from the personal
+repo's master and by its Sunday job. Development happens on **`dev`**, checked
+out as a git worktree in the sibling dev workspace (`..\..\mini-evxl-dev\mini-
+evxl-toolkit`, next to the tracker's dev worktree); there the personal repo's
+`build.ps1` writes **`template.dev.html`** (gitignored, `[DEV]` title, store
+prefix `mini-evxl-template-dev`) and never touches `template.html`. Release =
+merge `dev` → `master` in the production folders and rebuild there. CI runs on
+both branches.
+
 `template.html` is produced by the personal repo's **`build.ps1 -Template`**
 (`generate-template.ps1` here is a thin wrapper) from that repo's source tree —
 `src/page.html` + `styles.css` + `engine.js` + `app.js` and `data/`. The template
