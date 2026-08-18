@@ -33,6 +33,7 @@ jobs:
           node-version: '20'
       - run: node test/golden.js
       - run: node test/difficulty.js
+      - run: node test/facets.js
       - run: node test/template-integrity.js
   deploy:
     needs: test

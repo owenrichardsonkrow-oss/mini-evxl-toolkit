@@ -1177,6 +1177,246 @@ const MiniEvxlEngine = (function(){
   function difficultyFamily(label){ const i = DIFF_LABELS.indexOf(label); return i<0 ? '' : DIFF_FAMILY_OF[i]; }
   function difficultyRungOfText(label){ return DIFF_LABELS.indexOf(label); }   // 'Hard+' → 8, '' → -1
 
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, countScenarios };
+  // ---- Skill facets (ratified 2026-08-18, Owen R1-R21) --------------------
+  // The label-normalization vocabulary from docs/taxonomy-proposal-2026-08-18.md
+  // (toolkit): every curator category / subcategory label maps to
+  //   m   -> a mechanic: clicking | tracking | switching
+  //   mod -> modifiers (static, dynamic, reactive, speed, precise, evasive,
+  //          control, micro, smooth, reading, flick, timing, stability, strafe,
+  //          blending, anti-movement, blink, hold, wide, ...)
+  //   f   -> [facet, value] for env (air/ground), game (cs/val, tacfps, ow),
+  //          weapon, region, axis, targets, special
+  //   a   -> "nofacet" (curator/pack/section label, no skill meaning),
+  //          "evict" (difficulty word -- the difficulty attribute owns it),
+  //          "exclude" (not an aim scenario, e.g. a racing game in a scenario)
+  // Per DESIGN_INTENT.md this is SCAFFOLDING for display and v1 sessions -- it
+  // cleans curator strings into displayable facets and makes no truth claim
+  // about skill structure (D12: that must emerge from taxonomy-blind analysis).
+  // Rulings of note: flick = clicking modifier (R1); bare "static" = modifier
+  // only (R3); movement/dodge = the player-WASD "strafe" modifier (R6/R7 --
+  // may be promoted to a mechanic if the emergence analysis separates it);
+  // transfer adds nothing (R9); hold = hold-fire on switching (R17); rush /
+  // triad / multiform are formats (R18/R20/R21). Generated from
+  // docs/taxonomy-vocab-ratified.json (toolkit) -- edit there, regenerate here.
+  const FACET_VOCAB = {
+  categories: {
+    "(:": {"a":"nofacet"},
+    "<:": {"a":"nofacet"},
+    "1": {"a":"nofacet"},
+    "2": {"a":"nofacet"},
+    "3": {"a":"nofacet"},
+    "4": {"a":"nofacet"},
+    "advanced": {"a":"evict"},
+    "air": {"f":["env","air"]},
+    "angelic tac fps": {"f":["game","tacfps"]},
+    "aoiaim": {"a":"nofacet"},
+    "ar": {"f":["weapon","ar"]},
+    "arm": {"f":["region","arm"]},
+    "beginner": {"a":"evict"},
+    "beginner+": {"a":"evict"},
+    "blend": {"mod":["blending"]},
+    "blink": {"mod":["blink"]},
+    "bonus": {"a":"nofacet"},
+    "bouncesphere": {"m":"tracking","mod":["bounce"]},
+    "category": {"a":"nofacet"},
+    "click": {"m":"clicking"},
+    "click timing": {"m":"clicking","mod":["timing"]},
+    "clicking": {"m":"clicking"},
+    "control": {"mod":["control"]},
+    "control and smooth tracking": {"m":"tracking","mod":["control","smooth"]},
+    "control tracking": {"m":"tracking","mod":["control"]},
+    "controlled": {"mod":["control"]},
+    "correction": {"mod":["micro"]},
+    "cs/val": {"f":["game","cs/val"]},
+    "diagonal": {"f":["axis","diagonal"]},
+    "dodge": {"mod":["strafe"]},
+    "dynamic": {"mod":["dynamic"]},
+    "dynamic click": {"m":"clicking","mod":["dynamic"]},
+    "dynamic clicking": {"m":"clicking","mod":["dynamic"]},
+    "easy": {"a":"evict"},
+    "evasive switching": {"m":"switching","mod":["evasive"]},
+    "flick": {"m":"clicking","mod":["flick"]},
+    "flick tech": {"m":"clicking","mod":["flick"]},
+    "flick-tech": {"m":"clicking","mod":["flick"]},
+    "flicking": {"m":"clicking","mod":["flick"]},
+    "flicks and click-timing": {"m":"clicking","mod":["flick","timing"]},
+    "ground": {"f":["env","ground"]},
+    "ground tracking": {"m":"tracking","f":["env","ground"]},
+    "hard": {"a":"evict"},
+    "henwood benchmarks": {"a":"nofacet"},
+    "hold": {"m":"switching","mod":["hold"]},
+    "horizontal": {"f":["axis","horizontal"]},
+    "intermediate": {"a":"evict"},
+    "large angles": {"mod":["wide"]},
+    "linear radial smoothness": {"m":"tracking","mod":["smooth"]},
+    "matty ow benchmark": {"f":["game","ow"]},
+    "micro": {"mod":["micro"]},
+    "micros": {"mod":["micro"]},
+    "movement": {"mod":["strafe"]},
+    "no aim": {"f":["special","no-aim"],"a":"exclude"},
+    "normal": {"a":"evict"},
+    "other": {"a":"nofacet"},
+    "precise": {"mod":["precise"]},
+    "precise tracking": {"m":"tracking","mod":["precise"]},
+    "raw": {"mod":["raw"]},
+    "raw smoothness": {"m":"tracking","mod":["smooth","raw"]},
+    "reactive": {"mod":["reactive"]},
+    "reactive and anti movement": {"mod":["reactive","anti-movement"]},
+    "reactive tracking": {"m":"tracking","mod":["reactive"]},
+    "reactivity": {"mod":["reactive"]},
+    "reflex": {"mod":["reflex"]},
+    "revamp": {"a":"nofacet"},
+    "rush": {"m":"tracking"},
+    "scenarios": {"a":"nofacet"},
+    "shotgun": {"f":["weapon","shotgun"]},
+    "smg": {"f":["weapon","smg"]},
+    "smooth": {"mod":["smooth"]},
+    "smoothness": {"m":"tracking","mod":["smooth"]},
+    "specific": {"a":"nofacet"},
+    "speed": {"mod":["speed"]},
+    "speedts": {"m":"switching","mod":["speed"]},
+    "stability": {"mod":["stability"]},
+    "static": {"mod":["static"]},
+    "static click": {"m":"clicking","mod":["static"]},
+    "static clicking": {"m":"clicking","mod":["static"]},
+    "strafe": {"mod":["strafe"]},
+    "strafe and anti movement": {"mod":["strafe","anti-movement"]},
+    "strafes": {"mod":["strafe"]},
+    "strafing": {"mod":["strafe"]},
+    "switch": {"m":"switching"},
+    "switching": {"m":"switching"},
+    "tap": {"m":"clicking"},
+    "target switching": {"m":"switching"},
+    "tempo": {"mod":["timing"]},
+    "track": {"m":"tracking"},
+    "tracking": {"m":"tracking"},
+    "transfer": {"a":"nofacet"},
+    "triad": {"a":"nofacet"},
+    "ts": {"m":"switching"},
+    "wrist": {"f":["region","wrist"]},
+    "动态点击": {"m":"clicking","mod":["dynamic"]},
+    "定位": {"mod":["static"]},
+    "跟枪": {"m":"tracking"},
+    "跟踪": {"m":"tracking"},
+    "转火": {"m":"switching"}
+  },
+  subcategories: {
+    "1": {"a":"nofacet"},
+    "2": {"a":"nofacet"},
+    "2 target": {"f":["targets","2"]},
+    "3": {"a":"nofacet"},
+    "3 target": {"f":["targets","3"]},
+    "3x3": {"a":"nofacet"},
+    "4 target": {"f":["targets","4"]},
+    "5 target": {"f":["targets","5"]},
+    "6 target": {"f":["targets","6"]},
+    "air": {"f":["env","air"]},
+    "arm": {"f":["region","arm"]},
+    "blending": {"mod":["blending"]},
+    "bounce": {"mod":["bounce"]},
+    "centering": {"mod":["stability"]},
+    "click": {"m":"clicking"},
+    "clicking": {"m":"clicking"},
+    "control": {"mod":["control"]},
+    "ctrl": {"mod":["control"]},
+    "devts": {"a":"nofacet"},
+    "dodge": {"mod":["strafe"]},
+    "dynamic": {"mod":["dynamic"]},
+    "elusive": {"mod":["evasive"]},
+    "entry": {"a":"evict"},
+    "evasive": {"mod":["evasive"]},
+    "fingertip": {"f":["region","fingertip"]},
+    "flick": {"m":"clicking","mod":["flick"]},
+    "fluidity": {"mod":["smooth"]},
+    "ground": {"f":["env","ground"]},
+    "horizontal": {"f":["axis","horizontal"]},
+    "hybrid": {"mod":["hybrid"]},
+    "linear": {"a":"nofacet"},
+    "mass": {"a":"nofacet"},
+    "micro": {"mod":["micro"]},
+    "micro-dynamic": {"mod":["micro","dynamic"]},
+    "micro-static": {"mod":["micro","static"]},
+    "micro-tracking": {"m":"tracking","mod":["micro"]},
+    "micros": {"mod":["micro"]},
+    "mix": {"mod":["hybrid"]},
+    "multiform": {"m":"clicking"},
+    "patts": {"a":"nofacet"},
+    "pokeball": {"a":"nofacet"},
+    "precise": {"mod":["precise"]},
+    "precision": {"mod":["precise"]},
+    "predict": {"mod":["reading"]},
+    "raw": {"mod":["raw"]},
+    "react": {"mod":["reactive"]},
+    "reaction": {"mod":["reflex"]},
+    "reactive": {"mod":["reactive"]},
+    "reactivity": {"mod":["reactive"]},
+    "reading": {"mod":["reading"]},
+    "reflex": {"mod":["reflex"]},
+    "regen": {"a":"nofacet"},
+    "smooth": {"mod":["smooth"]},
+    "smoothness": {"mod":["smooth"]},
+    "speed": {"mod":["speed"]},
+    "sphere": {"a":"nofacet"},
+    "sta": {"mod":["static"]},
+    "stability": {"mod":["stability"]},
+    "static": {"mod":["static"]},
+    "strafe": {"mod":["strafe"]},
+    "switch": {"m":"switching"},
+    "switching": {"m":"switching"},
+    "technique": {"a":"nofacet"},
+    "thin": {"a":"nofacet"},
+    "track": {"m":"tracking"},
+    "tracking": {"m":"tracking"},
+    "vertical": {"f":["axis","vertical"]},
+    "voxts": {"a":"nofacet"},
+    "wide": {"mod":["wide"]},
+    "wide wall": {"a":"nofacet"},
+    "wrist": {"f":["region","wrist"]},
+    "xents": {"a":"nofacet"},
+    "xyz": {"a":"nofacet"}
+  }
+};
+  const FACET_MECHANICS = ['clicking', 'tracking', 'switching'];
+  const facetNorm = s => String(s||'').toLowerCase().replace(/\s+/g,' ').trim();
+  function facetEntry(kind, label){
+    const k = facetNorm(label);
+    if(!k) return null;
+    const map = kind==='category' ? FACET_VOCAB.categories : FACET_VOCAB.subcategories;
+    if(Object.prototype.hasOwnProperty.call(map, k)) return map[k];
+    return kind==='subcategory' ? { a: 'nofacet' } : null;   // one-off subcategories default to nofacet
+  }
+  // classifyFacets(pairs): pairs = [{category, subcategory}] -- one per playlist
+  // group the scenario appears in (across all carrying playlists). Returns
+  //   { mechanics: [...], modifiers: [...], other: {env:[...], game:[...], ...},
+  //     exclude: bool, evidence: n }
+  // Sets are unions across playlists (a curator placing a scenario under two
+  // mechanics is a fact, not an error); a scenario with no mapped label at all
+  // comes back empty (name evidence is a later proposal).
+  function classifyFacets(pairs){
+    const mech = new Set(), mods = new Set(), other = {};
+    let exclude = false, evidence = 0;
+    (pairs||[]).forEach(p=>{
+      [['category', p && p.category], ['subcategory', p && p.subcategory]].forEach(([kind, label])=>{
+        const e = facetEntry(kind, label);
+        if(!e) return;
+        evidence++;
+        if(e.a==='exclude') exclude = true;
+        if(e.m) mech.add(e.m);
+        (e.mod||[]).forEach(m=>mods.add(m));
+        if(Array.isArray(e.f) && e.f.length===2){ (other[e.f[0]] = other[e.f[0]] || new Set()).add(e.f[1]); }
+      });
+    });
+    const o = {}; Object.keys(other).forEach(k=>{ o[k] = [...other[k]].sort(); });
+    return { mechanics: FACET_MECHANICS.filter(m=>mech.has(m)), modifiers: [...mods].sort(), other: o, exclude, evidence };
+  }
+  // Flat display list, mechanic first: ["clicking", "static", "micro", "env:ground", ...]
+  function facetChips(fx){
+    if(!fx) return [];
+    const out = fx.mechanics.slice().concat(fx.modifiers);
+    Object.keys(fx.other).sort().forEach(k=>{ fx.other[k].forEach(v=>out.push(k+':'+v)); });
+    if(fx.exclude) out.push('no-aim');
+    return out;
+  }
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

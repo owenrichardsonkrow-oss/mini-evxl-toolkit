@@ -42,7 +42,7 @@ personal string survives anywhere. It also copies the shared files (`lib/`,
 **`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
-**Tests (three since 2026-08-18):** `test/golden.js` (Node; `test/harness.html`
+**Tests (four since 2026-08-18):** `test/golden.js` (Node; `test/harness.html`
 runs it and the difficulty test together in a browser) checks the engine's
 standings for seeded score vectors against `test/golden-standings.json` —
 answers recorded from an engine the personal repo's differential test had
@@ -51,7 +51,11 @@ scenario's nine-rung difficulty label against `test/difficulty-snapshot.json`
 (no seeding — the classifier is pure, so the snapshot pins classifier AND
 dataset; regenerate with `--write` only for an intended change, and expect a
 weekly structure refresh to move it exactly like the golden — its failure
-output says which case you're in). `test/template-integrity.js` guards the
+output says which case you're in). `test/facets.js` pins every scenario's skill-facet
+list (`test/facets-snapshot.json`; the ratified vocabulary in `src/engine.js`
+`FACET_VOCAB`, generated from `docs/taxonomy-vocab-ratified.json` — Owen's
+rulings R1–R21 are in `docs/taxonomy-proposal-2026-08-18.md`; probes make five
+rulings executable). `test/template-integrity.js` guards the
 shipped page itself: every script block parses, the embedded engine byte-equals
 `src/engine.js`, SITE stays generic, `esc()` keeps escaping `"` — the gaps
 golden can't see because it requires `src/engine.js` directly. GitHub Actions

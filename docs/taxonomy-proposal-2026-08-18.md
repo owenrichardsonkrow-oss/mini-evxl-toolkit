@@ -1,6 +1,6 @@
 # Skill-facet taxonomy — PROPOSAL for ratification (2026-08-18)
 
-Status: **ratified 2026-08-18 (all 21 rulings; R10/R11 at low confidence, playlist unverifiable)** — see "Rulings" below; originally a proposal (drafted by the remote session per docs/DESIGN_INTENT.md;
+Status: **ratified 2026-08-18 and STAMPED the same evening** — the vocabulary with the rulings applied is `docs/taxonomy-vocab-ratified.json`, generated into the engine as `FACET_VOCAB` (`classifyFacets`), shown on the Shared/Unique pages, pinned by `test/facets.js`; see "Rulings" below; originally a proposal (drafted by the remote session per docs/DESIGN_INTENT.md;
 nothing here is consumed by any code until Owen ratifies). To ratify: correct
 rows inline or annotate, then the ratified vocabulary gets stamped into the
 dataset + an engine classifier following the difficulty-vocabulary pattern.
