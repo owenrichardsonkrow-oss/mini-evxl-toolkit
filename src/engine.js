@@ -1048,7 +1048,7 @@ const MiniEvxlEngine = (function(){
     ['veteran', 2], ['wallhack', 2], ['evil', 2], ['demonic', 2], ['promax', 2], ['困难', 2]
   ];
   const DIFF_NAME_VOCAB = [
-    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0],
+    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0],
     ['intermediate', 1], ['medium', 1],
     ['advanced', 2], ['hard', 2], ['expert', 2]
   ];
