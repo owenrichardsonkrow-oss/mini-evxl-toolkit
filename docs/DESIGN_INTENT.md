@@ -115,6 +115,14 @@ lives in `docs/taxonomy-proposal-2026-08-18.md` with a machine-readable vocab
 alongside; ratified mappings later get stamped into the dataset and an engine
 classifier (personal-copy-first, like everything app-behavioral).
 
+**Two different artifacts share the word "taxonomy" — keep them separate
+(D12):** the label-normalization vocabulary above is product *scaffolding* —
+it cleans curator strings into displayable facets so v1 sessions and UI
+grouping can exist. It makes no truth claim about skill structure. The
+*skill-structure taxonomy* — what skills actually exist and how they relate —
+is a scientific object and is required to be **emergent**: see the emergence
+protocol below.
+
 ## Data sources and their honest limits
 
 1. **Structure data** (in hand): taxonomy, playlist co-occurrence. Encodes
@@ -142,6 +150,43 @@ classifier (personal-copy-first, like everything app-behavioral).
 **Transfer weight table**: skill→skill weights with provenance per entry —
 `prior` (Owen's SME judgment) → `population` (3b audits) → `personal` (4
 audits). The optimizer consumes whatever the table holds; evidence upgrades it.
+
+## The emergence protocol (D12)
+
+Owen's requirement, adopted 2026-08-18: community aim-training knowledge is
+largely anecdotal and rarely tested; if its taxonomy and downstream relational
+theories are real, they should **emerge** from taxonomy-blind analysis rather
+than be built in as fact.
+
+1. The discovery pipeline is procedurally blind: similarity / cluster / factor
+   analyses over the players × scenarios matrix take **no labels or facets as
+   input**. (Scenario-level primacy guarantees this structurally: no statistic
+   is ever computed on categories that could not be recomputed from
+   scenarios.)
+2. **Structure is frozen before it is named**: cluster memberships and factor
+   loadings are committed *before* interpretation begins.
+3. Only then is the community taxonomy document ingested and formally
+   compared — cluster↔facet agreement measured, divergences itemized as
+   findings. **Owen holds the document until step 3.**
+4. Interpretation asymmetry, on record: the scenario pool and playlists were
+   *created by* taxonomy-thinking minds, and practice co-occurrence follows
+   playlist structure — so the clicking/tracking/switching triad re-emerging
+   is partly baked in and only weak confirmation, while its failure to emerge
+   (or a subcategory layer that restructures — e.g. "speed" as a
+   cross-mechanic axis rather than a sub-box) is the loud, informative
+   outcome. Playlist co-membership is a named confound when reading
+   similarity: check whether correlations survive across players who trained
+   different playlists.
+5. True analyst blindness is impossible (model training, Owen's own
+   expertise, and the curator labels all carry community knowledge); the
+   honest achievable standard is procedural blindness plus freeze-before-
+   naming.
+
+The label-normalization vocabulary (the taxonomy proposal) is exempt: it is
+scaffolding for display and v1 sessions, never feeds the blind pipeline, and
+makes no truth claim. The curator-label survey's own headline — the triad
+dominating label usage — is a fact about community *belief*, not evidence
+about skill structure.
 
 ## Session engine (product shape)
 
@@ -203,3 +248,10 @@ run-history import; both transfer analyses.
 - **D11** Responsiveness = normalized gain per attempt with nearness as a
   secondary signal; the ideal end-state is return-and-collect (revisit
   scheduling), scored by the return-collect rate.
+- **D12** The skill-structure taxonomy must be **emergent**: discovery
+  analyses run taxonomy-blind, structure is frozen before naming, and the
+  community taxonomy document is withheld until formal comparison time (see
+  the emergence protocol). The label-normalization vocabulary is scaffolding,
+  exempt, and makes no truth claim. Emergence is read asymmetrically:
+  reappearance of the community structure is weak confirmation (the data was
+  generated under it); its failure to reappear is the informative result.
