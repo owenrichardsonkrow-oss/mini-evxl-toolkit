@@ -215,19 +215,43 @@ list — promote any that deserve a facet:
 
 + · 1 wall · 1wall · 1wxt · 4 · 5 · 6 · 7 · 8 · accuracy · acq · acquire · alpha · angles · anti m · anti move · app smth · arc · ascended · assorted · avg · basic · beginner · bonus · c rct · chaining · classic · click timing · cluster · clusters · control track dojo 控制場 · core · core. · cps · diagonal · diverse · elu · evasivets · fast · fast strafes · fing · flicking · flicks · floatts · flow · flu · fluid · focus · frenzy · fun · fundamentals · gauntlet · gridshot · ground track dojo 道場 · have · hyb · isolated · kinetic · kints · lin · long · long strafe · m ctrl · main · micro control · micro dynamic · micro static · micro-switching · mixed · multiform · mvmnt · narrow · normal · omni · one  step · other · pacing · parabola · pasu track · pasu track dojo 道場 · path · playing! · plaza · post-flick · pre · prec · precision + reactive · pressure · pure · r rct · r smth · raw control · raw smooth · rct · rea · read · ref · reflex. · run · rxn · short · small · smo · smoothbot · speedts · steady · stra · strafing · ta · taping · ten · tension · tgod · timing · tiny · traditional · traking · two  steps · underaim · vai · variable · varied · vss · widewall · ww small · 变向 · 平滑 · 微调 · 确认 · 确认感 · 精准 · 精准度 · 终极 · 终极目标 · 跟踪 · 速度
 
-## Rulings requested (the flagged rows, condensed)
+## Rulings requested (R1–R21 — Owen answers at home, scenarios open)
 
-- category "flick tech": fold flicks under clicking (community convention) or standalone mechanic?
-- category "blend": blending = smooth+reactive hybrid style?
-- category "定位": zh "positioning" — static clicking family?
-- category "reactive and anti movement": anti-movement as its own modifier?
-- category "movement": player-movement (WASD) scenarios as a modifier?
-- category "hold": crosshair-hold scenarios? unclear
-- category "dodge": dodge (player evasion) as modifier?
-- category "no aim": exclude from aim profile entirely?
-- category "tap": tap = click family?
-- category "rush": unknown label
+Numbering matches the list Owen was given in the 2026-08-18 session, so
+"R3–R15 fine, R17 is actually …" is a complete answer. High-confidence rows in
+the tables above stand unless vetoed; one-playlist-only subcategories default
+to nofacet.
 
-Also standing: whether "flick" is a clicking modifier (proposed, community
-convention) or a fourth mechanic; and whether "no aim" scenarios are excluded
-from the aim profile entirely (proposed: yes).
+Structural:
+
+- **R1** "flick" (flick tech / flicking / flick): clicking modifier (proposed,
+  community convention) or a standalone fourth mechanic?
+- **R2** "no aim" scenarios: exclude from the aim profile entirely?
+  (proposed: yes)
+
+Quick-fire proposals (confirm or veto):
+
+- **R3** bare "static" (73 scenarios): modifier only, mechanic left empty
+- **R4** "blend"/"blending": own modifier (smooth+reactive hybrid style)
+- **R5** "anti-movement" (from "reactive and anti movement" / "strafe and
+  anti movement"): own modifier
+- **R6** "movement": modifier for player-WASD scenarios
+- **R7** "dodge": modifier (player evasion)
+- **R8** "large angles" → wide
+- **R9** "transfer" → switching
+- **R10** "tempo" → timing
+- **R11** "correction" → micro
+- **R12** "blink": modifier (blinking targets)
+- **R13** "centering" (subcategory) → stability
+- **R14** "entry" (subcategory) → evicted as a difficulty word
+- **R15** "fluidity" → smooth; "elusive" → evasive
+
+Pack-knowledge unknowns (open them in KovaaK's):
+
+- **R16** 定位 (zh "positioning", 12 scenarios): proposed clicking+static,
+  low confidence
+- **R17** "hold" (4 scenarios): unknown
+- **R18** "rush" (2): unknown
+- **R19** "tap" (2): proposed clicking
+- **R20** "triad" (6): pack section label?
+- **R21** "specific" (10): placeholder?

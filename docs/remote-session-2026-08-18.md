@@ -368,3 +368,41 @@ the ambiguous ones. Coverage if ratified as-is: 82% of scenarios get at least
 one facet; the rest await a later name-evidence proposal. Nothing
 engine/app-behavioral changed in this wave — both artifacts are docs, consumed
 by no code until ratified.
+
+## Session end state — handoff
+
+Base `1bd1020` (master's tip — master never moved this session); every commit
+after it on this branch is this session's work. Tree clean, fully pushed, all
+three test suites green locally on the final tree and on Actions for every
+push. Nothing merged; no PR opened — deliberate, the home audit comes first.
+
+**Read order for a fresh agent, any machine:** `CLAUDE.md` (the how;
+auto-loads) → `docs/DESIGN_INTENT.md` (the why; decisions D1–D12) → this file
+(what happened, what's owed, checklist items 1–8) →
+`docs/taxonomy-proposal-2026-08-18.md` (awaiting Owen's R1–R21 rulings, listed
+in its "Rulings requested" section).
+
+**Open at session close:**
+
+- Owen: read DESIGN_INTENT (his intent transcribed — amendments welcome, the
+  decision log is his); answer R1–R21 at home with the scenarios open
+  (checklist item 8); work checklist items 1–7, item 1 (the tracker-side
+  `% size` port) before any rebuild.
+- Standing offer, any browser, any time: on a synced copy of the tracker,
+  Settings → *Your scores* → Export hands a session Owen's real snapshot for
+  competency-profile prototyping. Handling rule: session scratchpad only,
+  **never committed** — the public repo ships a clean template.
+- The community taxonomy document stays with Owen until the emergence
+  protocol's comparison step (D12).
+- Remote-doable next, per DESIGN_INTENT staging: profile-math prototyping
+  against seeded data; session-engine pure functions with snapshot tests.
+  Home-only: the checklist, percentile-curve harvest, player-profile
+  sampling, attempt capture, run-history import.
+
+**Deliberately ephemeral:** the session's analysis tooling (the
+difficulty-sweep instrumentation, tag-survey and taxonomy-proposal
+generators, browser smoke-test artifacts) lived in the container scratchpad
+and dies with it. Everything they produced that matters is committed (the
+snapshot, the movers list, the proposal + vocab JSON, the findings and
+measurements in this file), and each is regenerable from committed data plus
+the methods described here — nothing unique is lost with the container.
