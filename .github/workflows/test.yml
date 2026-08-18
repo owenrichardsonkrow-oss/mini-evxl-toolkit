@@ -24,4 +24,9 @@ jobs:
           node-version: '20'
       - run: node test/golden.js
       - run: node test/difficulty.js
+      # On `dev` the tracked template.html is the last RELEASED build by design
+      # (dev builds write template.dev.html, gitignored), so "embedded engine ==
+      # src/engine.js" is stale there until the next release. master and claude/*
+      # branches carry a template that must match, so the guard runs on those.
       - run: node test/template-integrity.js
+        if: github.ref != 'refs/heads/dev'
