@@ -6,10 +6,13 @@ The public, genericized version of a personal KovaaK's benchmark tracker.
 scores block. No build step. MIT licensed.
 
 Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
-`origin`, branch `master`; first push 2026-08-16). GitHub Pages is meant to serve
+`origin`, branch `master`; first push 2026-08-16). GitHub Pages serves
 `template.html` from `master` / root — enabled in the repo's Settings → Pages by
-Owen. Pushing is routine now; the personal tracker repo has no remote and stays
-that way (it embeds Owen's own scores).
+Owen. Since 2026-08-18 (`.github/workflows/deploy.yml`, written on the remote
+branch; active once merged, with the Pages source on "GitHub Actions") the live
+page only updates when all three test suites pass on the pushed master — a red
+push leaves the previous deploy up. Pushing is routine now; the personal
+tracker repo has no remote and stays that way (it embeds Owen's own scores).
 
 The personal copy this is generated from lives in the sibling folder
 `../mini-benchmarks-tracker` (`mini_evxl.html`).
@@ -39,10 +42,20 @@ personal string survives anywhere. It also copies the shared files (`lib/`,
 **`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
-**Tests:** `test/golden.js` (Node; `test/harness.html` in a browser) checks the
-engine's standings for seeded score vectors against `test/golden-standings.json`
-— answers recorded from an engine the personal repo's differential test had
-proven identical to evxl's own rank code. GitHub Actions runs it on every push
+**Tests (three since 2026-08-18):** `test/golden.js` (Node; `test/harness.html`
+runs it and the difficulty test together in a browser) checks the engine's
+standings for seeded score vectors against `test/golden-standings.json` —
+answers recorded from an engine the personal repo's differential test had
+proven identical to evxl's own rank code. `test/difficulty.js` pins every
+scenario's nine-rung difficulty label against `test/difficulty-snapshot.json`
+(no seeding — the classifier is pure, so the snapshot pins classifier AND
+dataset; regenerate with `--write` only for an intended change, and expect a
+weekly structure refresh to move it exactly like the golden — its failure
+output says which case you're in). `test/template-integrity.js` guards the
+shipped page itself: every script block parses, the embedded engine byte-equals
+`src/engine.js`, SITE stays generic, `esc()` keeps escaping `"` — the gaps
+golden can't see because it requires `src/engine.js` directly. GitHub Actions
+runs all three on every push including `claude/**` remote branches
 (`.github/workflows/test.yml`). The golden file is regenerated only from the
 personal repo (`dev\run-tests.ps1 -WriteGolden`) after an intended engine change
 that the differential test has blessed — never by hand here.
@@ -109,6 +122,23 @@ properties (wrap in `@()`); variables are case-insensitive so `$out` clobbers `$
 Serve with `preview_start({name: "mini-evxl-toolkit"})` and open a **fresh tab** —
 preview tabs cache aggressively. `static-server.ps1`'s MIME map must keep
 `; charset=utf-8` on html/css/js/json or non-ASCII renders as mojibake.
+
+## Remote sessions (Claude Code on the web, 2026-08-18)
+
+A cloud session clones only this public repo: the personal tracker and `dev`
+(both live only on the home machine) are out of reach, there is no PowerShell
+(Linux container — the `.ps1` are editable, not runnable; Node and headless
+Chromium are available), and kovaaks.com is blocked by the network policy, so
+no live API or leaderboard checks. Work lands on a `claude/*` branch (CI runs
+there), never `master`. The regeneration rule holds remotely with one
+refinement: an engine change may land on the branch only as a synchronized
+edit to BOTH `src/engine.js` and the embedded copy (template-integrity
+enforces the byte-identity), with a loud port-to-tracker note — the build
+still overwrites both from the tracker, so the tracker port must precede the
+next rebuild. Session handoffs go in `docs/remote-session-<date>.md` for the
+home session to audit. The relay-garbling trap above generalizes: a Linux
+container's search tooling displayed a `→` comment line's `//` as `/` — same
+rule, verify bytes before believing a relayed "corruption".
 
 ## Data model — three independent stores
 
@@ -179,6 +209,21 @@ legacy `volts` field is still unread.
 Home also has two panels: **Quick wins** (played scenarios ≥70% of the way to
 their next tier, most playlists first) and **Recent improvements** (a local
 score-history log written by every sync/import raise; not exported).
+
+**Difficulty attribute (nine rungs, 2026-08-17/18):** every scenario on the
+Shared/Unique pages carries `classifyDifficulty()`'s label (Easy− … Hard+, ''
+= unrated; the "Difficulty attribute" block in `src/engine.js` holds the full
+design): family × nudge from the carrying playlists' difficulty labels
+(median), pulled one rung by a tier word in the name, pushed by calibrated
+size/speed name modifiers, variants anchoring on their base via the app's
+`getDiffIndex()` (`_diffIndexCache`, reset in `invalidateCaches()`). Sorting
+sinks unrated in both directions; the filter has Unrated and per-family
+"(any)" values. 2026-08-18, remote branch: `"N% size"` names invert the
+bare-percent direction (bigger targets = easier) — **port that rule into the
+tracker's engine before the next rebuild** (an unported rebuild reverts it and
+difficulty.js turns red on three names); the open calibration questions and
+the whole-name veto list live in `docs/remote-session-2026-08-18.md` and
+`docs/difficulty-wholename-movers.txt`.
 
 The scrape's only remaining purpose is **structure**; the tracker repo's
 `refresh-all-from-kovaaks.ps1` (KovaaK's API) has replaced it in practice, and
