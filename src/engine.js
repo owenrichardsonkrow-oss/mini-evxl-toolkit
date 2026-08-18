@@ -1002,23 +1002,83 @@ const MiniEvxlEngine = (function(){
     return { toMax, to2nd, toNext, maxed };
   }
 
-  // Difficulty attribute: derived from the scenario's own name plus every
-  // playlist difficulty label it's found under (a shared scenario can carry
-  // several). "Easy"/"Easier" in either signals Easy; "Hard"/"Expert" signals
-  // Hard. Anything else (Medium, Advanced, Novice, custom pack names like
-  // "roa Ultimate"...) contributes no signal either way. If a scenario picks
-  // up both an Easy and a Hard signal (e.g. named "...Easy" but only appears
-  // in a Hard-difficulty playlist) they cancel out to Intermediate, same as
-  // when there's no signal at all.
-  function hasEasySignal(s){ const t=String(s).toLowerCase(); return t.includes('easy') || t.includes('easier'); }
-  function hasHardSignal(s){ const t=String(s).toLowerCase(); return t.includes('hard') || t.includes('expert'); }
+  // Difficulty attribute (redefined 2026-08-17, Owen: "VT Controlsphere
+  // Advanced S5 is Advanced in its name and sits in Advanced playlists — it
+  // should read Hard"). The old rule read only "easy"/"hard" and defaulted
+  // everything else to Intermediate, so 1,721 of 3,038 scenarios wore a
+  // middle chip that really meant "unknown".
+  //
+  // New rule — a scenario's difficulty is where the playlists that carry it
+  // place it:
+  //   1. Every playlist difficulty LABEL is mapped through a vocabulary of the
+  //      level words actually used across the dataset (Easy ← easy/easier/
+  //      novice/newcomer/beginner/entry/genesis/level 1/轻松; Intermediate ←
+  //      intermediate/medium/normal/main/basic/pre-advanced/level 2/ascension/
+  //      中等; Hard ← hard/expert/advanced/adv/ultimate/boss/level 3/level 4/
+  //      enlightenment/elite/veteran/wallhack/evil/demonic/promax/困难).
+  //      Labels that are tracks or seasons rather than levels ("All", "S1",
+  //      "Static", "#2 Tracking", "Season 2", "catburg"…) say nothing — and
+  //      neither does the label's POSITION in its benchmark: most unknown
+  //      ladders are tracks, so index-based guessing would call TSK's
+  //      "Strafes" or xyz's "#5 Ground" Hard for no reason.
+  //   2. Across the playlists carrying the scenario, take the MEDIAN placement;
+  //      an even split between two different levels (Easy+Hard, or two
+  //      adjacent levels) reads Intermediate.
+  //   3. Only when no playlist label says anything, the scenario's own NAME is
+  //      read with a tighter whole-word list (easy/easier/novice/newcomer/
+  //      beginner → Easy; intermediate/medium → Intermediate; advanced/hard/
+  //      expert → Hard). Playlist labels win over name suffixes: the curator's
+  //      placement over the author's variant name.
+  //   4. Otherwise '' — unrated. Shown as such rather than as Intermediate.
+  // Returns 'Easy' | 'Intermediate' | 'Hard' | ''.
+  const DIFF_LABEL_VOCAB = [
+    // order matters only where one phrase contains another ("pre-advanced" before "advanced")
+    ['pre-advanced', 1],
+    ['level 1', 0], ['level 2', 1], ['level 3', 2], ['level 4', 2],
+    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0], ['entry', 0], ['genesis', 0], ['轻松', 0],
+    ['intermediate', 1], ['medium', 1], ['normal', 1], ['main', 1], ['basic', 1], ['ascension', 1], ['中等', 1],
+    ['hard', 2], ['expert', 2], ['advanced', 2], ['adv', 2], ['ultimate', 2], ['boss', 2], ['enlightenment', 2], ['elite', 2],
+    ['veteran', 2], ['wallhack', 2], ['evil', 2], ['demonic', 2], ['promax', 2], ['困难', 2]
+  ];
+  const DIFF_NAME_VOCAB = [
+    ['easier', 0], ['easy', 0], ['novice', 0], ['newcomer', 0], ['beginner', 0],
+    ['intermediate', 1], ['medium', 1],
+    ['advanced', 2], ['hard', 2], ['expert', 2]
+  ];
+  const DIFF_NAMES = ['Easy', 'Intermediate', 'Hard'];
+  function difficultyLevelOfLabel(label){
+    const t = String(label||'').toLowerCase().trim();
+    if(!t) return -1;
+    // whole-word for latin phrases (so "adv" doesn't fire inside "advantage"),
+    // plain substring for the CJK words
+    for(const [w, lvl] of DIFF_LABEL_VOCAB){
+      if(/[a-z]/.test(w) ? new RegExp('(^|[^a-z])'+w.replace(/[-\s]/g,'[-\\s]?')+'([^a-z]|$)').test(t) : t.includes(w)) return lvl;
+    }
+    return -1;
+  }
+  function difficultyLevelOfName(name){
+    const t = String(name||'').toLowerCase();
+    const found = [];
+    for(const [w, lvl] of DIFF_NAME_VOCAB){ if(new RegExp('(^|[^a-z])'+w+'([^a-z]|$)').test(t)) found.push(lvl); }
+    if(!found.length) return -1;
+    // a name carrying two levels ("Novice … Hard") is a variant name, not a
+    // placement — treat like an even split
+    const lo = Math.min(...found), hi = Math.max(...found);
+    return lo===hi ? lo : 1;
+  }
+  function medianLevel(levels){
+    const s = levels.slice().sort((a,b)=>a-b);
+    const n = s.length;
+    if(!n) return -1;
+    if(n%2) return s[(n-1)/2];
+    const a = s[n/2-1], b = s[n/2];
+    return a===b ? a : 1;
+  }
   function classifyDifficulty(name, difficulties){
-    const easy = hasEasySignal(name) || difficulties.some(hasEasySignal);
-    const hard = hasHardSignal(name) || difficulties.some(hasHardSignal);
-    if(easy && hard) return 'Intermediate';
-    if(easy) return 'Easy';
-    if(hard) return 'Hard';
-    return 'Intermediate';
+    const fromLabels = (difficulties||[]).map(difficultyLevelOfLabel).filter(l=>l>=0);
+    let lvl = medianLevel(fromLabels);
+    if(lvl<0) lvl = difficultyLevelOfName(name);
+    return lvl<0 ? '' : DIFF_NAMES[lvl];
   }
 
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, countScenarios };
