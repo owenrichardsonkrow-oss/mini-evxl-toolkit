@@ -1524,6 +1524,10 @@ const MiniEvxlEngine = (function(){
       else if(w==='faster') sum += 1;
       return ' ';
     });
+    // "N% size" (target scale) inverts the bare-percent rule below -- bigger
+    // targets are easier: >=115 -> -1 (like "larger"); <=90 -> +1 (<=50 -> +2,
+    // like "smaller"). Speed-style names still read through the bare rule.
+    t = t.replace(/(\d+)\s*%\s*size/g, (m, n)=>{ const v=Number(n); if(v>=115) sum -= 1; else if(v<=90) sum += v<=50 ? 2 : 1; return ' '; });
     // a lone "N%" (size or speed scale): ≤90 → easier (80% and 90% both measured
     // easier), ≥115 → harder (150%/200% 0.67 mean placement delta), else nothing
     t = t.replace(/(\d+)\s*%/g, (m, n)=>{ const v=Number(n); if(v<=90) sum -= 1; else if(v>=115) sum += 1; return ' '; });
