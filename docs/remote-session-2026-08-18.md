@@ -229,6 +229,20 @@ words.
    set stays a hard investigate signal (verified in both directions).
 6. **`docs/difficulty-wholename-movers.txt`** (second wave) — Finding 4's full
    veto-review list, generated from the patched engine.
+7. **`.github/workflows/deploy.yml`** (third wave) — gated Pages deploy: on
+   master pushes, a test job (all three suites) gates the artifact deploy, so
+   a red push can no longer replace the live page. Inert until merged; the
+   cutover and revert steps are in the workflow header and checklist item 7.
+8. **`test/harness.html`** (third wave) — now also runs the difficulty
+   snapshot in the browser. The RESULT line keeps its original keys (golden
+   results) so the home parser keeps working; difficulty is nested — fully
+   green = `problemCount 0` AND `difficulty.problemCount 0`. `?write=1` also
+   prints a DIFFSNAP line. Verified end-to-end in headless Chromium against a
+   local static server.
+9. **`CLAUDE.md`** (third wave, draft) — the missing day written in: three-test
+   CI, the difficulty attribute with the port-pending warning, a
+   remote-sessions section, gated Pages. It is Owen's file — wording pass at
+   home, reshape freely.
 
 Maintenance note: a weekly structure refresh moves the difficulty snapshot the
 same way it moves the golden file (entries appear/vanish). Whatever step of the
@@ -254,11 +268,15 @@ will fail CI on the snapshot instead of the golden.
 5. Decide where snapshot regeneration lands in the home tooling (a sibling of
    `dev\run-tests.ps1 -WriteGolden`?), and wire it into the weekly chain
    wherever the golden gets re-blessed.
-6. Judge the workflow itself. Candidates observed from inside: CLAUDE.md could
-   gain a short "remote sessions" paragraph (what is editable remotely vs
-   personal-repo-first; kovaaks.com and pwsh unavailable there); and decide
-   whether session docs like this one live on in `docs/` or get dropped at
-   merge.
+6. Judge the workflow itself. The CLAUDE.md "remote sessions" section this
+   list originally proposed now exists as a third-wave draft — review the
+   wording (it is your file); and decide whether session docs like this one
+   live on in `docs/` or get dropped at merge.
+7. After merging: check Settings → Pages shows source "GitHub Actions" and the
+   "deploy pages" run went green (the workflow attempts the switch itself; if
+   the deploy job errors on Pages configuration, flip the source once by hand
+   and re-run). From then on a red master push leaves the previous live page
+   up instead of going live.
 
 Merge note: after the second wave this branch carries **one behavior change in
 regeneration-owned files** — the `% size` rule in `src/engine.js` and the
@@ -293,3 +311,23 @@ I trust your recommendations"). Done in this wave, all on this branch:
 Still home-only after this wave: the Finding 2 leaderboard measurements, the
 Finding 4 veto read, the tracker-side port (checklist item 1), and wiring
 snapshot regeneration into the weekly chain.
+
+### Third wave — same day, continued authorization
+
+- **Gated Pages deploy** (`.github/workflows/deploy.yml`): the live page — a
+  real user's page — previously updated on every master push regardless of CI
+  results. Now a test job gates the deploy. Inert until merged; cutover and
+  revert in the workflow header and checklist item 7.
+- **Browser harness runs difficulty too** (`test/harness.html`): original
+  RESULT keys untouched for the home parser, difficulty nested; verified in
+  headless Chromium against a local static server (golden 251×12 and
+  difficulty 3,040 both green in-browser).
+- **CLAUDE.md caught up** (draft): three-test CI, difficulty attribute with
+  the port-pending warning, remote-sessions section, gated Pages.
+- **Also verified this wave, no changes needed:** the shipped template boots
+  clean in headless Chromium (home / shared / detail routes, zero console
+  errors, all 251 cards render, difficulty chips render including Unrated);
+  the `?user=` parameter is XSS-safe (64-char cap + `esc()` at both reflection
+  points, and `esc()` escapes quotes); unrated scenarios sort to the bottom
+  under both difficulty sort directions; README already matches the
+  onboarding-first framing rule, `?user=` documented.
