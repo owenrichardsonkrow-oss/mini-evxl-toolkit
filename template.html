@@ -1447,10 +1447,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     steamUrl: '',
     steamLabel: '',
     evxlProfileUrl: '',
-    storePrefix: 'mini-evxl-template'
+    storePrefix: 'mini-evxl-template',
+    dev: false
   };
   // ---- end site identity -------------------------------------------------
   const IS_TOOLKIT_TEMPLATE = !!SITE.template;
+  const IS_DEV_BUILD = !!SITE.dev;
   const STORE_PREFIX = String(SITE.storePrefix||'mini-evxl');
   const storeKey = s => STORE_PREFIX+'-'+s;
   // The engine (src/engine.js, inlined just above this script by build.ps1).
@@ -3752,7 +3754,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
   // copy hides the importer (its data is baked in), the template shows it.
-  document.getElementById('brand-text').textContent = IS_TOOLKIT_TEMPLATE ? 'Benchmark Tracker' : String(SITE.owner||'my')+"'s benchmarks";
+  document.getElementById('brand-text').textContent = (IS_TOOLKIT_TEMPLATE ? 'Benchmark Tracker' : String(SITE.owner||'my')+"'s benchmarks") + (IS_DEV_BUILD ? ' · DEV' : '');
+  if(IS_DEV_BUILD && !/\[DEV\]/.test(document.title)) document.title += ' [DEV]';
   if(IS_TOOLKIT_TEMPLATE) navImport.style.display = '';
   updateTopnavSource();
   route();
