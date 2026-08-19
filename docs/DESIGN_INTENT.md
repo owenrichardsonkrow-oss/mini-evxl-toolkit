@@ -212,6 +212,23 @@ about skill structure.
   recommends collection visits; the return-collect rate is tracked as the
   tool's own KPI.
 
+## Built so far (home session, 2026-08-18 evening — review ledger II)
+
+- **Attempt capture (D10)** — the `last-scores/by-name` check answered yes
+  (last 10 runs per scenario, each with an epoch); the tracker now keeps an
+  attempts store fed by the deep sync, total-play epochs, local CSVs and
+  auto-check PBs, exports it (format v2), bakes it into the personal page,
+  and shows plays / last played / best-of-last-5 vs PB on every scenario card.
+- **Session page v0** — `#/session`: ten items with a why each (floor /
+  placement / quick win / revisit / wildcard), v0 metric = ladder position,
+  skills = facets, uncertainty-aware (thin facets get placement), thin regime
+  = "just play", deterministic per day, live tick-off from auto-check, one-tap
+  feel rating, return-collect count over the session log.
+- **Percentile harvest (D8)** — `dev/harvest-percentiles.ps1` samples the
+  score at 7 anchor ranks per played scenario (the leaderboard endpoint takes
+  no player filter — probed); first run 2026-08-18 by hand. The engine's
+  interpolation and the metric swap follow once the numbers have been looked at.
+
 ## Staging
 
 Remote-session-doable now: this document; the taxonomy proposal and

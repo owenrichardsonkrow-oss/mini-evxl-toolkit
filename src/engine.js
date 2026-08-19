@@ -1049,6 +1049,103 @@ const MiniEvxlEngine = (function(){
     return { n: Math.max(Number(rec.n)||0, last.length), lastT, recentBest, nearness, daysSince: nowMs ? (nowMs-lastT)/86400000 : null };
   }
 
+  // ---- Session engine v0 (DESIGN_INTENT "Session engine", 2026-08-18) ----------
+  // Composes today's session: `size` items, each with a WHY, from a plain list
+  // of scenarios the app prepares. v0 stand-ins the design doc names: the
+  // competency metric is ladder position (completion 0..1, best across the
+  // playlists carrying the scenario) until percentile curves exist; a "skill"
+  // is a facet (mechanic or modifier); responsiveness is recent raises. Fun is a
+  // constraint by construction: mixed by type, wildcards, nothing repeats.
+  //   scenarios: [{ name, played:bool, completion:0..1, toNext:0..1, maxed:bool,
+  //                 rung:-1..8, facets:[...facet keys], playlists:int,
+  //                 att:{ n, lastT, nearness } | null, raises14d:int }]
+  //   opts:      { size:10, seed:int (a day number), now:ms }
+  // Returns { regime:'thin'|'normal', level:rung, profile:[{facet, median, n, conf}],
+  //           items:[{ name, why, reason, facet, rung }] }.
+  // Regimes (D9): under THIN_PLAYED rated played scenarios the honest answer is
+  // "just play" -- a placement session across the three mechanics at easy/mid
+  // rungs; otherwise floor-biased: weak-and-responsive facets first, uncertain
+  // facets get placement items, quick wins are the reward slice, one revisit
+  // to collect, wildcards for variety.
+  const SESSION_THIN_PLAYED = 30;
+  const SESSION_TEMPLATE = { floor: 4, placement: 2, quickwin: 2, revisit: 1, wildcard: 1 };
+  function seededRandom(seed){ let s = (seed>>>0) || 1; return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function medianOf(arr){ const s = arr.slice().sort((a,b)=>a-b); const n=s.length; if(!n) return null; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
+  // Per-facet competency over played scenarios: median completion, n, confidence = min(1, n/8).
+  function skillProfile(scenarios){
+    const by = new Map();
+    scenarios.forEach(sc=>{ if(!sc.played) return; (sc.facets||[]).forEach(f=>{ if(f.includes(':') || f==='no-aim') return; if(!by.has(f)) by.set(f, []); by.get(f).push(sc); }); });
+    const out = [];
+    by.forEach((list, facet)=>{
+      const median = medianOf(list.map(sc=>sc.completion));
+      const raises = list.reduce((a,sc)=>a+(sc.raises14d||0), 0);
+      out.push({ facet, median, n: list.length, conf: Math.min(1, list.length/8), raises14d: raises });
+    });
+    return out.sort((a,b)=> a.median - b.median || b.n - a.n);
+  }
+  function composeSession(scenarios, opts){
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now() }, opts||{});
+    const rnd = seededRandom(opts.seed);
+    const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+    const rated = scenarios.filter(sc=>sc.rung>=0);
+    const played = rated.filter(sc=>sc.played);
+    const chosen = new Set();
+    const items = [];
+    const take = (list, why, reason, n) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name); items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, facet: sc._facet||null, rung: sc.rung }); n--; } };
+    const label = sc => (sc.rung>=0 ? DIFF_LABELS[sc.rung] : 'Unrated');
+    if(played.length < SESSION_THIN_PLAYED){
+      // "Just play": one placement round across the mechanics, easy to mid rungs, unplayed first.
+      const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
+      const mechs = FACET_MECHANICS.slice();
+      let guard = 0;
+      while(items.length<opts.size && guard++<opts.size*4){
+        const m = mechs[items.length % mechs.length];
+        const pick = pool.find(sc=>!chosen.has(sc.name) && (sc.facets||[]).includes(m)) || pool.find(sc=>!chosen.has(sc.name));
+        if(!pick) break;
+        take([Object.assign({}, pick, {_facet: m})], 'placement', 'Placement — '+m+' at '+label(pick)+': there isn\'t enough played history yet to say where you stand, so play and generate evidence.', 1);
+      }
+      return { regime: 'thin', level: null, profile: [], items };
+    }
+    const level = Math.round(medianOf(played.map(sc=>sc.rung)));
+    const nearLevel = sc => sc.rung>=level-1 && sc.rung<=level+1;
+    const profile = skillProfile(rated);
+    // Uncertainty-aware (D1): a facet with fewer than 4 played scenarios gets
+    // placement items, not training; among the rest the floor picks go to the
+    // weakest, nudged toward responsive ones (recent raises) and away from
+    // thinly-measured ones -- never all to the single weakest.
+    const known = profile.filter(p=>p.n>=4);
+    const uncertain = profile.filter(p=>p.n<4);
+    const floorKey = p => p.median - 0.05*Math.min(p.raises14d,4) + 0.10*(1-p.conf);
+    const floorFacets = known.slice().sort((a,b)=> floorKey(a)-floorKey(b)).slice(0, SESSION_TEMPLATE.floor);
+    floorFacets.forEach(p=>{
+      // in that facet, near level: played-but-low first (not stuck: nearness >= .85 or few tries), then unplayed
+      const inFacet = rated.filter(sc=>(sc.facets||[]).includes(p.facet) && nearLevel(sc) && !sc.maxed);
+      const playedLow = shuffle(inFacet.filter(sc=>sc.played && sc.completion < Math.max(p.median, 0.5) && (!sc.att || sc.att.n<3 || (sc.att.nearness!==null && sc.att.nearness>=0.85))));
+      const fresh = shuffle(inFacet.filter(sc=>!sc.played));
+      take(playedLow.concat(fresh).map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'floor', sc=>'Floor — '+p.facet+' is one of your weakest skills (on average '+Math.round(p.median*100)+'% of the way up the tier ladder across '+p.n+' played scenarios)'+(p.raises14d? ' and it has been moving ('+p.raises14d+' raise'+(p.raises14d===1?'':'s')+' in 14 days)':'')+'; '+label(sc)+' is at your level.', 1);
+    });
+    // placement: uncertain facets
+    shuffle(uncertain).slice(0, SESSION_TEMPLATE.placement).forEach(p=>{
+      const cands = shuffle(rated.filter(sc=>(sc.facets||[]).includes(p.facet) && !sc.played && nearLevel(sc)));
+      take(cands.map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'placement', sc=>'Placement — only '+p.n+' played scenario'+(p.n===1?' carries':'s carry')+' '+p.facet+', so its number is a guess; '+label(sc)+' will say more.', 1);
+    });
+    // quick wins: closest to the next merged tier
+    const qw = played.filter(sc=>!sc.maxed && sc.toNext>=0.7).sort((a,b)=> b.playlists - a.playlists || b.toNext - a.toNext);
+    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', SESSION_TEMPLATE.quickwin);
+    // revisit-collect: the longest-unplayed scenario in a facet that has been moving
+    const moving = new Set(known.filter(p=>p.raises14d>0).map(p=>p.facet));
+    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && (moving.size===0 || (sc.facets||[]).some(f=>moving.has(f)))).sort((a,b)=> a.att.lastT - b.att.lastT);
+    take(rev, 'revisit', sc=>'Revisit — last played '+Math.round((opts.now - sc.att.lastT)/86400000)+' days ago and the skills around it have moved since; go collect the PB.', SESSION_TEMPLATE.revisit);
+    // wildcards: unplayed near level, anywhere
+    take(shuffle(rated.filter(sc=>!sc.played && nearLevel(sc))), 'wildcard', sc=>'Wildcard — something new at '+label(sc)+', for variety.', SESSION_TEMPLATE.wildcard);
+    // top up with more floor picks, then anything near level
+    if(items.length<opts.size){
+      known.slice(0, 8).forEach(p=>{ if(items.length>=opts.size) return; const c = shuffle(rated.filter(sc=>(sc.facets||[]).includes(p.facet) && nearLevel(sc) && !sc.maxed && !chosen.has(sc.name))); take(c.map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'floor', sc=>'Floor — more '+p.facet+' at '+label(sc)+'.', 1); });
+    }
+    if(items.length<opts.size) take(shuffle(rated.filter(sc=>nearLevel(sc) && !sc.maxed)), 'wildcard', sc=>'Wildcard — '+label(sc)+'.', opts.size-items.length);
+    return { regime: 'normal', level, profile, items };
+  }
+
   // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
   // A NINE-rung scale, read as family × nudge:
   //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
@@ -1471,6 +1568,6 @@ const MiniEvxlEngine = (function(){
     if(fx.exclude) out.push('no-aim');
     return out;
   }
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
