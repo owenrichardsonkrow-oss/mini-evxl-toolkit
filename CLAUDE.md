@@ -10,7 +10,7 @@ Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
 `template.html` from `master` / root — enabled in the repo's Settings → Pages by
 Owen. Since 2026-08-18 (`.github/workflows/deploy.yml`, written on the remote
 branch; active once merged, with the Pages source on "GitHub Actions") the live
-page only updates when all three test suites pass on the pushed master — a red
+page only updates when all four test suites pass on the pushed master — a red
 push leaves the previous deploy up. Pushing is routine now; the personal
 tracker repo has no remote and stays that way (it embeds Owen's own scores).
 
@@ -59,7 +59,8 @@ rulings executable). `test/template-integrity.js` guards the
 shipped page itself: every script block parses, the embedded engine byte-equals
 `src/engine.js`, SITE stays generic, `esc()` keeps escaping `"` — the gaps
 golden can't see because it requires `src/engine.js` directly. GitHub Actions
-runs all three on every push including `claude/**` remote branches
+runs all four on every push including `claude/**` remote branches (template-
+integrity is skipped on `dev`, whose tracked template is the last release by design)
 (`.github/workflows/test.yml`). The golden file is regenerated only from the
 personal repo (`dev\run-tests.ps1 -WriteGolden`) after an intended engine change
 that the differential test has blessed — never by hand here.

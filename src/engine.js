@@ -1108,12 +1108,16 @@ const MiniEvxlEngine = (function(){
     // "N% smaller|larger|…" — the word gives the direction, N the size:
     // smaller/thinner N≥50 → +2, N≥15 → +1 (30% smaller measured 0.91, 50% 0.57);
     // larger/bigger N≥15 → −1 (30% larger 1.32); slower −1 / faster +1; N<15 → nothing.
-    t = t.replace(/(\d+)\s*%\s*(smaller|thinner|larger|bigger|slower|faster)/g, (m, n, w)=>{
+    // The bare words count the same way when a percent precedes them ("30% small"
+    // measured 0.65 on KovaaK's, 2026-08-18 Finding 2 — the percent belongs to the
+    // size word, it is not a lone scale): small/thin like smaller, large/big like
+    // larger, slow like slower, fast like faster.
+    t = t.replace(/(\d+)\s*%\s*(smaller|thinner|larger|bigger|slower|faster|small|thin|large|big|slow|fast)\b/g, (m, n, w)=>{
       const v = Number(n);
-      if(w==='smaller' || w==='thinner') sum += v>=50 ? 2 : v>=15 ? 1 : 0;
-      else if(w==='larger' || w==='bigger') sum -= v>=15 ? 1 : 0;
-      else if(w==='slower') sum -= 1;
-      else if(w==='faster') sum += 1;
+      if(w==='smaller' || w==='thinner' || w==='small' || w==='thin') sum += v>=50 ? 2 : v>=15 ? 1 : 0;
+      else if(w==='larger' || w==='bigger' || w==='large' || w==='big') sum -= v>=15 ? 1 : 0;
+      else if(w==='slower' || w==='slow') sum -= 1;
+      else if(w==='faster' || w==='fast') sum += 1;
       return ' ';
     });
     // "N% size" (target scale) inverts the bare-percent rule below -- bigger
