@@ -1,10 +1,11 @@
 # KovaaK's Benchmark Tracker
 
 A self-hosted, single-file KovaaK's aim-training benchmark tracker in the spirit of
-[evxl.app](https://evxl.app) — cross-playlist shared-scenario XP bars, To Max/To
-2nd/To Next progress, tag filtering, dynamic playlist-range filters, and a "Unique
-Scenarios" page evxl itself doesn't have. It's one HTML file: no build step, no
-server, no account.
+[evxl.app](https://evxl.app) — a Scenarios page evxl itself doesn't have (every
+scenario across every playlist, one merged XP bar each, ranked by how many
+playlists it unlocks), To Max/To 2nd/To Next progress, skill-facet and curator-tag
+filtering, difficulty rungs, a local rank engine. It's one HTML file: no build
+step, no server, no account.
 
 This started as a personal tool and is shared here so anyone else can run their own
 copy, for free, with their own data.
@@ -149,7 +150,9 @@ reproduces them so the numbers match what you'd see there — credit to evxl.
 
 Four separable parts, which is worth knowing before changing anything:
 
-1. **The site itself** — the home grid plus the Shared and Unique Scenarios pages.
+1. **The site itself** — the home grid plus the Scenarios page (every scenario,
+   one bar each; filter by how many playlists carry it — 1 = unique to one
+   playlist, 2+ = shared).
    Entirely *derived*: tag associations, shared-scenario grouping, and the To Max/To
    2nd/To Next bars all recompute from the dataset on every render. Nothing is
    cached in a way that can drift out of sync with the data behind it.
@@ -204,14 +207,22 @@ open `http://localhost:8744`.
 - `src/engine.js` — the tracker's rank engine on its own (the same code that is
   inlined into `template.html`): dataset parsing, tier reading, all of evxl's
   rank rules, volts, pool selection. Loadable in Node; that's what the tests use.
-- `test/golden.js` + `test/golden-standings.json` — the regression test: seeded
-  score vectors for every playlist and the standings the engine is expected to
-  produce (recorded from an engine proven identical to evxl's own rank code).
-  `node test/golden.js` — also run by GitHub Actions on every push
-  (`.github/workflows/test.yml`). `test/harness.html` runs the same test in a
-  browser for machines without Node.
-- `docs/SCRAPING_GUIDE.md` — how to pull a dataset off evxl.app from scratch, only
-  needed if you want playlists outside what's already pre-loaded in the template.
+- `test/` — four regression tests, all run by GitHub Actions on every push
+  (`.github/workflows/test.yml`; the Pages deploy is gated on them):
+  `golden.js` + `golden-standings.json` (seeded score vectors for every
+  playlist and the standings the engine must produce — recorded from an engine
+  proven identical to evxl's own rank code), `difficulty.js` +
+  `difficulty-snapshot.json` (every scenario's difficulty rung), `facets.js` +
+  `facets-snapshot.json` (every scenario's skill facets), and
+  `template-integrity.js` (the shipped `template.html` itself: script blocks
+  parse, embedded engine matches `src/engine.js`, no personal strings).
+  `test/harness.html` runs the first three in a browser for machines without Node.
+- `apply-evxl-catalog.ps1` — stamps evxl's per-playlist rank metadata onto a
+  dataset (maintainer tool); `fix-mojibake.ps1` — repairs double-encoded text.
+- `docs/DESIGN_INTENT.md` — where this is going (tracker → training optimizer)
+  and every design decision so far; `docs/SCRAPING_GUIDE.md` — how to pull a
+  dataset off evxl.app from scratch, only needed if you want playlists outside
+  what's already pre-loaded in the template.
 
 ## Data format
 

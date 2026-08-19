@@ -283,15 +283,16 @@ card. The template now holds 251 entries / 127 playlists.
 
 ## Rules that are easy to break
 
-- **Shared and Unique scenario cards must stay visually identical** — both pages
-  are one function, `renderScenarioList(kind, params)` (config in `SCEN_LIST`;
-  unique entries carry `playlists: [entry]`). Only the "# playlists" chip and the
-  min/max range are shared-only. Don't fork it again.
+- **One scenario list page (`#/scenarios`, since 2026-08-18) and one card
+  renderer** — the old Shared (2+ playlists) and Unique (exactly 1) pages are
+  the same page with the "playlists" range preset; `#/shared` and `#/unique`
+  still route there as aliases so old links work. Every card is drawn by one
+  `makeCard`; legend playlist names link to their playlist. Don't fork it again.
 - **`achievedIndex()` is the one tier rule** (threshold ≤ 0 never reads as
   cleared) for bars, labels and the rank engine alike.
-- **Filter state lives in the hash query** (`#/shared?q=..`, `#/?sort=..`),
+- **Filter state lives in the hash query** (`#/scenarios?q=..&min=..&max=..`, `#/?sort=..`),
   written with `replaceState`; new filters go into `st` + `syncUrl()`. Long lists
-  use `drawChunked()`; search inputs are debounced.
+  use `drawChunked()`; search inputs are debounced. Nav items are `<a href>` links.
 - **Keep the leading `<!DOCTYPE html>` + charset + viewport** — without them a
   double-clicked or Pages-hosted copy renders in quirks mode.
 - **Any new cache keyed off `BENCHMARKS` must be reset in `invalidateCaches()`.**

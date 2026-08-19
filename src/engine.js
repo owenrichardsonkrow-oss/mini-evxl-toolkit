@@ -1,8 +1,14 @@
 // mini-evxl engine -- the pure part of the tracker: dataset parsing (v2 and the
 // v1 importer), tier reading, evxl's rank rules, volts, pool selection, merged
-// progress. No DOM, no storage, no fetch. build.ps1 inlines it into the page
-// ahead of app.js; tests load it in Node:  const E = require('./src/engine.js').
-// Every rule here is proven against evxl's own functions by dev/rank-diff-test.js.
+// progress, difficulty rungs, skill facets. No DOM, no storage, no fetch.
+// build.ps1 inlines it into the page ahead of the src/app/*.js fragments; tests
+// load it in Node:  const E = require('./src/engine.js').
+// Every rank rule here is proven against evxl's own functions by dev/rank-diff-test.js.
+// A note for readers: the rank rules from scenarioEnergy() through the 28-mode tail
+// deliberately keep evxl's own one-letter variable names -- they read as minified
+// code because they were transliterated from it, and their correctness rests on the
+// differential test, not on readability. Don't tidy them for their own sake; if a
+// mode ever needs to change, the diff test is what makes a readable rewrite safe.
 const MiniEvxlEngine = (function(){
   function stripSuffix(s){ return String(s).replace(/\s*-\s*[\d,]+$/,'').trim(); }
 
@@ -983,6 +989,7 @@ const MiniEvxlEngine = (function(){
     playlists.forEach(pl=>{ pl.tiers.forEach(([,thresh])=>{ merged.push(thresh); }); });
     merged.sort((a,b)=>a-b);
     const n = merged.length;
+    if(n===0) return { toMax:0, to2nd:0, toNext:0, maxed:false };   // no tiers anywhere: nothing to measure against
     const top = merged[n-1];
     const min = merged[0];
     const uniqueDesc = [...new Set(merged)].sort((a,b)=>b-a);
@@ -1079,7 +1086,10 @@ const MiniEvxlEngine = (function(){
     ['larger', -1], ['large', -1], ['bigger', -1], ['big', -1], ['jumbo', -1], ['massive', -1], ['huge', -1], ['giant', -1],
     ['slower', -1], ['slowed', -1], ['slow', -1], ['short', -2], ['static', -1], ['no ufo', -1], ['less blinks', -1]
   ];
-  const wordRe = w => new RegExp('(^|[^a-z0-9%])'+w.replace(/[-\s]/g,'[-\\s]?').replace(/\+/g,'\\+')+'(?=[^a-z0-9%]|$)');
+  // Memoised: classifyDifficulty builds ~80 of these per call and runs over
+  // every scenario on load; the table of vocab words is small and fixed.
+  const _wordReCache = new Map();
+  const wordRe = w => { let re = _wordReCache.get(w); if(!re){ re = new RegExp('(^|[^a-z0-9%])'+w.replace(/[-\s]/g,'[-\\s]?').replace(/\+/g,'\\+')+'(?=[^a-z0-9%]|$)'); _wordReCache.set(w, re); } return re; };
   function difficultyRungOfLabel(label){
     const t = String(label||'').toLowerCase().trim();
     if(!t) return -1;
