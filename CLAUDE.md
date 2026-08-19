@@ -31,7 +31,8 @@ both branches.
 
 `template.html` is produced by the personal repo's **`build.ps1 -Template`**
 (`generate-template.ps1` here is a thin wrapper) from that repo's source tree —
-`src/page.html` + `styles.css` + `engine.js` + `app.js` and `data/`. The template
+`src/page.html` + `styles.css` + `engine.js` + `app/*.js` (ordered fragments of one
+IIFE, since 2026-08-18) and `data/`. The template
 build empties the scores block (the v2 dataset is structure only, so it ships
 verbatim), and swaps the page's **`SITE` identity block** (the only personal
 strings in the script: `template`, `owner`, `defaultUsername`,
