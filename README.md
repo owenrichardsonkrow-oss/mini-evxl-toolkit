@@ -106,6 +106,12 @@ same host keeps its own store and never leaks into yours. Stores written by
 template builds from before 2026-08-17 used the unprefixed keys; Export from that
 build and Import into this one to carry them over.) So:
 
+- Since 2026-08-18 the tracker also keeps the **runs behind your scores** — the
+  last 20 attempts per scenario, from the online sync (KovaaK's keeps your last
+  10 runs per scenario), the local stats folder (one file = one run) and the
+  auto-check — and shows "N plays · last 3d ago · best of last 5: 92% of PB" on
+  each scenario card, so a scenario you keep failing at and one you simply
+  haven't opened stop looking the same. They travel with Export/Import.
 - **Settings → Your scores → Export** saves them as a small `.json`. Do this
   after a big sync. **Import** merges a backup in (it never lowers a score), which
   is also how you carry scores from one copy of the tracker to another.

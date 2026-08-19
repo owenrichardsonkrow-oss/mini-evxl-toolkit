@@ -55,6 +55,9 @@ if (data) {
 }
 const scores = html.match(/<script id="scores-data"[^>]*>([\s\S]*?)<\/script>/);
 check(!!scores && scores[1].trim() === '{}', 'scores-data block is not the empty {} seed');
+// attempts-data (since 2026-08-18): the owner's logged runs on the personal page; the template ships {}
+const attempts = html.match(/<script id="attempts-data"[^>]*>([\s\S]*?)<\/script>/);
+check(!attempts || attempts[1].trim() === '{}', 'attempts-data block is not the empty {} seed');
 
 // ---- SITE identity block: template build must have swapped in generic values
 const site = html.match(/const SITE = \{([\s\S]*?)\};/);

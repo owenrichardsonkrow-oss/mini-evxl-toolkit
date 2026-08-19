@@ -56,15 +56,22 @@ foreach ($b in $ds.data) { foreach ($s in (Get-EntryScenarios $b)) { $carried[$s
 $orphans = @($map.Keys | Where-Object { -not $carried.ContainsKey($_) }).Count
 $before = @{}; foreach ($k in $ds.scores.Keys) { $before[$k] = $ds.scores[$k] }
 $raised = Merge-Scores $ds $map
+# A v2 export (2026-08-18) also carries the runs behind the scores; merge them
+# into the file's attempts block / data\attempts.json (union, deduped, capped).
+$runsAdded = 0
+if ($export.PSObject.Properties.Name -contains 'attempts' -and $export.attempts) {
+    $inc = ConvertFrom-AttemptsJson ($export.attempts | ConvertTo-Json -Depth 6 -Compress)
+    if ($inc.Count) { $runsAdded = Merge-Attempts $ds $inc }
+}
 
-if ($raised.Count -eq 0) {
-    Write-Output "Nothing to apply: the file already holds every score at least as high."
+if ($raised.Count -eq 0 -and $runsAdded -eq 0) {
+    Write-Output "Nothing to apply: the file already holds every score at least as high (and every run)."
     exit 0
 }
-Write-Output ("{0} scenario score(s) would be raised{1}." -f $raised.Count, $(if ($orphans) { " ($orphans of the export's scenarios are not in this file's playlists; kept anyway)" } else { '' }))
+Write-Output ("{0} scenario score(s) would be raised{1}{2}." -f $raised.Count, $(if ($orphans) { " ($orphans of the export's scenarios are not in this file's playlists; kept anyway)" } else { '' }), $(if ($runsAdded) { "; $runsAdded run(s) would be logged" } else { '' }))
 $raised | Sort-Object | ForEach-Object { [pscustomobject]@{ scenario = $_; oldScore = $(if ($before.ContainsKey($_)) { Format-Num $before[$_] } else { '-' }); newScore = Format-Num $ds.scores[$_] } } | Format-Table -AutoSize | Out-String -Width 200
 
-if ($PSCmdlet.ShouldProcess($Html, "Write $($raised.Count) raised score(s)")) {
+if ($PSCmdlet.ShouldProcess($Html, "Write $($raised.Count) raised score(s), $runsAdded run(s)")) {
     Write-TrackerDataset $ds $Html
     Write-Output "Wrote $Html"
 } else {

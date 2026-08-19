@@ -30,6 +30,7 @@ $PctRegex = '^-?\d+(\.\d+)?%$'
 $Inv = [System.Globalization.CultureInfo]::InvariantCulture
 $DataTag   = '<script id="benchmarks-data" type="application/json">'
 $ScoresTag = '<script id="scores-data" type="application/json">'
+$AttemptsTag = '<script id="attempts-data" type="application/json">'   # since 2026-08-18: { name: { n, last: [[t, s], ...] } }, {} in the template
 
 function Resolve-FullPath([string]$p) { $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($p) }
 
@@ -94,7 +95,8 @@ function Read-TrackerDataset([string]$Path, [switch]$AllowLegacy) {
             if ($obj) { foreach ($p in $obj.PSObject.Properties) { $v = ConvertTo-Num $p.Value; if ($v -gt 0) { $scores[$p.Name] = $v } } }
         }
         if (@($data | Where-Object { $_.PSObject.Properties['rows'] -and -not $_.PSObject.Properties['groups'] }).Count) { throw "$bj holds v1 (hdrs/rows) entries" }
-        return [pscustomobject]@{ kind = 'dir'; path = $Path; data = $data; scores = $scores; legacy = $false }
+        $attempts = Read-AttemptsFile (Join-Path $Path 'attempts.json')   # {} when the file doesn't exist yet
+        return [pscustomobject]@{ kind = 'dir'; path = $Path; data = $data; scores = $scores; attempts = $attempts; legacy = $false }
     }
     $Html = $Path
     $content = [System.IO.File]::ReadAllText($Html, $Utf8NoBom)
@@ -115,7 +117,95 @@ function Read-TrackerDataset([string]$Path, [switch]$AllowLegacy) {
         $obj = $content.Substring($ss, $se - $ss) | ConvertFrom-Json
         if ($obj) { foreach ($p in $obj.PSObject.Properties) { $v = ConvertTo-Num $p.Value; if ($v -gt 0) { $scores[$p.Name] = $v } } }
     }
-    [pscustomobject]@{ kind = 'html'; path = $Html; content = $content; start = $s; end = $e; data = $data; scoresStart = $ss; scoresEnd = $se; scores = $scores; legacy = $legacy }
+    # attempts block (optional; pages built before 2026-08-18 have none)
+    $attempts = $null; $as = $content.IndexOf($AttemptsTag); $ae = -1
+    if ($as -ge 0) {
+        $as += $AttemptsTag.Length
+        $ae = $content.IndexOf('</script>', $as)
+        $attempts = ConvertFrom-AttemptsJson ($content.Substring($as, $ae - $as))
+    }
+    [pscustomobject]@{ kind = 'html'; path = $Html; content = $content; start = $s; end = $e; data = $data; scoresStart = $ss; scoresEnd = $se; scores = $scores; attemptsStart = $as; attemptsEnd = $ae; attempts = $attempts; legacy = $legacy }
+}
+
+# ---- attempts (2026-08-18, DESIGN_INTENT D10) ------------------------------------
+# name -> @{ n = <int>; last = @(@(t, s), ...) } newest-first, t in ms, capped at 20.
+# The page's mergeAttempts() rule, mirrored: same score within ten minutes = the
+# same run seen twice.
+$AttemptKeep = 20
+$AttemptDedupeMs = 600000
+# Newest-first, capped, WITHOUT piping arrays-of-arrays (a one-element result
+# unrolls to the inner pair -- the trap CLAUDE.md warns about). Sorts indices.
+function Get-AttemptsTrimmed($pairs) {
+    $arr = @($pairs)
+    if ($arr.Count -eq 0) { return , @() }
+    $order = @(0..($arr.Count - 1) | Sort-Object { -[long](@($arr[$_])[0]) })
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($i in $order) { if ($out.Count -ge $AttemptKeep) { break }; $out.Add(@($arr[$i])) }
+    , $out.ToArray()
+}
+function ConvertFrom-AttemptsJson([string]$json) {
+    $out = @{}
+    if (-not $json -or -not $json.Trim() -or $json.Trim() -eq '{}') { return $out }
+    $obj = $json | ConvertFrom-Json
+    if ($obj) {
+        foreach ($p in $obj.PSObject.Properties) {
+            $r = $p.Value
+            if ($null -eq $r -or $null -eq $r.last) { continue }
+            $last = New-Object System.Collections.Generic.List[object]
+            foreach ($x in @($r.last)) { $x = @($x); if ($x.Count -ge 2) { $t = [double]$x[0]; $sc = [double]$x[1]; if ($t -gt 0 -and $sc -ge 0) { $last.Add(@([long]$t, $sc)) } } }
+            $n = if ($null -ne $r.n) { [int]$r.n } else { $last.Count }
+            $out[$p.Name] = @{ n = [Math]::Max($n, $last.Count); last = (Get-AttemptsTrimmed $last.ToArray()) }
+        }
+    }
+    $out
+}
+function Read-AttemptsFile([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return @{} }
+    ConvertFrom-AttemptsJson ([System.IO.File]::ReadAllText($Path, $Utf8NoBom))
+}
+# Compact JSON for the page block: {"name":{"n":12,"last":[[t,s],...]},...}, names sorted.
+function ConvertTo-AttemptsJson($attempts) {
+    if (-not $attempts -or $attempts.Count -eq 0) { return '{}' }
+    $parts = @()
+    foreach ($k in ($attempts.Keys | Sort-Object)) {
+        $r = $attempts[$k]
+        $runs = @(); foreach ($x in @($r.last)) { $x = @($x); $runs += ('[' + [long]$x[0] + ',' + (ConvertTo-JsonNum ([double]$x[1]) -Round2).ToString($Inv) + ']') }
+        $parts += (($k | ConvertTo-Json -Compress) + ':{"n":' + [int]$r.n + ',"last":[' + ($runs -join ',') + ']}')
+    }
+    ('{' + ($parts -join ',') + '}') -replace '</', '<\/'
+}
+# One scenario per line, for data/attempts.json (git diffs read).
+function ConvertTo-AttemptsFileText($attempts) {
+    if (-not $attempts -or $attempts.Count -eq 0) { return "{}`n" }
+    $lines = @()
+    foreach ($k in ($attempts.Keys | Sort-Object)) {
+        $r = $attempts[$k]
+        $runs = @(); foreach ($x in @($r.last)) { $x = @($x); $runs += ('[' + [long]$x[0] + ',' + (ConvertTo-JsonNum ([double]$x[1]) -Round2).ToString($Inv) + ']') }
+        $lines += ('  ' + ($k | ConvertTo-Json -Compress) + ': {"n":' + [int]$r.n + ',"last":[' + ($runs -join ',') + ']}')
+    }
+    "{`n" + ($lines -join ",`n") + "`n}`n"
+}
+# Merge incoming (name -> @{n; last}) into $ds.attempts (creating it); returns the number of new runs.
+function Merge-Attempts($ds, $incoming) {
+    if ($null -eq $ds.attempts) { $ds | Add-Member -NotePropertyName attempts -NotePropertyValue @{} -Force }
+    $added = 0
+    foreach ($k in $incoming.Keys) {
+        $inc = $incoming[$k]
+        $cur = $null; if ($ds.attempts.ContainsKey($k)) { $cur = $ds.attempts[$k] } else { $cur = @{ n = 0; last = @() } }
+        $last = New-Object System.Collections.Generic.List[object]
+        foreach ($y in @($cur.last)) { $y = @($y); if ($y.Count -ge 2) { $last.Add(@([long]$y[0], [double]$y[1])) } }
+        $n = [int]$cur.n
+        foreach ($x in @($inc.last)) {
+            $x = @($x); if ($x.Count -lt 2) { continue }
+            $t = [long]$x[0]; $sc = [double]$x[1]
+            $dup = $false
+            foreach ($y in $last) { if ([double]$y[1] -eq $sc -and [Math]::Abs([long]$y[0] - $t) -lt $AttemptDedupeMs) { $dup = $true; break } }
+            if ($dup) { continue }
+            $last.Add(@($t, $sc)); $n++; $added++
+        }
+        $ds.attempts[$k] = @{ n = [Math]::Max($n, $last.Count); last = (Get-AttemptsTrimmed $last.ToArray()) }
+    }
+    $added
 }
 # Serialise for embedding in a <script> block: escape "</" so a scenario named
 # "</script>" (names on KovaaK's are user-created) can't end the tag early.
@@ -141,19 +231,33 @@ function Write-TrackerDataset($ds, [string]$Path) {
         [System.IO.File]::WriteAllText((Join-Path $Path 'benchmarks.json'), "[`n" + ($entryLines -join ",`n") + "`n]`n", $Utf8NoBom)
         $scoreLines = @($ds.scores.Keys | Sort-Object | ForEach-Object { if ([double]$ds.scores[$_] -gt 0) { '  ' + ($_ | ConvertTo-Json -Compress) + ': ' + (ConvertTo-JsonNum $ds.scores[$_] -Round2) } })
         [System.IO.File]::WriteAllText((Join-Path $Path 'scores.json'), $(if ($scoreLines.Count) { "{`n" + ($scoreLines -join ",`n") + "`n}`n" } else { "{}`n" }), $Utf8NoBom)
+        # attempts.json is written only once there is something to hold (so a
+        # repo without attempts doesn't grow an empty file from every script run)
+        if ($ds.PSObject.Properties['attempts'] -and $ds.attempts -and ($ds.attempts.Count -gt 0 -or (Test-Path -LiteralPath (Join-Path $Path 'attempts.json')))) {
+            [System.IO.File]::WriteAllText((Join-Path $Path 'attempts.json'), (ConvertTo-AttemptsFileText $ds.attempts), $Utf8NoBom)
+        }
         return
     }
     $Html = $Path
     $json = ConvertTo-DatasetJson $ds.data
     $scoresJson = ConvertTo-ScoresJson $ds.scores
     $c = $ds.content
+    # attempts block first (it comes last in the file; replace back-to-front so offsets stay valid)
+    $hasAttempts = $ds.PSObject.Properties['attempts'] -and $null -ne $ds.attempts
+    if ($ds.PSObject.Properties['attemptsStart'] -and $ds.attemptsStart -ge 0) {
+        if ($hasAttempts) { $c = $c.Substring(0, $ds.attemptsStart) + (ConvertTo-AttemptsJson $ds.attempts) + $c.Substring($ds.attemptsEnd) }
+    }
     if ($ds.scoresStart -ge 0) {
-        # scores block comes after the data block; replace back-to-front so offsets stay valid
         $c = $c.Substring(0, $ds.scoresStart) + $scoresJson + $c.Substring($ds.scoresEnd)
         $c = $c.Substring(0, $ds.start) + $json + $c.Substring($ds.end)
     } else {
         $after = $c.IndexOf('</script>', $ds.end) + '</script>'.Length
         $c = $c.Substring(0, $ds.start) + $json + '</script>' + "`n" + $ScoresTag + $scoresJson + '</script>' + $c.Substring($after)
+    }
+    # a page built before the attempts block existed gets one appended after the scores block when there are attempts to write
+    if ($hasAttempts -and $ds.attempts.Count -gt 0 -and -not ($ds.PSObject.Properties['attemptsStart'] -and $ds.attemptsStart -ge 0)) {
+        $si = $c.IndexOf($ScoresTag)
+        if ($si -ge 0) { $after = $c.IndexOf('</script>', $si) + '</script>'.Length; $c = $c.Substring(0, $after) + "`n" + $AttemptsTag + (ConvertTo-AttemptsJson $ds.attempts) + '</script>' + $c.Substring($after) }
     }
     [System.IO.File]::WriteAllText($Html, $c, $Utf8NoBom)
 }

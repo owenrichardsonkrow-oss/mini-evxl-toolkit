@@ -1009,6 +1009,46 @@ const MiniEvxlEngine = (function(){
     return { toMax, to2nd, toNext, maxed };
   }
 
+  // ---- Attempts (DESIGN_INTENT D10/D11, 2026-08-18) ----------------------------
+  // The score store is max-only; attempts are the runs behind it. One record per
+  // scenario:  { n, last: [[t, s], ...] }  -- n = distinct attempts seen, last =
+  // the most recent ATTEMPT_KEEP of them newest-first, t in ms, s the run's score.
+  // Sources (app side): the deep sync's last-scores/by-name rows (KovaaK's keeps
+  // the last 10 runs per scenario), total-play's record-run epoch, local stats
+  // CSVs (one file = one run), auto-check PB events, and the file's own
+  // #attempts-data seed. The same run can arrive from several sources with
+  // slightly different timestamps, so two attempts with the same score inside
+  // ATTEMPT_DEDUPE_MS are one run.
+  const ATTEMPT_KEEP = 20;
+  const ATTEMPT_DEDUPE_MS = 10*60*1000;
+  // Merge `incoming` ([[t,s],...] or [{t,s},...]) into a record; returns { rec, added }.
+  function mergeAttempts(rec, incoming){
+    const cur = rec && Array.isArray(rec.last) ? rec.last.map(x=>[Number(x[0]), Number(x[1])]).filter(x=>Number.isFinite(x[0]) && x[0]>0 && Number.isFinite(x[1]) && x[1]>=0) : [];
+    let n = rec && Number.isFinite(Number(rec.n)) ? Number(rec.n) : cur.length;
+    let added = 0;
+    (incoming||[]).forEach(a=>{
+      const t = Number(Array.isArray(a) ? a[0] : a && a.t), s = Number(Array.isArray(a) ? a[1] : a && a.s);
+      if(!(Number.isFinite(t) && t>0 && Number.isFinite(s) && s>=0)) return;
+      const dup = cur.some(x=> x[1]===s && Math.abs(x[0]-t) < ATTEMPT_DEDUPE_MS);
+      if(dup) return;
+      cur.push([t, s]); n++; added++;
+    });
+    cur.sort((a,b)=>b[0]-a[0]);
+    return { rec: { n: Math.max(n, cur.length), last: cur.slice(0, ATTEMPT_KEEP) }, added };
+  }
+  // What a card or the session engine wants to know: plays, when last, how the
+  // recent runs sit against the PB (nearness = best of the last k / pb).
+  function attemptSummary(rec, pb, nowMs, k){
+    k = k || 5;
+    const last = rec && Array.isArray(rec.last) ? rec.last : [];
+    if(!last.length) return { n: rec && rec.n ? Number(rec.n) : 0, lastT: 0, recentBest: 0, nearness: null, daysSince: null };
+    const lastT = Number(last[0][0]);
+    const recent = last.slice(0, k).map(x=>Number(x[1]));
+    const recentBest = Math.max(0, ...recent);
+    const nearness = pb>0 ? recentBest/pb : null;
+    return { n: Math.max(Number(rec.n)||0, last.length), lastT, recentBest, nearness, daysSince: nowMs ? (nowMs-lastT)/86400000 : null };
+  }
+
   // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
   // A NINE-rung scale, read as family × nudge:
   //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
@@ -1431,6 +1471,6 @@ const MiniEvxlEngine = (function(){
     if(fx.exclude) out.push('no-aim');
     return out;
   }
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

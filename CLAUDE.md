@@ -190,6 +190,16 @@ and then only as behavior rules, never as descriptions of him.
    reset.
 3. **Exclusions** — `EXCLUDED` (`localStorage['mini-evxl-excluded-playlists']`),
    a set of `JSON.stringify([name, difficulty])` keys that survives uploads.
+4. **Attempts** (since 2026-08-18) — `ATTEMPTS` (`storeKey('attempts')`,
+   scenario → `{ n, last: [[t, s], …] }`, the last 20 runs newest-first): the
+   runs behind the max-only scores. Fed by the deep sync (KovaaK's
+   `last-scores/by-name` returns the last 10 runs per scenario, each with an
+   epoch), total-play's record-run epoch, local stats CSVs (one file = one
+   run), and auto-check PB events; same score within ten minutes = one run.
+   Export is format version 2 (`attempts` beside `scores`; v1 still imports),
+   `apply-scores.ps1` bakes them into a page's `#attempts-data` block (`{}` in
+   this template; `template-integrity.js` asserts it). Cards show "N plays ·
+   last 3d ago · best of last 5: 92% of PB". Cleared by reset.
 
 Everything derives from one rule: **a scenario renders iff at least one present,
 non-excluded playlist references it.** `getParsedBenchmarks()` implements it, so
