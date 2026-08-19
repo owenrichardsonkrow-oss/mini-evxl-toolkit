@@ -316,11 +316,11 @@
   .sess-done { flex:none; padding-top:3px; }
   .sess-done input { accent-color:var(--accent); width:16px; height:16px; cursor:pointer; }
   .chip-why { text-transform:uppercase; letter-spacing:.05em; }
-  .why-floor { background:var(--danger-soft); color:var(--danger-text); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
+  .why-weakest { background:var(--danger-soft); color:var(--danger-text); border-color: color-mix(in srgb, var(--danger) 35%, transparent); }
   .why-placement { background:var(--surface-2); color:var(--text-dim); border-color:var(--border); }
   .why-quickwin { background:var(--accent-soft); color:var(--accent-text); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
   .why-revisit { background:var(--gold-soft); color:var(--gold); border-color: color-mix(in srgb, var(--gold) 30%, transparent); }
-  .why-wildcard { background:transparent; color:var(--text-dim); border-color:var(--border); }
+  .why-fillout { background:transparent; color:var(--text-dim); border-color:var(--border); }
   .sess-actions { margin-top:18px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
   .sess-actions .spacer { flex:1; }
   .sess-rate-label { font-size:12px; color:var(--text-faint); margin-right:4px; }
@@ -1501,50 +1501,67 @@ const MiniEvxlEngine = (function(){
     return { n: Math.max(Number(rec.n)||0, last.length), lastT, recentBest, nearness, daysSince: nowMs ? (nowMs-lastT)/86400000 : null };
   }
 
-  // ---- Session engine v0 (DESIGN_INTENT "Session engine", 2026-08-18) ----------
+  // ---- Session engine v0.2 (2026-08-18 late; Owen's loop) -----------------------
   // Composes today's session: `size` items, each with a WHY, from a plain list
-  // of scenarios the app prepares. v0 stand-ins the design doc names: the
-  // competency metric is ladder position (completion 0..1, best across the
-  // playlists carrying the scenario) until percentile curves exist; a "skill"
-  // is a facet (mechanic or modifier); responsiveness is recent raises. Fun is a
-  // constraint by construction: mixed by type, wildcards, nothing repeats.
-  //   scenarios: [{ name, played:bool, completion:0..1, toNext:0..1, maxed:bool,
-  //                 rung:-1..8, facets:[...facet keys], playlists:int,
+  // of scenarios the app prepares. Built around the loop Owen actually ran by
+  // hand in the early versions -- "sort played scenarios by To 2nd, high-score
+  // the weakest ten, refresh, repeat" -- with the two fixes he found it needed:
+  // cap difficulty at his level (hard scenarios kept coming up that he could not
+  // PB after several tries) and let the dataset fill out (a fuller played set
+  // settles the ordering). Skill FACETS are deliberately not the engine here:
+  // they are the curator labels normalised, so a "weakest facet" is a weakest
+  // label; the overlap/transfer map he set out to build needs population data
+  // (DESIGN_INTENT 3b) and gets wired in when it exists.
+  //   scenarios: [{ name, played:bool, to2nd:0..1, toMax:0..1, toNext:0..1,
+  //                 maxed:bool, rung:-1..8, labels:[curator category/subcategory],
+  //                 facets:[...], playlists:int, plKeys:[benchKey...],
   //                 att:{ n, lastT, nearness } | null, raises14d:int }]
-  //   opts:      { size:10, seed:int (a day number), now:ms }
-  // Returns { regime:'thin'|'normal', level:rung, profile:[{facet, median, n, conf}],
-  //           items:[{ name, why, reason, facet, rung }] }.
-  // Regimes (D9): under THIN_PLAYED rated played scenarios the honest answer is
-  // "just play" -- a placement session across the three mechanics at easy/mid
-  // rungs; otherwise floor-biased: weak-and-responsive facets first, uncertain
-  // facets get placement items, quick wins are the reward slice, one revisit
-  // to collect, wildcards for variety.
+  //   playlistFill: { benchKey: { name, played, total } }   (per playlist, how filled)
+  //   opts: { size:10, seed:int (a day number), now:ms }
+  // Returns { regime:'thin'|'normal', level:rung, weakLabels:[{label, median, n}],
+  //           items:[{ name, why, reason, label, rung, to2nd, toMax }] }.
+  // Slices: WEAKEST (played, not maxed, rung <= level, ascending To 2nd then
+  // To Max; spread -- at most 2 per primary label and 1 per playlist; anything
+  // hammered lately without getting near the PB sinks -- the attempts "stuck"
+  // signal), FILL OUT (unplayed gaps in the playlists you have mostly played,
+  // rung <= level+1), QUICK WIN (closest to the next merged tier, most playlists
+  // first), REVISIT (longest-unplayed with attempts older than 14 days -- the
+  // return-collect probe). Thin regime (< SESSION_THIN_PLAYED played rated
+  // scenarios): a placement round-robin across the mechanics -- "just play".
   const SESSION_THIN_PLAYED = 30;
-  const SESSION_TEMPLATE = { floor: 4, placement: 2, quickwin: 2, revisit: 1, wildcard: 1 };
+  const SESSION_TEMPLATE = { weakest: 6, fillout: 2, quickwin: 1, revisit: 1 };
   function seededRandom(seed){ let s = (seed>>>0) || 1; return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   function medianOf(arr){ const s = arr.slice().sort((a,b)=>a-b); const n=s.length; if(!n) return null; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
-  // Per-facet competency over played scenarios: median completion, n, confidence = min(1, n/8).
+  // Weakness by label over played scenarios: median To 2nd, n. (The "practise a
+  // category I know I'm bad at" mode.) Labels here = the scenario's facets when
+  // it has any (the curator labels normalised -- same information, minus the
+  // pack/section noise like "Category" or "patTS"), else its raw curator labels.
+  const skillLabelsOf = sc => { const f = (sc.facets||[]).filter(x=>!x.includes(':') && x!=='no-aim'); return f.length ? f : (sc.labels||[]).filter(Boolean); };
   function skillProfile(scenarios){
     const by = new Map();
-    scenarios.forEach(sc=>{ if(!sc.played) return; (sc.facets||[]).forEach(f=>{ if(f.includes(':') || f==='no-aim') return; if(!by.has(f)) by.set(f, []); by.get(f).push(sc); }); });
+    scenarios.forEach(sc=>{ if(!sc.played || sc.maxed) return; skillLabelsOf(sc).forEach(l=>{ if(!by.has(l)) by.set(l, []); by.get(l).push(sc); }); });
     const out = [];
-    by.forEach((list, facet)=>{
-      const median = medianOf(list.map(sc=>sc.completion));
+    by.forEach((list, label)=>{
+      const median = medianOf(list.map(sc=>sc.to2nd));
       const raises = list.reduce((a,sc)=>a+(sc.raises14d||0), 0);
-      out.push({ facet, median, n: list.length, conf: Math.min(1, list.length/8), raises14d: raises });
+      const kind = list.some(sc=>(sc.facets||[]).includes(label)) ? 'facet' : 'label';
+      out.push({ label, kind, median, n: list.length, raises14d: raises });
     });
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
-  function composeSession(scenarios, opts){
+  function composeSession(scenarios, opts, playlistFill){
     opts = Object.assign({ size: 10, seed: 1, now: Date.now() }, opts||{});
+    playlistFill = playlistFill || {};
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
     const rated = scenarios.filter(sc=>sc.rung>=0);
     const played = rated.filter(sc=>sc.played);
     const chosen = new Set();
     const items = [];
-    const take = (list, why, reason, n) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name); items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, facet: sc._facet||null, rung: sc.rung }); n--; } };
+    const pct = x => Math.round((x||0)*100)+'%';
     const label = sc => (sc.rung>=0 ? DIFF_LABELS[sc.rung] : 'Unrated');
+    const primary = sc => { const l = skillLabelsOf(sc); return l.length ? l[0] : ''; };
+    const take = (list, why, reason, n) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name); items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, to2nd: sc.to2nd, toMax: sc.toMax }); n--; } };
     if(played.length < SESSION_THIN_PLAYED){
       // "Just play": one placement round across the mechanics, easy to mid rungs, unplayed first.
       const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
@@ -1554,48 +1571,43 @@ const MiniEvxlEngine = (function(){
         const m = mechs[items.length % mechs.length];
         const pick = pool.find(sc=>!chosen.has(sc.name) && (sc.facets||[]).includes(m)) || pool.find(sc=>!chosen.has(sc.name));
         if(!pick) break;
-        take([Object.assign({}, pick, {_facet: m})], 'placement', 'Placement — '+m+' at '+label(pick)+': there isn\'t enough played history yet to say where you stand, so play and generate evidence.', 1);
+        take([Object.assign({}, pick, {_label: m})], 'placement', 'Placement — '+m+' at '+label(pick)+': there isn\'t enough played history yet to say where you stand, so play and generate evidence.', 1);
       }
-      return { regime: 'thin', level: null, profile: [], items };
+      return { regime: 'thin', level: null, weakLabels: [], items };
     }
     const level = Math.round(medianOf(played.map(sc=>sc.rung)));
-    const nearLevel = sc => sc.rung>=level-1 && sc.rung<=level+1;
-    const profile = skillProfile(rated);
-    // Uncertainty-aware (D1): a facet with fewer than 4 played scenarios gets
-    // placement items, not training; among the rest the floor picks go to the
-    // weakest, nudged toward responsive ones (recent raises) and away from
-    // thinly-measured ones -- never all to the single weakest.
-    const known = profile.filter(p=>p.n>=4);
-    const uncertain = profile.filter(p=>p.n<4);
-    const floorKey = p => p.median - 0.05*Math.min(p.raises14d,4) + 0.10*(1-p.conf);
-    const floorFacets = known.slice().sort((a,b)=> floorKey(a)-floorKey(b)).slice(0, SESSION_TEMPLATE.floor);
-    floorFacets.forEach(p=>{
-      // in that facet, near level: played-but-low first (not stuck: nearness >= .85 or few tries), then unplayed
-      const inFacet = rated.filter(sc=>(sc.facets||[]).includes(p.facet) && nearLevel(sc) && !sc.maxed);
-      const playedLow = shuffle(inFacet.filter(sc=>sc.played && sc.completion < Math.max(p.median, 0.5) && (!sc.att || sc.att.n<3 || (sc.att.nearness!==null && sc.att.nearness>=0.85))));
-      const fresh = shuffle(inFacet.filter(sc=>!sc.played));
-      take(playedLow.concat(fresh).map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'floor', sc=>'Floor — '+p.facet+' is one of your weakest skills (on average '+Math.round(p.median*100)+'% of the way up the tier ladder across '+p.n+' played scenarios)'+(p.raises14d? ' and it has been moving ('+p.raises14d+' raise'+(p.raises14d===1?'':'s')+' in 14 days)':'')+'; '+label(sc)+' is at your level.', 1);
-    });
-    // placement: uncertain facets
-    shuffle(uncertain).slice(0, SESSION_TEMPLATE.placement).forEach(p=>{
-      const cands = shuffle(rated.filter(sc=>(sc.facets||[]).includes(p.facet) && !sc.played && nearLevel(sc)));
-      take(cands.map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'placement', sc=>'Placement — only '+p.n+' played scenario'+(p.n===1?' carries':'s carry')+' '+p.facet+', so its number is a guess; '+label(sc)+' will say more.', 1);
-    });
-    // quick wins: closest to the next merged tier
-    const qw = played.filter(sc=>!sc.maxed && sc.toNext>=0.7).sort((a,b)=> b.playlists - a.playlists || b.toNext - a.toNext);
-    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', SESSION_TEMPLATE.quickwin);
-    // revisit-collect: the longest-unplayed scenario in a facet that has been moving
-    const moving = new Set(known.filter(p=>p.raises14d>0).map(p=>p.facet));
-    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && (moving.size===0 || (sc.facets||[]).some(f=>moving.has(f)))).sort((a,b)=> a.att.lastT - b.att.lastT);
-    take(rev, 'revisit', sc=>'Revisit — last played '+Math.round((opts.now - sc.att.lastT)/86400000)+' days ago and the skills around it have moved since; go collect the PB.', SESSION_TEMPLATE.revisit);
-    // wildcards: unplayed near level, anywhere
-    take(shuffle(rated.filter(sc=>!sc.played && nearLevel(sc))), 'wildcard', sc=>'Wildcard — something new at '+label(sc)+', for variety.', SESSION_TEMPLATE.wildcard);
-    // top up with more floor picks, then anything near level
-    if(items.length<opts.size){
-      known.slice(0, 8).forEach(p=>{ if(items.length>=opts.size) return; const c = shuffle(rated.filter(sc=>(sc.facets||[]).includes(p.facet) && nearLevel(sc) && !sc.maxed && !chosen.has(sc.name))); take(c.map(sc=>Object.assign({}, sc, {_facet:p.facet})), 'floor', sc=>'Floor — more '+p.facet+' at '+label(sc)+'.', 1); });
+    const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
+    // ---- WEAKEST: the loop. Rung <= level; ascending To 2nd, then To Max.
+    // "Stuck" (>= 4 tries and the best of the last 5 under 85% of the PB) sinks
+    // below everything else -- more of the same is not the move there.
+    const stuck = sc => !!(sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
+    const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
+      .sort((a,b)=> (stuck(a)?1:0)-(stuck(b)?1:0) || a.to2nd-b.to2nd || a.toMax-b.toMax || b.playlists-a.playlists);
+    const perLabel = new Map(), perPl = new Set();
+    const spread = [];
+    for(const sc of weakPool){
+      const l = primary(sc);
+      if(l && (perLabel.get(l)||0) >= 2) continue;
+      if((sc.plKeys||[]).some(k=>perPl.has(k))) continue;
+      spread.push(sc); if(l) perLabel.set(l, (perLabel.get(l)||0)+1); (sc.plKeys||[]).forEach(k=>perPl.add(k));
+      if(spread.length >= SESSION_TEMPLATE.weakest*2) break;
     }
-    if(items.length<opts.size) take(shuffle(rated.filter(sc=>nearLevel(sc) && !sc.maxed)), 'wildcard', sc=>'Wildcard — '+label(sc)+'.', opts.size-items.length);
-    return { regime: 'normal', level, profile, items };
+    take(spread, 'weakest', sc=>'Weakest — To 2nd '+pct(sc.to2nd)+', To Max '+pct(sc.toMax)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+'.', SESSION_TEMPLATE.weakest);
+    // ---- FILL OUT: gaps in the playlists you have mostly played (>= 60% played, not full)
+    const fillPl = Object.keys(playlistFill).map(k=>Object.assign({key:k}, playlistFill[k])).filter(p=>p.total>0 && p.played<p.total && p.played/p.total>=0.6).sort((a,b)=> (b.played/b.total)-(a.played/a.total) || b.total-a.total);
+    const fillTargets = new Set(fillPl.map(p=>p.key));
+    const fillPool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=level+1 && (sc.plKeys||[]).some(k=>fillTargets.has(k))));
+    take(fillPool, 'fillout', sc=>{ const p = fillPl.find(x=>(sc.plKeys||[]).includes(x.key)); return 'Fill out — '+(p? p.name+' is '+Math.round(p.played/p.total*100)+'% played and this is one of its gaps' : 'a gap in a playlist you have mostly played')+'; a fuller played set settles the weakest-list ordering. '+label(sc)+'.'; }, SESSION_TEMPLATE.fillout);
+    // ---- QUICK WIN: closest to the next merged tier, most playlists first
+    const qw = played.filter(sc=>!sc.maxed && sc.toNext>=0.7 && !chosen.has(sc.name)).sort((a,b)=> b.playlists - a.playlists || b.toNext - a.toNext);
+    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', SESSION_TEMPLATE.quickwin);
+    // ---- REVISIT: longest-unplayed (attempts older than 14 days), rung <= level
+    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
+    take(rev, 'revisit', sc=>'Revisit — last played '+Math.round((opts.now - sc.att.lastT)/86400000)+' days ago; go collect the PB (if it falls first try, the time away did the work).', SESSION_TEMPLATE.revisit);
+    // ---- top up: more of the weakest list, then unplayed at/under level
+    take(weakPool, 'weakest', sc=>'Weakest — To 2nd '+pct(sc.to2nd)+', To Max '+pct(sc.toMax)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+'.', opts.size-items.length);
+    if(items.length<opts.size) take(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level)), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture.', opts.size-items.length);
+    return { regime: 'normal', level, weakLabels, items };
   }
 
   // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
@@ -3985,14 +3997,15 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     applyFilters();
   }
 
-  // ==== src/app/65-ui-session.js -- The Session page (#/session): today's ten items with a why each, the skill profile, live tick-off from auto-check, one-tap feel rating, the return-collect record.
+  // ==== src/app/65-ui-session.js -- The Session page (#/session): today's ten items with a why each (Owen's weakest-by-To-2nd loop, capped at level), weakest-labels strip, live tick-off from auto-check, one-tap feel rating, the return-collect record.
   // A fragment of the page script: build.ps1 concatenates src/app/*.js in name order inside one IIFE (see build.ps1); not a standalone file.
-  // ---- Session (DESIGN_INTENT "Session engine", v0 2026-08-18) -----------------
+  // ---- Session (v0.2, 2026-08-18 late) --------------------------------------------
   // The coach's page. composeSession() (engine) does the choosing from a plain
-  // list this file prepares: every scenario in the active pool with its ladder
-  // position (v0 metric), difficulty rung, facets, attempts summary and recent
-  // raises. The composition is fixed for the day (seed = day number) and kept
-  // in localStorage so it doesn't reshuffle under you; "New session" reseeds.
+  // list this file prepares: every scenario in the active pool with To 2nd /
+  // To Max / To Next, difficulty rung, curator labels, playlist keys, attempts
+  // summary and recent raises, plus how filled-in each playlist is. The
+  // composition is fixed for the day (seed = day number) and kept in
+  // localStorage so it doesn't reshuffle under you; "New session" reseeds.
   // Items tick themselves off when a run lands after the session was made
   // (auto-check on tab-back, or a sync); the one-tap feel rating and the
   // per-item PB at composition time go to a session log so revisit items can
@@ -4006,7 +4019,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   function writeSessionLog(l){ try{ localStorage.setItem(SESSION_LOG_KEY, JSON.stringify(l.slice(-SESSION_LOG_CAP))); }catch(e){} }
   const dayNumber = ms => Math.floor((ms - new Date(ms).getTimezoneOffset()*60000) / 86400000);
 
-  // The engine's input, from the active pool.
+  // The engine's input, from the active pool: To 2nd / To Max (the loop's
+  // metric), curator labels, playlist keys, attempts summary, recent raises.
   function sessionScenarios(){
     const now = Date.now();
     const cutoff = now - 14*86400000;
@@ -4014,24 +4028,32 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     HISTORY.forEach(e=>{ if(e.t>=cutoff && e.src!=='seed') raises.set(e.name, (raises.get(e.name)||0)+1); });
     return computeAllScenarios().map(sc=>{
       const prog = sc._prog || (sc._prog = mergedProgress(sc.playlists, sc.score));
-      let completion = 0; sc.playlists.forEach(pl=>{ completion = Math.max(completion, scenarioCompletion(sc.score, pl.tiers)); });
       const rec = attemptsFor(sc.name);
       const att = rec ? attemptSummary(rec, sc.score, now, 5) : null;
-      return { name: sc.name, played: sc.score>0, completion, toNext: prog.toNext, maxed: prog.maxed, rung: sc.diffRung, facets: sc.facetList||[], playlists: sc.playlists.length, att: att && att.n ? att : null, raises14d: raises.get(sc.name)||0 };
+      return { name: sc.name, played: sc.score>0, to2nd: prog.to2nd, toMax: prog.toMax, toNext: prog.toNext, maxed: prog.maxed, rung: sc.diffRung,
+        labels: sc.tags||[], facets: sc.facetList||[], playlists: sc.playlists.length,
+        plKeys: sc.playlists.map(pl=>JSON.stringify([pl.playlist, pl.difficulty])),
+        att: att && att.n ? att : null, raises14d: raises.get(sc.name)||0 };
     });
+  }
+  // Per playlist: how filled in it is (played / total scenarios).
+  function playlistFill(){
+    const out = {};
+    getParsedBenchmarks().forEach(({benchmark, items})=>{ out[benchKey(benchmark)] = { name: benchmark.name+' · '+benchmark.difficulty, played: items.filter(it=>it.score>0).length, total: items.length }; });
+    return out;
   }
   function newSession(seedBump){
     const now = Date.now();
     const list = sessionScenarios();
     const seed = dayNumber(now)*7919 + (seedBump||0);
-    const s = composeSession(list, { size: 10, seed, now });
+    const s = composeSession(list, { size: 10, seed, now }, playlistFill());
     const pbOf = new Map(list.map(sc=>[sc.name, sc.played ? SCORES.get(sc.name)||0 : 0]));
     const session = { day: dayNumber(now), startedAt: now, seedBump: seedBump||0, regime: s.regime, level: s.level,
       items: s.items.map(it=>Object.assign({}, it, { pbAt: pbOf.get(it.name)||0 })), done: {}, rating: null };
     writeSession(session);
-    return { session, profile: s.profile };
+    return { session, weakLabels: s.weakLabels };
   }
-  const WHY_LABEL = { floor: 'floor', placement: 'placement', quickwin: 'quick win', wildcard: 'wildcard', revisit: 'revisit' };
+  const WHY_LABEL = { weakest: 'weakest', fillout: 'fill out', placement: 'placement', quickwin: 'quick win', revisit: 'revisit' };
 
   function renderSession(){
     const wrap = document.createElement('div');
@@ -4041,10 +4063,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       app.innerHTML=''; app.appendChild(wrap); return;
     }
     let session = readSession();
-    let profile = null;
+    let weakLabels = null;
     const today = dayNumber(Date.now());
-    if(!session || session.day!==today){ const r = newSession(0); session = r.session; profile = r.profile; }
-    if(!profile) profile = skillProfile(sessionScenarios());
+    // sessions composed by the v0 engine (before 2026-08-18 late) carry `why: floor` -- recompose
+    if(!session || session.day!==today || session.items.some(it=>it.why==='floor' || it.why==='wildcard')){ const r = newSession(0); session = r.session; weakLabels = r.weakLabels; }
+    if(!weakLabels) weakLabels = skillProfile(sessionScenarios()).filter(p=>p.n>=4);
     // tick-off: a run logged, or a PB raised, since the session was composed
     const now = Date.now();
     session.items.forEach(it=>{
@@ -4063,18 +4086,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     session.items.forEach(it=>{ if(it.why==='revisit'){ revTotal++; if(it.pbNow > it.pbAt) revHit++; } });
 
     const dateStr = new Date(session.startedAt).toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
-    const known = profile.filter(p=>p.n>=3);
-    const weakest = known.slice(0, 5), strongest = known.slice(-3).reverse();
-    const profRow = (p, cls) => '<a class="prof-chip '+cls+'" href="#/scenarios?facet='+encodeURIComponent(p.facet)+'&mode=played" title="'+esc(p.facet)+': on average '+Math.round(p.median*100)+'% of the way up the tier ladder across '+p.n+' played scenarios'+(p.raises14d?'; '+p.raises14d+' raises in 14 days':'')+'. Click to see the scenarios behind the number.">'+esc(p.facet)+' <b>'+Math.round(p.median*100)+'%</b><span class="prof-n">'+p.n+'</span></a>';
+    const weakest = weakLabels.slice(0, 6);
+    const profRow = (p, cls) => '<a class="prof-chip '+cls+'" href="#/scenarios?'+(p.kind==='facet'?'facet':'tag')+'='+encodeURIComponent(p.label)+'&mode=played&sort=to2nd-asc" title="'+esc(p.label)+': median To 2nd '+Math.round(p.median*100)+'% over '+p.n+' played scenarios carrying this label'+(p.raises14d?'; '+p.raises14d+' raise'+(p.raises14d===1?'':'s')+' in 14 days':'')+'. Click to see them, weakest first.">'+esc(p.label)+' <b>'+Math.round(p.median*100)+'%</b><span class="prof-n">'+p.n+'</span></a>';
     wrap.innerHTML = `
       <div class="eyebrow"><span class="dot"></span> session &middot; ${esc(dateStr)}</div>
       <h1>What to play today</h1>
       <p class="sub">${session.regime==='thin'
         ? 'There isn\'t enough played history yet to say where you stand, so this is a <strong>placement session</strong>: ten scenarios across the three mechanics at easy-to-mid difficulty. Just play; the numbers come from the evidence.'
-        : 'Ten scenarios, each with its reason. Weighted toward the skills where you\'re weakest <em>and</em> moving (never all to the single weakest), with placement items where the profile is a guess, quick wins as the reward slice, one revisit to collect a PB, and a wildcard for variety. Difficulty is pinned near your level (rung '+esc(session.level>=0?DIFF_LABELS[session.level]:'?')+' &plusmn;1). Items tick themselves off as your runs land (auto-check on tab-back, or a sync).'}
+        : 'The loop, done for you: your <strong>weakest played scenarios by To 2nd</strong> (To Max as the tiebreak), capped at your level (rung '+esc(session.level>=0?DIFF_LABELS[session.level]:'?')+' and under, so a high score is actually reachable), spread so no one label or playlist takes the whole list, and anything you\'ve hammered lately without getting near the PB pushed down. Then two gaps in the playlists you\'ve mostly played (a fuller played set settles the ordering), one quick win, one revisit. High-score them, let the sync land, and tomorrow\'s list is the new weakest ten.'}
       </p>
-      <div class="meta">V0: SKILL NUMBERS ARE LADDER POSITION (BEST TIER PROGRESS ACROSS PLAYLISTS), NOT PERCENTILES YET &middot; ${doneCount} OF ${session.items.length} DONE${revTotal? ' &middot; RETURN-COLLECT '+revHit+'/'+revTotal : ''}</div>
-      ${known.length ? `<div class="prof-row"><span class="prof-label">Weakest skills</span>${weakest.map(p=>profRow(p,'weak')).join('')}<span class="prof-label" style="margin-left:14px;">Strongest</span>${strongest.map(p=>profRow(p,'strong')).join('')}</div>` : ''}
+      <div class="meta">${doneCount} OF ${session.items.length} DONE${revTotal? ' &middot; RETURN-COLLECT '+revHit+'/'+revTotal : ''} &middot; TRANSFER ROUTES (PRACTISE A TO MOVE B) NOT WIRED YET &mdash; NEEDS THE POPULATION MATRIX</div>
+      ${weakest.length ? `<div class="prof-row"><span class="prof-label" title="Median To 2nd over the played scenarios carrying each curator label — the &quot;practise a category I know I'm bad at&quot; view">Weakest labels</span>${weakest.map(p=>profRow(p,'weak')).join('')}</div>` : ''}
       <div class="sess-list" id="sess-list"></div>
       <div class="sess-actions">
         <span class="sess-rate-label">How did it feel?</span>
@@ -4084,7 +4106,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
         <span class="spacer"></span>
         <button type="button" class="import-btn secondary" id="sess-new" title="Compose a fresh set for today (different picks, same rules)">New session</button>
       </div>
-      <div class="footnote"><p><strong>Why these:</strong> the profile is a median over the played scenarios that carry each skill facet (click a chip to see them). "Floor" items train your weakest facets at your level, preferring scenarios you're not stuck on; "placement" items go to facets with too little evidence; "quick win" is closest-to-next-tier; "revisit" is a scenario left alone while its surrounding skills moved &mdash; if the PB falls on the first try back, the coach was right (that's the return-collect count). Rating a session is feedback into the tool, not a report on you.</p></div>
+      <div class="footnote"><p><strong>Why these:</strong> "weakest" is the To 2nd sort you used to do by hand, capped at your level (median difficulty rung of what you've played) and spread across labels and playlists; "stuck" means four or more logged tries with the best of the last five under 85% of the PB &mdash; more of the same isn't the move there, so those sink. "Fill out" is an unplayed gap in a playlist you've mostly played. "Quick win" is closest-to-next-tier across the most playlists. "Revisit" is a scenario untouched for two weeks &mdash; if the PB falls on the first try back, the time away did the work (that's the return-collect count). What's <em>not</em> here yet is the thing this page is ultimately for: which categories overlap, so that practising one moves another. That needs population data (many players &times; many scenarios); a sampling job is queued behind the percentile harvest. Rating a session is feedback into the tool, not a report on you.</p></div>
     `;
     app.innerHTML=''; app.appendChild(wrap);
     const list = wrap.querySelector('#sess-list');
@@ -4097,13 +4119,15 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       const rungLbl = it.rung>=0 ? DIFF_LABELS[it.rung] : 'Unrated';
       const chips = '<span class="chip chip-why why-'+it.why+'">'+esc(WHY_LABEL[it.why]||it.why)+'</span>'
         + '<span class="chip '+diffChipClass(rungLbl==='Unrated'?'':rungLbl)+'">'+esc(diffChipLabel(rungLbl==='Unrated'?'':rungLbl))+'</span>'
-        + (it.facet ? '<span class="chip chip-facet">'+esc(it.facet)+'</span>' : '')
+        + (it.label ? '<span class="chip chip-facet">'+esc(it.label)+'</span>' : '')
         + (sc ? '<span class="chip chip-facet" title="playlists carrying it">'+sc.playlists.length+' pl</span>' : '');
       const plays = playsLine(it.name, it.pbNow||0);
+      const prog = sc && sc._prog ? sc._prog : null;
+      const progTxt = prog && it.pbNow>0 ? ' &middot; To 2nd '+(prog.to2nd*100).toFixed(1)+'% &middot; To Max '+(prog.toMax*100).toFixed(1)+'%' : '';
       row.innerHTML = '<div class="sess-num mono">'+(i+1)+'</div>'
         + '<div class="sess-body"><div class="sess-head"><a class="sess-name" href="#/scenarios?q='+encodeURIComponent(it.name)+'">'+esc(it.name)+'</a>'+chips+'</div>'
         + '<div class="sess-reason">'+esc(it.reason)+'</div>'
-        + '<div class="sess-meta mono">'+(it.pbNow>0 ? 'PB '+fmt(it.pbNow) : 'unplayed')+(plays ? ' &middot; '+esc(plays) : '')+(it.why==='revisit' ? (it.pbNow>it.pbAt ? ' &middot; <span class="collected">collected ✓</span>' : ' &middot; PB to beat '+fmt(it.pbAt)) : '')+'</div></div>'
+        + '<div class="sess-meta mono">'+(it.pbNow>0 ? 'PB '+fmt(it.pbNow) : 'unplayed')+progTxt+(plays ? ' &middot; '+esc(plays) : '')+(it.why==='revisit' ? (it.pbNow>it.pbAt ? ' &middot; <span class="collected">collected ✓</span>' : ' &middot; PB to beat '+fmt(it.pbAt)) : '')+'</div></div>'
         + '<label class="sess-done" title="Ticks itself when a run lands; tick by hand if you played offline"><input type="checkbox" data-name="'+esc(it.name)+'"'+(done?' checked':'')+' /></label>';
       list.appendChild(row);
     });
