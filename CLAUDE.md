@@ -43,7 +43,14 @@ personal string survives anywhere. It also copies the shared files (`lib/`,
 **`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
-**Tests (four since 2026-08-18):** `test/golden.js` (Node; `test/harness.html`
+**Tests (six since 2026-08-22):** `test/session.js` pins the session coach's
+output (`composeSession`, `skillProfile`) on a synthetic fixture — no dataset;
+the snapshot lives in the test source as `EXPECTED`, regenerated with
+`node test/session.js --print` (or `/test/harness.html?session=1`) only for an
+intended behaviour change; it is the gate for any refactor of the session
+engine. `test/overlap.js` checks the Overlap page's pure functions
+(`buildOverlapIndex`, `overlapOf`, `groupMatrix`, `independentGroups`, …) on a
+hand fixture. CI runs both after facets. `test/golden.js` (Node; `test/harness.html`
 runs it and the difficulty test together in a browser) checks the engine's
 standings for seeded score vectors against `test/golden-standings.json` —
 answers recorded from an engine the personal repo's differential test had

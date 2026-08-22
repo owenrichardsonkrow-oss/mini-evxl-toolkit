@@ -208,7 +208,10 @@
     // |overlap| = 0.125/sqrt(0.58*0.50) = 0.232 < 0.25
     const Meg = E.groupMatrix(P, n => (n===C1 || n===C3) ? ['e'] : ((n===T1 || n===T3) ? ['g'] : []));
     near('e/g overlap -0.232', Meg.overlap('e', 'g'), -0.125/Math.sqrt(0.58*0.5));
-    eq('e/g: |overlap| 0.232 < 0.25 -> both kept (negative overlap is not independence either way, but it is under the cut)', E.independentGroups(Meg, { minTested: 1 }).kept.map(k=>k.id), ['e', 'g']);
+    eq('e/g: overlap -0.232, cut 0.25 -> both kept', E.independentGroups(Meg, { minTested: 1 }).kept.map(k=>k.id), ['e', 'g']);
+    // negative overlap never absorbs, however large: at cut 0.20 |-0.232| is over the cut
+    // but the groups move AGAINST each other -- that is a different skill, kept apart
+    eq('e/g: overlap -0.232 at cut 0.20 -> still both kept (negative overlap = different skill)', E.independentGroups(Meg, { minTested: 1, maxOverlap: 0.20 }).kept.map(k=>k.id), ['e', 'g']);
     // a thin PAIR cell with a kept group -> thin, never independent: v = {C1, C3, M1},
     // w = {T1, T2, T3} at minN 600 -> v|v: C1C3 (1800), M1C1 (600) = 2; w|w: T1T2 (900),
     // T2T3 (1200) = 2; v|w: M1T1 (700) only = 1 (C1T1 300, C1T2 500, C3T3 100 drop).

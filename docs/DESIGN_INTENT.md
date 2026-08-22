@@ -250,6 +250,70 @@ about skill structure.
   spellings via the facet vocabulary. Each route carries its r and player
   count. Still a prior, not proof — the return-collect rate and the attempt
   history are what will test it.
+- **Sample-skew diagnostic (2026-08-22).** The earlier "median usable player
+  ~85th percentile" reading was wrong: under the map's own skill definition
+  (median percentile over a player's curved scenarios) the sampled players'
+  median is 0.646, mean 0.619, SD 0.245 vs 0.289 for a uniform population
+  (21.8 % at ≥ 0.85). Residual correlations are flat across skill terciles
+  (top-200 bridges 0.717 / 0.717 / 0.731 vs 0.742 pooled; pair ordering
+  r 0.85–0.95 between strata; the within/across-label gap 0.16–0.18 in every
+  stratum). Thorndike case II over-corrects 3–5× on its own falsification
+  test; the model-consistent case III moves r by +0.002. **No correction is
+  stamped; the page prints the measured median.**
+- **Session engine v0.4 (2026-08-22 late).** Responsiveness per attempt in
+  percentile space with a "plateaued" state beside "stuck"; revisit forecasts
+  from neighbour/bridge movement since the last visit against the player's
+  own recent gap, logged per item for return-collect calibration (the logistic
+  slope 0.04 and the 0.05 prior margin are stated priors awaiting that
+  calibration — the honest number is the odds, also shown); the session log
+  written at compose time and a history view as the self-scoring surface
+  (predicted vs collected); the template by profile confidence (thin → fill
+  the picture, full → get out of the way; the middle band is v0.3); D3's game
+  knob as a Settings weight, default off, capped at 8 percentile points so
+  weakness (D1) still comes first; board size as a confidence that shrinks
+  small-board percentiles toward the player's level. Every layer reduces to
+  v0.3 exactly without its evidence; the toolkit's `test/session.js` snapshot
+  is the executable form of that claim.
+- **Percentile freshness is a job (2026-08-22).** Sunday's weekly chain fetches
+  curves for played scenarios that have none; a Saturday task re-fetches
+  curves older than 30 days, 300 per week. A harvester bug that recorded 503s
+  as "not found" (and would have let a monthly pass replace a good curve with
+  nothing) was fixed first.
+- **D12 steps 2–3 executed (2026-08-22).** Label-blind structure of the
+  residual correlations frozen in the tracker's `dev/emergence-freeze.json`
+  (hash `ed89927b…`, committed alone before the comparison script existed; the
+  comparison refuses to run on anything else — blob identity, embedded hash,
+  grep guard over the blind code, git ancestry). Two lenses on one shrunk
+  matrix: 21 varimax factors (parallel analysis capped at 40, substance rule
+  to 21; 10 unstable at 100 bootstraps; 273 stable members of 991, a large
+  unassigned/provisional set shipped as hints) and Louvain communities
+  (γ 0.5: 2, γ 1.0: 7, both freeze-worthy). Against the ratified facets: the
+  factor lens gives ARI vs mechanic 0.079 (p 0.001) but vs pack 0.280 and vs
+  the **carrying playlist 0.824 — the factors are the playlists**; the step-4
+  asymmetry reads this as training-community / co-measurement structure
+  (44 % of pairs had no evidence and entered as 0). The community lens, which
+  has no edge where there is no evidence, is the only lens where mechanic
+  beats pack (ARI vs mechanic 0.327 at γ 0.5 / 0.221 at γ 1.0 against pack
+  0.034 / 0.141) — so **the page ships the community lens**. 300 divergences
+  under six rules fixed in advance; the ones that speak to the vocabulary:
+  control, reactive, precise, dynamic and timing each split across two
+  tracking communities (rule 5); strafe (9/9) and evasive (0.625) concentrate
+  in a γ-1.0 community no mechanic owns (rule 2 — the R6/R7 promotion
+  question lands exactly here); two Voltaic S5 playlists and Anima Micro v2
+  surface as factors with no facet above a third (rules 1/6). No name has
+  been given to any cluster; the page carries ids + loading + stability +
+  status only. The PSD-repair distance of the zero-filled matrix (0.305)
+  matches the permutation null through the same pipeline (0.315) — sparsity,
+  not inconsistency; a soft-impute/ALS second freeze stays open as a separate
+  run, never a tweak of this one.
+- **Overlap page (2026-08-22 late)** — `#/overlap`: the map itself, scenario-first
+  (pick a scenario: what moves with it, against it, and not at all, with the
+  player's own percentile on every row), a label × label matrix and a greedy
+  "practise separately" set computed on the page from every tested pair at
+  n ≥ 100 (the pairs ship in the page — falsifiability over page weight;
+  every cell opens the scenario pairs behind it), the community lens as
+  structure-with-confidence. ~68 % of tested pairs at n ≥ 100 sit under
+  |r| 0.15: unrelated is the norm.
 
 ## Staging
 
@@ -294,3 +358,23 @@ run-history import; both transfer analyses.
   exempt, and makes no truth claim. Emergence is read asymmetrically:
   reappearance of the community structure is weak confirmation (the data was
   generated under it); its failure to reappear is the informative result.
+
+2026-08-22 (late):
+
+- **D13** (Claude's call on the evidence, open to Owen's reversal) — the D12
+  freeze `ed89927b…` and its comparison are on record. Proceeded with the
+  PSD-repaired zero-filled matrix because its repair distance (0.305) matches
+  the permutation null through the same pipeline (0.315): the distance is
+  sparsity, not inconsistency. The page ships the **community lens** (γ 1.0),
+  because the factor lens reproduced the carrying playlists (ARI 0.824) and
+  shipping playlist co-membership as "skill clusters" would mislead. Naming
+  clusters and promoting strafe (R6/R7) remain Owen's decisions pending his
+  reading of `dev/emergence-comparison.json` — reading order: agreement tables
+  with their pack baseline and p-values, then the divergence list, then
+  (separately, as a proposal) candidate names.
+- **D14** — no range-restriction correction on the transfer map (the W6
+  diagnostic above); the sample caveat is the measured median, printed from
+  the data, never a literal.
+- **D15** — the overlap page's thresholds (overlap cut 0.25, cohesion floor
+  0.10, tested floor 30, unrelated ceiling 0.15) are knobs shown as controls,
+  not findings, until Owen ratifies them.

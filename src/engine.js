@@ -1773,8 +1773,9 @@ const MiniEvxlEngine = (function(){
   // in `order` -- 'evidence' (size desc, id asc: a property of the map, the same
   // for every player) or 'weakness' (the caller's standing Map id -> {median, n},
   // median asc, unknown last) -- and keep a group when its cohesion >= minCohesion,
-  // its own cell has >= minTested pairs, and |overlap| with EVERY kept group is
-  // under maxOverlap. A group whose pair cell with a kept group holds < minTested
+  // its own cell has >= minTested pairs, and its overlap with EVERY kept group is
+  // under maxOverlap (positive overlap absorbs; negative overlap = a different
+  // skill, kept apart). A group whose pair cell with a kept group holds < minTested
   // pairs is `thin` (the comparison can't be made -- never counted as independent);
   // one at or over the cut is absorbed (`skipped`, listed under the kept group's
   // coveredBy). Deterministic. opts.eligible(id) filters the candidates first.
@@ -1800,7 +1801,11 @@ const MiniEvxlEngine = (function(){
         if(!c || c.tested < o.minTested){ verdict = { thin: true, vs: k.id, tested: c ? c.tested : 0 }; break; }
         const ov = matrix.overlap(g.id, k.id);
         if(ov===null){ verdict = { thin: true, vs: k.id, tested: c.tested }; break; }
-        if(Math.abs(ov) >= o.maxOverlap){ verdict = { by: k, overlap: ov }; break; }
+        // POSITIVE overlap at or over the cut absorbs; a NEGATIVE overlap is the
+        // paradigm of a different skill (they move against each other), so it keeps
+        // the group apart (2026-08-22 late: the first rule read |overlap| and
+        // swallowed static/flick/micro into tracking because they move against it).
+        if(ov >= o.maxOverlap){ verdict = { by: k, overlap: ov }; break; }
       }
       if(!verdict){ kept.push({ id: g.id, size: g.size, cohesion: coh, tested: own.tested, coveredBy: [] }); }
       else if(verdict.thin){ thin.push({ id: g.id, tested: verdict.tested, vs: verdict.vs }); }
