@@ -8,9 +8,14 @@
 #                            test/facets-snapshot.json
 #   session.js            -- the session coach (composeSession) on a synthetic
 #                            fixture vs the snapshot pasted in the test itself
+#   overlap.js            -- the overlap page's engine layer (pair index, group
+#                            matrix, independent set, route/label helpers) on a
+#                            hand fixture, every number worked by hand
 #   template-integrity.js -- shipped template.html invariants: every script block
 #                            parses, embedded engine matches src/engine.js,
-#                            SITE block generic, scores seed empty
+#                            SITE block generic, scores seed empty, population
+#                            block shapes, shipped transfer lists == the engine's
+#                            derivation from the pairs block
 # Golden/snapshot files are regenerated only deliberately -- see each test's header.
 # claude/** covers remote working branches so away-from-home sessions get CI too.
 name: engine tests
@@ -30,6 +35,7 @@ jobs:
       - run: node test/difficulty.js
       - run: node test/facets.js
       - run: node test/session.js
+      - run: node test/overlap.js
       # On `dev` the tracked template.html is the last RELEASED build by design
       # (dev builds write template.dev.html, gitignored), so "embedded engine ==
       # src/engine.js" is stale there until the next release. master and claude/*

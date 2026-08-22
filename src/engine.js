@@ -1362,14 +1362,63 @@ const MiniEvxlEngine = (function(){
   // scenario's facets when it has any (curator labels normalised, minus pack /
   // section noise), else its raw curator labels.
   const skillLabelsOf = sc => { const f = (sc.facets||[]).filter(x=>!x.includes(':') && x!=='no-aim'); return f.length ? f : (sc.labels||[]).filter(Boolean); };
-  function skillProfile(scenarios){
+  // ---- label / route helpers shared by the session coach and the overlap page ----
+  // (lifted out of composeSession's closure 2026-08-22 for the overlap page;
+  // behaviour identical -- toolkit test/session.js pins the coach's output.)
+  // A raw curator label the way the map script keys it: lower-cased, trimmed
+  // (dev/transfer-map.ps1's ([string]$g.category).Trim().ToLower()).
+  const normalizeLabel = s => String(s||'').toLowerCase().trim();
+  // The facet set a curator label carries through the vocabulary (mechanic +
+  // modifiers), or null when the vocabulary does not know it / marks it as
+  // carrying no skill. "static" -> {static}, "static clicking" -> {clicking, static}.
+  const labelFacetSet = l => { const e = facetEntry('category', l) || facetEntry('subcategory', l); if(!e || e.a) return null; const s = new Set(); if(e.m) s.add(e.m); (e.mod||[]).forEach(m=>s.add(m)); return s.size ? s : null; };
+  // Two labels name the same skill when one's facet set is a subset of the
+  // other's ("static" / "static clicking"); "reactive tracking" vs "smoothness"
+  // ({tracking, reactive} vs {tracking, smooth}) are different skills. Labels the
+  // vocabulary doesn't know are never the same skill here (raw-label test only).
+  const sameSkillLabels = (a, b) => { const fa = labelFacetSet(a), fb = labelFacetSet(b); if(!fa || !fb) return false; const sub = (x,y) => [...x].every(v=>y.has(v)); return sub(fa,fb) || sub(fb,fa); };
+  // A label the vocabulary marks as carrying no skill (section numbers, pack
+  // names) or as a difficulty word ("easy"): can't be either end of a route.
+  const noSkillLabel = l => { const cats = FACET_VOCAB.categories, subs = FACET_VOCAB.subcategories; const e = Object.prototype.hasOwnProperty.call(cats, l) ? cats[l] : (Object.prototype.hasOwnProperty.call(subs, l) ? subs[l] : null); return !!(e && e.a); };
+  // The user's level: median rung of the played, rated scenarios (rounded); null with none.
+  function sessionLevel(scenarios){ const rungs = (scenarios||[]).filter(sc=>sc.played && sc.rung>=0).map(sc=>sc.rung); return rungs.length ? Math.round(medianOf(rungs)) : null; }
+  // Stuck: several recent tries (>= 4) whose best sits well under the PB (nearness < 0.85).
+  const isStuck = sc => !!(sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
+  const isPlateaued = sc => !!(sc.resp && sc.resp.state==='plateaued');
+  // Can y serve as a route for the weak scenario w at this level? The session's
+  // rule in one place: y rated, at or under level+1, not maxed, not stuck, not
+  // plateaued, and either unplayed or standing >= 5 points higher than w on ONE
+  // scale (percentile vs percentile when both have a curve, To 2nd vs To 2nd
+  // otherwise -- `cmp` says which). `why` names the first failed condition.
+  function routeCheck(y, w, level){
+    if(!y) return { ok: false, cmp: null, why: 'missing' };
+    const usePct = (y.pct!==null && y.pct!==undefined) && (w && w.pct!==null && w.pct!==undefined);
+    const cmp = usePct ? 'pct' : 'to2nd';
+    if(!(y.rung>=0)) return { ok: false, cmp, why: 'unrated' };
+    if(level!==null && level!==undefined && y.rung > level+1) return { ok: false, cmp, why: 'above level' };
+    if(y.maxed) return { ok: false, cmp, why: 'maxed' };
+    if(isStuck(y)) return { ok: false, cmp, why: 'stuck' };
+    if(isPlateaued(y)) return { ok: false, cmp, why: 'plateaued' };
+    if(y.played && w){
+      const higher = usePct ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05;
+      if(!higher) return { ok: false, cmp, why: 'not higher' };
+    }
+    return { ok: true, cmp, why: null };
+  }
+  // Weakness by label. Default: the scenario's skill labels (facets when it has
+  // any, else raw curator labels) -- the session's profile. opts.keyBy 'labels':
+  // rows keyed by NORMALISED raw curator label (kind 'label'), the overlap
+  // page's standing per matrix row.
+  function skillProfile(scenarios, opts){
+    const byLabels = !!(opts && opts.keyBy==='labels');
+    const keysOf = byLabels ? (sc => [...new Set((sc.labels||[]).map(normalizeLabel).filter(Boolean))]) : skillLabelsOf;
     const by = new Map();
-    scenarios.forEach(sc=>{ if(!sc.played || sc.maxed) return; skillLabelsOf(sc).forEach(l=>{ if(!by.has(l)) by.set(l, []); by.get(l).push(sc); }); });
+    scenarios.forEach(sc=>{ if(!sc.played || sc.maxed) return; keysOf(sc).forEach(l=>{ if(!by.has(l)) by.set(l, []); by.get(l).push(sc); }); });
     const out = [];
     by.forEach((list, label)=>{
       const median = medianOf(list.map(sessionMetric));
       const raises = list.reduce((a,sc)=>a+(sc.raises14d||0), 0);
-      const kind = list.some(sc=>(sc.facets||[]).includes(label)) ? 'facet' : 'label';
+      const kind = (!byLabels && list.some(sc=>(sc.facets||[]).includes(label))) ? 'facet' : 'label';
       out.push({ label, kind, median, n: list.length, raises14d: raises });
     });
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
@@ -1390,9 +1439,8 @@ const MiniEvxlEngine = (function(){
     const hasPct = sc => sc.pct!==null && sc.pct!==undefined;
     const standing = sc => hasPct(sc) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd))+' (no population curve yet)';
     // Routes compare on ONE scale: percentile vs percentile when both sides have a
-    // curve, To 2nd vs To 2nd otherwise; the route carries which, so its reason
-    // reports the quantity that was actually compared.
-    const betterThan = (y, w) => { const usePct = hasPct(y) && hasPct(w); return { ok: !y.played || (usePct ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05), cmp: usePct ? 'pct' : 'to2nd' }; };
+    // curve, To 2nd vs To 2nd otherwise; the route carries which (routeCheck's
+    // `cmp`), so its reason reports the quantity that was actually compared.
     const standingAs = (sc, cmp) => (cmp==='pct' && hasPct(sc)) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd));
     // ---- v0.4 terms, each 0 / the identity without its evidence ----
     const gameW = Math.max(0, Math.min(1, Number(opts.gameWeight)||0));
@@ -1402,7 +1450,7 @@ const MiniEvxlEngine = (function(){
     const gameBonus = sc => gameW * GAME_BONUS * gameShare(sc);
     const expectedGain = sc => (sc.resp && sc.resp.gain>0) ? Math.min(EXPGAIN_CAP, sc.resp.gain * SESSION_PLANNED_ATTEMPTS) : 0;
     const conf = sc => boardConfidence(sc.boardN===null || sc.boardN===undefined ? null : Number(sc.boardN));
-    const plateaued = sc => !!(sc.resp && sc.resp.state==='plateaued');
+    const plateaued = isPlateaued;
     // game-first stable partition for the shuffled pools (identity at weight 0)
     const gameFirst = list => gameW>0 ? list.filter(sc=>gameShare(sc)>0).concat(list.filter(sc=>gameShare(sc)<=0)) : list;
     const template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
@@ -1427,12 +1475,12 @@ const MiniEvxlEngine = (function(){
       }
       return { regime: 'thin', level: null, popLevel: null, weakLabels: [], confidence: opts.confidence||null, template: null, items };
     }
-    const level = Math.round(medianOf(played.map(sc=>sc.rung)));
+    const level = sessionLevel(played);
     const curved = played.filter(hasPct);
     popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
     const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
     // ---- WEAKEST: the loop, on the population metric. Rung <= level.
-    const stuck = sc => !!(sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
+    const stuck = isStuck;
     // v0.3's stuck test OR-ed with v0.4's plateaued reading: both sink, neither routes.
     const sinks = sc => stuck(sc) || plateaued(sc);
     // Small-board shrinkage toward the user's overall level: identity at conf 1
@@ -1463,14 +1511,15 @@ const MiniEvxlEngine = (function(){
     // Neighbour must exist in the pool, sit at or under level+1, not be maxed,
     // not be stuck, and either be unplayed or stand higher than the weak one --
     // volume there is productive where volume on the weak one may not be.
+    // (routeCheck, module scope, is that rule; the overlap page marks routes with it.)
     const weakItems = items.filter(it=>it.why==='weakest').map(it=>byName.get(it.name)).filter(Boolean);
     const routes = [];
     weakItems.forEach(w=>{
       (w.neighbours||[]).forEach(nb=>{
-        const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || y.rung<0 || y.rung>level+1 || y.maxed || sinks(y)) return;
+        const y = byName.get(nb[0]); if(!y || chosen.has(y.name)) return;
         if(!(nb[1]>0)) return;   // positive co-variation only
-        const bt = betterThan(y, w); if(!bt.ok) return;
-        routes.push({ y, w, r: nb[1], n: nb[2], cmp: bt.cmp });
+        const rc = routeCheck(y, w, level); if(!rc.ok) return;
+        routes.push({ y, w, r: nb[1], n: nb[2], cmp: rc.cmp });
       });
     });
     routes.sort((a,b)=> b.r*Math.log(b.n) - a.r*Math.log(a.n));
@@ -1483,19 +1532,13 @@ const MiniEvxlEngine = (function(){
     // strength in L across the population" -- and pick a scenario in M at your
     // level that you stand higher on or haven't played.
     const bridges = opts.labelBridges || {};
-    const lower = s => String(s||'').toLowerCase().trim();
-    // A bridge's two labels must name different skills. Through the facet vocabulary:
-    // "static" = {static}, "static clicking" = {clicking, static} -- one is a subset of
-    // the other, so that bridge is the same skill spelled twice and is skipped;
-    // "tracking" vs "dodge" ({tracking} vs {strafe}) or "reactive tracking" vs
-    // "smoothness" ({tracking, reactive} vs {tracking, smooth}) are real bridges.
-    // Labels the vocabulary doesn't know keep the raw-label test only.
-    const labelFacets = l => { const e = facetEntry('category', l) || facetEntry('subcategory', l); if(!e || e.a) return null; const s = new Set(); if(e.m) s.add(e.m); (e.mod||[]).forEach(m=>s.add(m)); return s.size ? s : null; };
-    const sameSkill = (a, b) => { const fa = labelFacets(a), fb = labelFacets(b); if(!fa || !fb) return false; const sub = (x,y) => [...x].every(v=>y.has(v)); return sub(fa,fb) || sub(fb,fa); };
-    // A label the vocabulary marks as carrying no skill (section numbers, pack
-    // names) or as a difficulty word ("easy") can't be either end of a route.
-    const noSkillLabel = l => { const cats = FACET_VOCAB.categories, subs = FACET_VOCAB.subcategories; const e = Object.prototype.hasOwnProperty.call(cats, l) ? cats[l] : (Object.prototype.hasOwnProperty.call(subs, l) ? subs[l] : null); return !!(e && e.a); };
-    const labelsOf = sc => [...new Set((sc.labels||[]).map(lower).filter(Boolean))];
+    // A bridge's two labels must name different skills (sameSkillLabels, module
+    // scope, through the facet vocabulary: "static" / "static clicking" is one
+    // skill spelled twice and is skipped; "tracking" vs "dodge" or "reactive
+    // tracking" vs "smoothness" are real bridges), and neither end may be a label
+    // the vocabulary marks as carrying no skill (noSkillLabel).
+    const sameSkill = sameSkillLabels;
+    const labelsOf = sc => [...new Set((sc.labels||[]).map(normalizeLabel).filter(Boolean))];
     // scenarios per raw label (built once; the bridge loop and the revisit forecast both read it)
     let _byLabel = null;
     const byLabelMap = () => { if(_byLabel) return _byLabel; _byLabel = new Map(); rated.forEach(sc=>{ labelsOf(sc).forEach(l=>{ if(!_byLabel.has(l)) _byLabel.set(l, []); _byLabel.get(l).push(sc); }); }); return _byLabel; };
@@ -1515,7 +1558,8 @@ const MiniEvxlEngine = (function(){
             const M = a===L ? b : (b===L ? a : null); if(!M || noSkillLabel(M)) return;
             const [r, pairs] = bridges[key]; if(!(r>=BRIDGE_MIN_R)) return;
             (byLabel.get(M)||[]).forEach(y=>{
-              if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name) || y.rung>level+1 || y.maxed || sinks(y)) return;
+              if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name)) return;
+              const rc = routeCheck(y, w, level); if(!rc.ok) return;   // level, maxed, stuck/plateaued, standing
               if(labelsOf(y).includes(L)) return;   // must be a genuinely different label
               // ...and a genuinely different skill: "static" -> "static clicking" is one
               // skill spelled twice (identical facet sets), while "reactive tracking" ->
@@ -1524,8 +1568,7 @@ const MiniEvxlEngine = (function(){
               // with no facets fall back to the raw-label test above.
               const fy = skillLabelsOf(y).slice().sort().join('|'), fw = skillLabelsOf(w).slice().sort().join('|');
               if(fy && fw && fy===fw) return;
-              const bt = betterThan(y, w); if(!bt.ok) return;
-              cands.push({ y, w, r, n: pairs, viaLabel: M, fromLabel: L, labelRoute: true, cmp: bt.cmp });
+              cands.push({ y, w, r, n: pairs, viaLabel: M, fromLabel: L, labelRoute: true, cmp: rc.cmp });
             });
           });
         });
@@ -1567,6 +1610,260 @@ const MiniEvxlEngine = (function(){
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items };
+  }
+
+  // ---- Overlap page: the population map, recomputed from scenario pairs -------
+  // (2026-08-22, DESIGN_INTENT D12 reading: a statistic on categories is allowed
+  // when it can be recomputed from scenarios -- here it is, in the page.)
+  // All pure. Inputs are data/transfer.json's shapes: a `pairs` block
+  // {minShared, names:[...], e:[ai, bi, r100, n, ...]} (every tested pair at
+  // n >= minShared, r100 = round(r*100), ai < bi) and/or the legacy per-scenario
+  // lists name -> [[neighbour, r, n], ...] (top k positive + up to kNeg negative
+  // at |r| >= minR, the session's input).
+  // ±band on one Pearson r at n shared players: 1.96/sqrt(n-3), the width of a
+  // 95% interval in Fisher-z space read straight off as r -- an approximation
+  // (exact only near r = 0, narrower at large |r|), used as a claim-strength
+  // floor, never as a test. n = 100 -> ±0.20, 400 -> ±0.10, 1,800 -> ±0.046.
+  function rBand(n){ return 1.96/Math.sqrt(Math.max((Number(n)||0)-3, 1)); }
+  const TRANSFER_META_KEYS = ['meta', 'labels', 'pairs', 'clusters'];
+  // The adjacency index over the shipped pairs. source 'pairs' when the pairs
+  // block exists (every tested pair, both directions decoded once); 'legacy'
+  // when only the per-scenario lists exist -- then edges(name) is exactly that
+  // scenario's shipped list (directed: A may list B while B's list, full of
+  // stronger pairs, omits A) and forEachPair visits each unordered pair once;
+  // 'none' without either. minShared = the floor the data holds (pairs.minShared,
+  // else meta.minShared, else 100): a page control must never go under it.
+  function buildOverlapIndex(transfer){
+    const adj = new Map();
+    const edge = (a, b, r, n) => { if(!adj.has(a)) adj.set(a, []); adj.get(a).push({ name: b, r, n }); };
+    let source = 'none', minShared = 100, names = [];
+    const p = transfer && transfer.pairs;
+    const pairList = [];   // [a, b, r, n] unordered, each once
+    if(p && Array.isArray(p.e) && Array.isArray(p.names) && p.e.length){
+      source = 'pairs'; minShared = Number(p.minShared)>0 ? Number(p.minShared) : minShared;
+      const nm = p.names, e = p.e;
+      for(let i=0; i+3<e.length; i+=4){
+        const a = nm[e[i]], b = nm[e[i+1]], r = e[i+2]/100, n = e[i+3];
+        if(a===undefined || b===undefined) continue;
+        edge(a, b, r, n); edge(b, a, r, n); pairList.push([a, b, r, n]);
+      }
+      names = nm.slice().sort();
+    } else if(transfer && typeof transfer==='object'){
+      const seen = new Set();
+      Object.keys(transfer).forEach(k=>{
+        if(TRANSFER_META_KEYS.includes(k) || !Array.isArray(transfer[k])) return;
+        transfer[k].forEach(row=>{
+          if(!Array.isArray(row) || typeof row[0]!=='string') return;
+          const r = Number(row[1]), n = Number(row[2]);
+          if(!Number.isFinite(r) || !Number.isFinite(n)) return;
+          edge(k, row[0], r, n);
+          const key = k < row[0] ? k+'\u0000'+row[0] : row[0]+'\u0000'+k;
+          if(!seen.has(key)){ seen.add(key); pairList.push(k < row[0] ? [k, row[0], r, n] : [row[0], k, r, n]); }
+        });
+      });
+      if(adj.size){ source = 'legacy'; names = [...adj.keys()].sort(); }
+      const ms = transfer.meta && Number(transfer.meta.minShared); if(ms>0) minShared = ms;
+    }
+    return {
+      source, minShared, names,
+      has: name => adj.has(name),
+      edges: name => adj.get(name) || [],
+      degree: name => (adj.get(name) || []).length,
+      forEachPair: fn => { for(const q of pairList) fn(q[0], q[1], q[2], q[3]); },
+      pairCount: pairList.length
+    };
+  }
+  // One scenario against everything it was tested with. Rows {name, r, n, band}.
+  //   with        r >= minR, sorted by the LOWER edge (r - band) desc -- 0.60 at
+  //               n = 100 (±0.20) ranks under 0.58 at n = 1,800 (±0.05);
+  //   against     r <= -minR, by the upper edge (r + band) asc;
+  //   weak        unrelatedR <= |r| < minR, by |r| desc;
+  //   unrelated   |r| < unrelatedR AND |r| + band < minR (the band cannot reach
+  //               the strong floor), by n desc; null on the legacy source, which
+  //               holds no near-zero pair at all;
+  //   inconclusive  count of |r| < unrelatedR rows whose band reaches minR --
+  //               "too thin to call", never "unrelated".
+  // tested = rows at n >= minN; complete = the source holds every tested pair.
+  function overlapOf(name, index, opts){
+    const o = Object.assign({ minN: 100, minR: 0.3, unrelatedR: 0.15 }, opts||{});
+    const legacy = index.source!=='pairs';
+    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>({ name: e.name, r: e.r, n: e.n, band: rBand(e.n) }));
+    const withR = [], against = [], weak = [], unrelated = [];
+    let inconclusive = 0;
+    rows.forEach(row=>{
+      const a = Math.abs(row.r);
+      if(row.r >= o.minR) withR.push(row);
+      else if(row.r <= -o.minR) against.push(row);
+      else if(a >= o.unrelatedR) weak.push(row);
+      else if(a + row.band < o.minR) unrelated.push(row);
+      else inconclusive++;
+    });
+    withR.sort((x,y)=> (y.r-y.band)-(x.r-x.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    against.sort((x,y)=> (x.r+x.band)-(y.r+y.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    weak.sort((x,y)=> Math.abs(y.r)-Math.abs(x.r) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    unrelated.sort((x,y)=> y.n-x.n || Math.abs(x.r)-Math.abs(y.r) || (x.name<y.name?-1:x.name>y.name?1:0));
+    return { tested: rows.length, with: withR, against, weak, unrelated: legacy ? null : unrelated, inconclusive: legacy ? 0 : inconclusive, complete: !legacy };
+  }
+  // The group x group matrix (curator labels, folded labels, emergent clusters --
+  // any groupsOf(name) -> [group id, ...]). A scenario pair (x, y) at n >= minN
+  // contributes its r ONCE to every unordered cell {A, B} with A in groupsOf(x)
+  // and B in groupsOf(y) -- dev/transfer-map.ps1's label-pair rule, except that a
+  // pair whose two scenarios both carry both labels lands in cell {A, B} once,
+  // not twice, so `tested` counts DISTINCT scenario pairs and pairs(a, b) lists
+  // exactly the rows behind the cell (their mean is the cell's meanR -- the
+  // falsifiability click). groups = [{id, size}] in evidence order (size desc,
+  // id asc; size = scenarios in the index carrying the group, >= minSize).
+  //   cell(a, b)    {meanR, tested, strongPos, strongNeg} | null (nothing tested)
+  //   cohesion(id)  cell(id, id).meanR | null -- how much the group's own
+  //                 scenarios move together
+  //   overlap(a, b) meanR / sqrt(cohesion(a) * cohesion(b)) | null when either
+  //                 cohesion < minCohesion (0.05: the ratio is unstable when a
+  //                 group's own scenarios don't move together) or a cell is
+  //                 missing -- the share of the skill inside A that A also
+  //                 shares with B, and it cancels most of the sample-skew
+  //                 shrinkage (which scales every r by about the same factor)
+  //   pairs(a, b)   [{a, b, r, n}] behind the cell, lazily scanned, cached
+  function groupMatrix(index, groupsOf, opts){
+    const o = Object.assign({ minN: 100, strongR: 0.3, minSize: 1, minCohesion: 0.05 }, opts||{});
+    const gid = x => String(x);
+    const memberOf = new Map();   // name -> [ids]
+    const sizes = new Map();
+    index.names.forEach(name=>{
+      const ids = [...new Set((groupsOf(name)||[]).map(gid))];
+      memberOf.set(name, ids);
+      ids.forEach(id=>sizes.set(id, (sizes.get(id)||0)+1));
+    });
+    const key = (a, b) => { a = gid(a); b = gid(b); return a<=b ? a+'\u0000'+b : b+'\u0000'+a; };
+    const cells = new Map();
+    const touch = (a, b, r) => {
+      const k = key(a, b); let c = cells.get(k); if(!c){ c = { sum: 0, tested: 0, strongPos: 0, strongNeg: 0 }; cells.set(k, c); }
+      c.sum += r; c.tested++; if(r >= o.strongR) c.strongPos++; else if(r <= -o.strongR) c.strongNeg++;
+    };
+    index.forEachPair((x, y, r, n)=>{
+      if(n < o.minN) return;
+      const gx = memberOf.get(x) || [], gy = memberOf.get(y) || [];
+      if(!gx.length || !gy.length) return;
+      const hit = new Set();
+      gx.forEach(a=>gy.forEach(b=>hit.add(key(a, b))));
+      hit.forEach(k=>{ const [a, b] = k.split('\u0000'); touch(a, b, r); });
+    });
+    const groups = [...sizes.entries()].filter(([, size])=>size>=o.minSize).map(([id, size])=>({ id, size }))
+      .sort((a,b)=> b.size-a.size || (a.id<b.id?-1:a.id>b.id?1:0));
+    const cell = (a, b) => { const c = cells.get(key(a, b)); return c ? { meanR: c.sum/c.tested, tested: c.tested, strongPos: c.strongPos, strongNeg: c.strongNeg } : null; };
+    const cohesion = id => { const c = cell(id, id); return c ? c.meanR : null; };
+    const overlap = (a, b) => {
+      const c = cell(a, b), ca = cohesion(a), cb = cohesion(b);
+      if(!c || ca===null || cb===null || ca < o.minCohesion || cb < o.minCohesion) return null;
+      return c.meanR/Math.sqrt(ca*cb);
+    };
+    const pairCache = new Map();
+    const pairs = (a, b) => {
+      const k = key(a, b); if(pairCache.has(k)) return pairCache.get(k);
+      const A = gid(a), B = gid(b); const out = [];
+      index.forEachPair((x, y, r, n)=>{
+        if(n < o.minN) return;
+        const gx = memberOf.get(x) || [], gy = memberOf.get(y) || [];
+        if((gx.includes(A) && gy.includes(B)) || (gx.includes(B) && gy.includes(A))) out.push({ a: x, b: y, r, n });
+      });
+      pairCache.set(k, out); return out;
+    };
+    return { groups, cell, cohesion, overlap, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
+  }
+  // The greedy "practise separately" set over a group matrix. Walk the groups
+  // in `order` -- 'evidence' (size desc, id asc: a property of the map, the same
+  // for every player) or 'weakness' (the caller's standing Map id -> {median, n},
+  // median asc, unknown last) -- and keep a group when its cohesion >= minCohesion,
+  // its own cell has >= minTested pairs, and |overlap| with EVERY kept group is
+  // under maxOverlap. A group whose pair cell with a kept group holds < minTested
+  // pairs is `thin` (the comparison can't be made -- never counted as independent);
+  // one at or over the cut is absorbed (`skipped`, listed under the kept group's
+  // coveredBy). Deterministic. opts.eligible(id) filters the candidates first.
+  //   { kept: [{id, size, cohesion, tested, coveredBy: [{id, overlap}]}],
+  //     incoherent: [{id, cohesion}], thin: [{id, tested, vs}], skipped: [{id, by, overlap}] }
+  function independentGroups(matrix, opts){
+    const o = Object.assign({ maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence', standing: null, eligible: null }, opts||{});
+    let cands = matrix.groups.filter(g=>!o.eligible || o.eligible(g.id));
+    if(o.order==='weakness'){
+      const st = id => { const s = o.standing && (o.standing instanceof Map ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
+      const idx = new Map(cands.map((g, i)=>[g.id, i]));
+      cands = cands.slice().sort((a,b)=>{ const sa = st(a.id), sb = st(b.id); if(sa===null && sb===null) return idx.get(a.id)-idx.get(b.id); if(sa===null) return 1; if(sb===null) return -1; return sa-sb || idx.get(a.id)-idx.get(b.id); });
+    }
+    const kept = [], incoherent = [], thin = [], skipped = [];
+    for(const g of cands){
+      const coh = matrix.cohesion(g.id);
+      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
+      const own = matrix.cell(g.id, g.id);
+      if(!own || own.tested < o.minTested){ thin.push({ id: g.id, tested: own ? own.tested : 0, vs: null }); continue; }
+      let verdict = null;
+      for(const k of kept){
+        const c = matrix.cell(g.id, k.id);
+        if(!c || c.tested < o.minTested){ verdict = { thin: true, vs: k.id, tested: c ? c.tested : 0 }; break; }
+        const ov = matrix.overlap(g.id, k.id);
+        if(ov===null){ verdict = { thin: true, vs: k.id, tested: c.tested }; break; }
+        if(Math.abs(ov) >= o.maxOverlap){ verdict = { by: k, overlap: ov }; break; }
+      }
+      if(!verdict){ kept.push({ id: g.id, size: g.size, cohesion: coh, tested: own.tested, coveredBy: [] }); }
+      else if(verdict.thin){ thin.push({ id: g.id, tested: verdict.tested, vs: verdict.vs }); }
+      else { skipped.push({ id: g.id, by: verdict.by.id, overlap: verdict.overlap }); verdict.by.coveredBy.push({ id: g.id, overlap: verdict.overlap }); }
+    }
+    return { kept, incoherent, thin, skipped };
+  }
+  // Fold same-skill spellings: label -> fold key. Labels with a facet set fold
+  // to the sorted facet join ("static click" and "static clicking" -> "clicking|static");
+  // labels the vocabulary doesn't know (or marks as no-skill) stay themselves.
+  function foldLabels(labels){
+    const out = new Map();
+    (labels||[]).forEach(l=>{ const s = labelFacetSet(l); out.set(l, s ? [...s].sort().join('|') : l); });
+    return out;
+  }
+  // The session's shipped bridge table (data/transfer.json `labels`, "a|b" ->
+  // [meanR, scenarioPairs]) as rows, meanR desc: within (a === b), sameSkill
+  // (one skill spelled twice -- the session never routes through it), nonSkill
+  // (an end the vocabulary marks as carrying no skill). Mean r over pairs that
+  // individually passed |r| >= 0.3 at n >= 12 -- a pair missing here is NOT
+  // evidence of independence; the matrix is.
+  function bridgeRows(labels, opts){
+    const o = Object.assign({ minPairs: 10 }, opts||{});
+    const out = [];
+    Object.keys(labels||{}).forEach(key=>{
+      const v = labels[key]; if(!Array.isArray(v) || v.length<2) return;
+      const meanR = Number(v[0]), pairs = Number(v[1]);
+      if(!Number.isFinite(meanR) || !(pairs >= o.minPairs)) return;
+      const i = key.indexOf('|'); if(i<0) return;
+      const a = key.slice(0, i), b = key.slice(i+1);
+      out.push({ a, b, meanR, pairs, within: a===b, sameSkill: a!==b && sameSkillLabels(a, b), nonSkill: noSkillLabel(a) || noSkillLabel(b) });
+    });
+    return out.sort((x,y)=> y.meanR-x.meanR || y.pairs-x.pairs || (x.a<y.a?-1:x.a>y.a?1:0) || (x.b<y.b?-1:x.b>y.b?1:0));
+  }
+  // The stamper's per-scenario rule (dev/stamp-population.ps1) in JS: rows at
+  // n >= minN and |r| >= minR; the top k POSITIVE by r (ties by name, ordinal),
+  // then up to kNeg NEGATIVE by r ascending (|r| desc, ties by name) appended.
+  // Returns [[name, r, n], ...] -- the shape of the shipped lists. The shipped
+  // lists were selected on 3-decimal r while the pairs block carries r100, so a
+  // comparison must tolerate the rounding edge (see the toolkit's
+  // test/template-integrity.js).
+  function neighboursFromIndex(index, name, opts){
+    const o = Object.assign({ k: 8, kNeg: 4, minR: 0.3, minN: index.minShared }, opts||{});
+    const cmpName = (x, y) => x.name<y.name ? -1 : x.name>y.name ? 1 : 0;
+    const rows = index.edges(name).filter(e=>e.n>=o.minN && Math.abs(e.r)>=o.minR);
+    const pos = rows.filter(e=>e.r>0).sort((x,y)=> y.r-x.r || cmpName(x,y)).slice(0, o.k);
+    const neg = rows.filter(e=>e.r<=0).sort((x,y)=> x.r-y.r || cmpName(x,y)).slice(0, o.kNeg);
+    return pos.concat(neg).map(e=>[e.name, e.r, e.n]);
+  }
+  // groupsOf for the clusters block ({meta, scenario: {name: [id|null, loading,
+  // stability, status]}, cluster: {id: {...}}}): name -> [String(id)] for
+  // members; provisional / unstable rows join only with opts.includeProvisional /
+  // opts.includeUnstable; unassigned (id null) and unknown names -> []. Status
+  // strings as the stamper writes them: member, provisional, unstable, unassigned.
+  // The returned function carries .statusOf(name) -> status | null and .ids.
+  function clusterGroupsOf(clusters, opts){
+    const o = Object.assign({ includeProvisional: false, includeUnstable: false }, opts||{});
+    const sc = clusters && clusters.scenario && typeof clusters.scenario==='object' ? clusters.scenario : {};
+    const ok = status => status==='member' || (status==='provisional' && o.includeProvisional) || (status==='unstable' && o.includeUnstable);
+    const fn = name => { const row = sc[name]; if(!Array.isArray(row) || row[0]===null || row[0]===undefined) return []; return ok(String(row[3])) ? [String(row[0])] : []; };
+    fn.statusOf = name => { const row = sc[name]; return Array.isArray(row) ? String(row[3]) : null; };
+    fn.ids = Object.keys(clusters && clusters.cluster && typeof clusters.cluster==='object' ? clusters.cluster : {});
+    return fn;
   }
 
   // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
@@ -1991,6 +2288,9 @@ const MiniEvxlEngine = (function(){
     if(fx.exclude) out.push('no-aim');
     return out;
   }
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
+    // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
+    normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
+    rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

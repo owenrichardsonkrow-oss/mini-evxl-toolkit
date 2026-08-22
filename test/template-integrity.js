@@ -15,8 +15,12 @@
 // storePrefix "mini-evxl-template", esc() still escapes double quotes, the
 // population-data block parses with the shapes the page destructures (labels
 // entries are [meanR, pairs]; `pairs.e` rows are [ai, bi, r100, n] with ai < bi,
-// indices inside `names`, r100 in -100..100, n >= minShared; `boards` values are
-// positive integers), and no personal identity string survives anywhere in the file.
+// indices inside `names`, r100 in -100..100, n >= minShared; `clusters.scenario`
+// rows are [id|null, loading, stability, status]; `boards` values are positive
+// integers), the shipped per-scenario transfer lists agree with the engine's
+// own derivation from the pairs block (neighboursFromIndex, with the rounding
+// tolerance explained at the check), and no personal identity string survives
+// anywhere in the file.
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const rootDir = path.join(__dirname, '..');
 const norm = s => String(s).replace(/\r\n/g, '\n');
@@ -105,6 +109,60 @@ if (pop) {
           check(typeof c.meta.freeze === 'string' && /^[0-9a-f]{64}$/.test(c.meta.freeze), 'transfer.clusters.meta.freeze is not a 64-hex hash');
           check(Number.isInteger(c.meta.k) && c.meta.k >= 2, 'transfer.clusters.meta.k is not an integer >= 2');
         }
+        // scenario rows: [id|null, loading, stability, status] -- the shape clusterGroupsOf reads;
+        // every non-null id names a cluster in `cluster` (keys are strings, ids may be numbers)
+        if (isObj(c) && isObj(c.scenario) && isObj(c.cluster)) {
+          let bad = null;
+          for (const [name, row] of Object.entries(c.scenario)) {
+            if (!Array.isArray(row) || row.length < 4) { bad = 'row is not [id, loading, stability, status]: ' + name; break; }
+            if (row[0] !== null && !Object.prototype.hasOwnProperty.call(c.cluster, String(row[0]))) { bad = 'cluster id ' + row[0] + ' of ' + name + ' is not in clusters.cluster'; break; }
+            if (typeof row[3] !== 'string') { bad = 'status is not a string: ' + name; break; }
+          }
+          check(!bad, 'transfer.clusters.scenario: ' + bad);
+        }
+      }
+      // the shipped per-scenario lists vs the engine's derivation from the pairs block
+      // (dev/stamp-population.ps1's rule == engine neighboursFromIndex). The two are
+      // NOT byte-comparable: the stamper selects on the map's 3-decimal r while the
+      // pairs block carries r100 = round(r*100), so a pair at r 0.295..0.2995 is under
+      // the |r| >= 0.3 floor for the stamper and exactly AT it (0.30) for the engine,
+      // and two pairs that differ at the third decimal can tie at r100 on the 8th/4th
+      // slot. So: (1) every shipped row must be in the index with the same n and
+      // round(r*100) within 1 of its r100 (the pair itself agrees); (2) the two lists
+      // restricted to |r100| >= 31 -- clear of the floor's rounding edge -- must be
+      // the same set of names, except for rows whose |r100| equals the smallest
+      // |r100| of that sign in the shipped list (a tie at the slot boundary).
+      if (o.transfer.pairs !== undefined && isObj(o.transfer.pairs) && Array.isArray(o.transfer.pairs.e)) {
+        const E = require(path.join(rootDir, 'src', 'engine.js'));
+        const meta = isObj(o.transfer.meta) ? o.transfer.meta : {};
+        const index = E.buildOverlapIndex(o.transfer);
+        const listNames = Object.keys(o.transfer).filter(k => !['meta', 'labels', 'pairs', 'clusters'].includes(k) && Array.isArray(o.transfer[k]));
+        const step = Math.max(1, Math.floor(listNames.length / 20));
+        const sample = listNames.filter((_, i) => i % step === 0).slice(0, 20);
+        let bad = null, compared = 0;
+        const r100Of = row => Math.round(Number(row[1]) * 100);
+        for (const name of sample) {
+          const shipped = o.transfer[name];
+          const derived = E.neighboursFromIndex(index, name, { k: meta.k || 8, kNeg: meta.kNeg || 4, minR: meta.minR || 0.3 });
+          const byName = new Map(index.edges(name).map(e => [e.name, e]));
+          for (const row of shipped) {
+            const e = byName.get(row[0]);
+            if (!e) { bad = name + ': shipped neighbour ' + row[0] + ' is not in the pairs block'; break; }
+            if (e.n !== row[2]) { bad = name + ' / ' + row[0] + ': n ' + row[2] + ' shipped vs ' + e.n + ' in the pairs block'; break; }
+            if (Math.abs(Math.round(e.r * 100) - r100Of(row)) > 1) { bad = name + ' / ' + row[0] + ': r ' + row[1] + ' shipped vs r100 ' + Math.round(e.r * 100) + ' in the pairs block'; break; }
+          }
+          if (bad) break;
+          const clear = rows => rows.filter(row => Math.abs(r100Of(row)) >= 31);
+          const s = clear(shipped), d = clear(derived);
+          const boundary = sign => { const v = s.filter(row => sign > 0 ? r100Of(row) > 0 : r100Of(row) < 0).map(row => Math.abs(r100Of(row))); return v.length ? Math.min(...v) : null; };
+          const sNames = new Set(s.map(row => row[0])), dNames = new Set(d.map(row => row[0]));
+          const differing = s.filter(row => !dNames.has(row[0])).concat(d.filter(row => !sNames.has(row[0])));
+          const off = differing.find(row => Math.abs(r100Of(row)) !== boundary(r100Of(row) > 0 ? 1 : -1));
+          if (off) { bad = name + ': shipped list and neighboursFromIndex disagree beyond the slot boundary at ' + off[0] + ' (r ' + off[1] + ', n ' + off[2] + ')'; break; }
+          compared++;
+        }
+        check(!bad, 'transfer lists vs pairs block: ' + bad);
+        check(compared === sample.length, 'transfer lists vs pairs block: compared ' + compared + ' of ' + sample.length + ' sampled scenarios');
       }
     }
     // boards (since the board-size stamp): scenario -> positive integer
