@@ -97,6 +97,15 @@ if (pop) {
           check(!bad, 'transfer.pairs.e: ' + bad);
         }
       }
+      // clusters (when the tracker stamped the D12 emergence freeze): {meta: {freeze: 64 hex, k >= 2}, scenario: {}, cluster: {}}
+      if (o.transfer.clusters !== undefined) {
+        const c = o.transfer.clusters;
+        check(isObj(c) && isObj(c.meta) && isObj(c.scenario) && isObj(c.cluster), 'transfer.clusters lacks meta/scenario/cluster objects');
+        if (isObj(c) && isObj(c.meta)) {
+          check(typeof c.meta.freeze === 'string' && /^[0-9a-f]{64}$/.test(c.meta.freeze), 'transfer.clusters.meta.freeze is not a 64-hex hash');
+          check(Number.isInteger(c.meta.k) && c.meta.k >= 2, 'transfer.clusters.meta.k is not an integer >= 2');
+        }
+      }
     }
     // boards (since the board-size stamp): scenario -> positive integer
     if (o && o.boards !== undefined) {
