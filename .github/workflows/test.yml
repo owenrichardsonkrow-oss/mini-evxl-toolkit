@@ -6,6 +6,8 @@
 #                            test/difficulty-snapshot.json
 #   facets.js             -- ratified skill-facet vocabulary applied to every scenario vs
 #                            test/facets-snapshot.json
+#   session.js            -- the session coach (composeSession) on a synthetic
+#                            fixture vs the snapshot pasted in the test itself
 #   template-integrity.js -- shipped template.html invariants: every script block
 #                            parses, embedded engine matches src/engine.js,
 #                            SITE block generic, scores seed empty
@@ -27,6 +29,7 @@ jobs:
       - run: node test/golden.js
       - run: node test/difficulty.js
       - run: node test/facets.js
+      - run: node test/session.js
       # On `dev` the tracked template.html is the last RELEASED build by design
       # (dev builds write template.dev.html, gitignored), so "embedded engine ==
       # src/engine.js" is stale there until the next release. master and claude/*

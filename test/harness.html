@@ -1,19 +1,25 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
 <title>mini-evxl test harness</title>
-<!-- Browser runner for test/golden.js, test/difficulty.js AND test/facets.js (for machines
-     without Node): serve this folder (static-server.ps1) and open
-     /test/harness.html -- or let the personal repo's dev/run-tests.ps1 read the
-     <pre> below from headless Edge. The RESULT line keeps its original keys
-     (golden results, problemCount) so existing parsers still work; the
-     difficulty run is nested under "difficulty" -- fully green means
-     problemCount === 0 AND difficulty.problemCount === 0.
-     ?write=1 prints the freshly computed golden table (GOLDEN line) and the
-     difficulty snapshot (DIFFSNAP line) instead of comparing. -->
+<!-- Browser runner for test/golden.js, test/difficulty.js, test/facets.js AND
+     test/session.js (for machines without Node): serve this folder
+     (static-server.ps1) and open /test/harness.html -- or let the personal
+     repo's dev/run-tests.ps1 read the <pre> below from headless Edge. The
+     RESULT line keeps its original keys (golden results, problemCount) so
+     existing parsers still work; the difficulty, facets and session runs are
+     nested under "difficulty", "facets" and "session" -- fully green means
+     problemCount === 0 AND every nested problemCount === 0.
+     ?write=1 prints the freshly computed golden table (GOLDEN line), the
+     difficulty snapshot (DIFFSNAP line) and the facets snapshot (FACETSNAP
+     line) instead of comparing. ?session=1 prints only the session snapshot
+     (SESSIONSNAP line) -- the block to paste over EXPECTED in test/session.js;
+     it is kept out of ?write=1 because that test's snapshot lives in its
+     source, not in a fixture file. -->
 <script src="/src/engine.js"></script>
 <script src="/test/golden.js"></script>
 <script src="/test/difficulty.js"></script>
 <script src="/test/facets.js"></script>
+<script src="/test/session.js"></script>
 <pre id="out">RUNNING</pre>
 <script>
 (async () => {
@@ -22,12 +28,17 @@
     const G = window.__miniEvxlGolden;
     const D = window.__miniEvxlDifficulty;
     const F = window.__miniEvxlFacets;
+    const S = window.__miniEvxlSession;
+    const q = new URLSearchParams(location.search);
+    // The session test needs no dataset: a synthetic fixture through composeSession.
+    const sActual = S.compute(MiniEvxlEngine);
+    if (q.get('session')) { out.textContent = 'SESSIONSNAP ' + S.serialize(sActual); return; }
+    const sProblems = S.compare(S.EXPECTED, sActual);
     const html = await (await fetch('/template.html')).text();
     const data = G.extractData(html);
     const actual = G.compute(MiniEvxlEngine, data);
     const dActual = D.compute(MiniEvxlEngine, data);
     const fActual = F.compute(MiniEvxlEngine, data);
-    const q = new URLSearchParams(location.search);
     if (q.get('write')) { out.textContent = 'GOLDEN ' + JSON.stringify(actual) + '\nDIFFSNAP ' + D.serialize(dActual) + 'FACETSNAP ' + F.serialize(fActual); return; }
     const golden = await (await fetch('/test/golden-standings.json')).json();
     const problems = G.compare(golden, actual);
@@ -42,7 +53,9 @@
       difficulty: { scenarios: Object.keys(dActual.entries).length,
         problems: dProblems.slice(0, 20), problemCount: dProblems.length },
       facets: { scenarios: Object.keys(fActual.entries).length,
-        problems: fProblems.slice(0, 20), problemCount: fProblems.length } });
+        problems: fProblems.slice(0, 20), problemCount: fProblems.length },
+      session: { items: sActual.main.items.length, level: sActual.main.level, playedRated: sActual.playedRated.main,
+        problems: sProblems.slice(0, 20), problemCount: sProblems.length } });
   } catch (e) {
     out.textContent = 'ERROR ' + String(e && e.stack || e);
   }

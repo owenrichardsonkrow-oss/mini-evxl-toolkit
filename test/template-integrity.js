@@ -12,8 +12,11 @@
 // block compiles (vm.Script -- parse only, nothing runs), the embedded engine
 // is byte-identical to src/engine.js, the benchmarks-data block parses and is
 // structure-only (scores-data === {}), the SITE identity block is generic with
-// storePrefix "mini-evxl-template", esc() still escapes double quotes, and no
-// personal identity string survives anywhere in the file.
+// storePrefix "mini-evxl-template", esc() still escapes double quotes, the
+// population-data block parses with the shapes the page destructures (labels
+// entries are [meanR, pairs]; `pairs.e` rows are [ai, bi, r100, n] with ai < bi,
+// indices inside `names`, r100 in -100..100, n >= minShared; `boards` values are
+// positive integers), and no personal identity string survives anywhere in the file.
 const fs = require('fs'), path = require('path'), vm = require('vm');
 const rootDir = path.join(__dirname, '..');
 const norm = s => String(s).replace(/\r\n/g, '\n');
@@ -65,6 +68,45 @@ if (pop) {
   try {
     const o = JSON.parse(pop[1].replace(/<\\\//g, '</'));
     check(o && typeof o === 'object' && typeof o.percentiles === 'object' && typeof o.transfer === 'object', 'population-data lacks percentiles/transfer objects');
+    const isObj = x => x && typeof x === 'object' && !Array.isArray(x);
+    if (o && isObj(o.transfer)) {
+      // labels: "a|b" -> [meanR, scenarioPairs] -- the shape the session destructures
+      if (o.transfer.labels !== undefined) {
+        check(isObj(o.transfer.labels), 'transfer.labels is not an object');
+        if (isObj(o.transfer.labels)) {
+          for (const [k, v] of Object.entries(o.transfer.labels)) {
+            if (!Array.isArray(v) || v.length !== 2 || typeof v[0] !== 'number' || !Number.isInteger(v[1])) { check(false, 'transfer.labels entry is not [meanR, pairs]: ' + k); break; }
+          }
+        }
+      }
+      // pairs (when the map kept every tested pair): {minShared, names, e:[ai, bi, r100, n, ...]}
+      if (o.transfer.pairs !== undefined) {
+        const p = o.transfer.pairs;
+        check(isObj(p) && Array.isArray(p.names) && Array.isArray(p.e) && Number.isInteger(p.minShared) && p.minShared > 0, 'transfer.pairs lacks minShared/names/e');
+        if (isObj(p) && Array.isArray(p.names) && Array.isArray(p.e)) {
+          check(p.e.length % 4 === 0, 'transfer.pairs.e length is not a multiple of 4: ' + p.e.length);
+          check(p.names.every(n => typeof n === 'string'), 'transfer.pairs.names holds a non-string');
+          let bad = null;
+          for (let i = 0; i + 3 < p.e.length && !bad; i += 4) {
+            const ai = p.e[i], bi = p.e[i + 1], r100 = p.e[i + 2], n = p.e[i + 3];
+            if (!Number.isInteger(ai) || !Number.isInteger(bi) || ai < 0 || bi < 0 || ai >= p.names.length || bi >= p.names.length) bad = 'index outside names at row ' + (i / 4);
+            else if (ai >= bi) bad = 'row ' + (i / 4) + ' is not ai < bi';
+            else if (!Number.isInteger(r100) || r100 < -100 || r100 > 100) bad = 'r100 out of range at row ' + (i / 4);
+            else if (!Number.isInteger(n) || n < p.minShared) bad = 'n under minShared at row ' + (i / 4);
+          }
+          check(!bad, 'transfer.pairs.e: ' + bad);
+        }
+      }
+    }
+    // boards (since the board-size stamp): scenario -> positive integer
+    if (o && o.boards !== undefined) {
+      check(isObj(o.boards), 'population-data boards is not an object');
+      if (isObj(o.boards)) {
+        for (const [k, v] of Object.entries(o.boards)) {
+          if (!Number.isInteger(v) || v <= 0) { check(false, 'boards entry is not a positive integer: ' + k); break; }
+        }
+      }
+    }
   } catch (e) { check(false, 'population-data does not parse: ' + e.message); }
 }
 
