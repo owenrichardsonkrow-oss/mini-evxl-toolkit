@@ -1075,7 +1075,8 @@ const MiniEvxlEngine = (function(){
     return 0.5;
   }
   // "38th percentile" / "top 12%" wording for a 0..1 rank.
-  function percentileLabel(p){ if(p===null || p===undefined) return ''; const top = Math.round((1-p)*100); return top<=50 ? 'top '+Math.max(1,top)+'%' : Math.round(p*100)+'th percentile'; }
+  function ordinal(n){ const m100 = n % 100, m10 = n % 10; return n + ((m100>=11 && m100<=13) ? 'th' : m10===1 ? 'st' : m10===2 ? 'nd' : m10===3 ? 'rd' : 'th'); }
+  function percentileLabel(p){ if(p===null || p===undefined) return ''; const top = Math.round((1-p)*100); return top<=50 ? 'top '+Math.max(1,top)+'%' : ordinal(Math.max(1, Math.round(p*100)))+' percentile'; }
 
   // ---- Session engine v0.3 (2026-08-22: percentile metric + transfer routes) ------
   // Composes today's session: `size` items, each with a WHY, from a plain list
@@ -1143,6 +1144,11 @@ const MiniEvxlEngine = (function(){
     const primary = sc => { const l = skillLabelsOf(sc); return l.length ? l[0] : ''; };
     const hasPct = sc => sc.pct!==null && sc.pct!==undefined;
     const standing = sc => hasPct(sc) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd))+' (no population curve yet)';
+    // Routes compare on ONE scale: percentile vs percentile when both sides have a
+    // curve, To 2nd vs To 2nd otherwise; the route carries which, so its reason
+    // reports the quantity that was actually compared.
+    const betterThan = (y, w) => { const usePct = hasPct(y) && hasPct(w); return { ok: !y.played || (usePct ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05), cmp: usePct ? 'pct' : 'to2nd' }; };
+    const standingAs = (sc, cmp) => (cmp==='pct' && hasPct(sc)) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd));
     const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name); items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null }); n--; } };
     if(played.length < SESSION_THIN_PLAYED){
       const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
@@ -1185,9 +1191,8 @@ const MiniEvxlEngine = (function(){
       (w.neighbours||[]).forEach(nb=>{
         const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || y.rung<0 || y.rung>level+1 || y.maxed || stuck(y)) return;
         if(!(nb[1]>0)) return;   // positive co-variation only
-        const better = !y.played || ((hasPct(y) && hasPct(w)) ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05);
-        if(!better) return;
-        routes.push({ y, w, r: nb[1], n: nb[2] });
+        const bt = betterThan(y, w); if(!bt.ok) return;
+        routes.push({ y, w, r: nb[1], n: nb[2], cmp: bt.cmp });
       });
     });
     routes.sort((a,b)=> b.r*Math.log(b.n) - a.r*Math.log(a.n));
@@ -1209,6 +1214,9 @@ const MiniEvxlEngine = (function(){
     // Labels the vocabulary doesn't know keep the raw-label test only.
     const labelFacets = l => { const e = facetEntry('category', l) || facetEntry('subcategory', l); if(!e || e.a) return null; const s = new Set(); if(e.m) s.add(e.m); (e.mod||[]).forEach(m=>s.add(m)); return s.size ? s : null; };
     const sameSkill = (a, b) => { const fa = labelFacets(a), fb = labelFacets(b); if(!fa || !fb) return false; const sub = (x,y) => [...x].every(v=>y.has(v)); return sub(fa,fb) || sub(fb,fa); };
+    // A label the vocabulary marks as carrying no skill (section numbers, pack
+    // names) or as a difficulty word ("easy") can't be either end of a route.
+    const noSkillLabel = l => { const cats = FACET_VOCAB.categories, subs = FACET_VOCAB.subcategories; const e = Object.prototype.hasOwnProperty.call(cats, l) ? cats[l] : (Object.prototype.hasOwnProperty.call(subs, l) ? subs[l] : null); return !!(e && e.a); };
     if(routeList.length < SESSION_TEMPLATE.route && Object.keys(bridges).length){
       const labelsOf = sc => [...new Set((sc.labels||[]).map(lower).filter(Boolean))];
       const byLabel = new Map();
@@ -1218,9 +1226,10 @@ const MiniEvxlEngine = (function(){
         if(routeSeen.has(w.name)) continue;
         const cands = [];
         labelsOf(w).forEach(L=>{
+          if(noSkillLabel(L)) return;
           Object.keys(bridges).forEach(key=>{
             const [a,b] = key.split('|'); if(a===b || sameSkill(a,b)) return;
-            const M = a===L ? b : (b===L ? a : null); if(!M) return;
+            const M = a===L ? b : (b===L ? a : null); if(!M || noSkillLabel(M)) return;
             const [r, pairs] = bridges[key]; if(!(r>0)) return;
             (byLabel.get(M)||[]).forEach(y=>{
               if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name) || y.rung>level+1 || y.maxed || stuck(y)) return;
@@ -1232,9 +1241,8 @@ const MiniEvxlEngine = (function(){
               // with no facets fall back to the raw-label test above.
               const fy = skillLabelsOf(y).slice().sort().join('|'), fw = skillLabelsOf(w).slice().sort().join('|');
               if(fy && fw && fy===fw) return;
-              const better = !y.played || ((hasPct(y) && hasPct(w)) ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05);
-              if(!better) return;
-              cands.push({ y, w, r, n: pairs, viaLabel: M, fromLabel: L, labelRoute: true });
+              const bt = betterThan(y, w); if(!bt.ok) return;
+              cands.push({ y, w, r, n: pairs, viaLabel: M, fromLabel: L, labelRoute: true, cmp: bt.cmp });
             });
           });
         });
@@ -1245,8 +1253,8 @@ const MiniEvxlEngine = (function(){
     }
     take(routeList.map(rt=>Object.assign({}, rt.y, { _label: primary(rt.y), _route: rt })), 'route',
       sc=>{ const rt = sc._route; return rt.labelRoute
-        ? 'Route — across the sampled players, strength in "'+rt.viaLabel+'" moves with strength in "'+rt.fromLabel+'" (mean r '+rt.r.toFixed(2)+' over '+rt.n+' scenario pairs), and '+rt.w.name+' is one of your weakest in "'+rt.fromLabel+'"; you '+(sc.played ? 'stand higher here ('+standing(sc)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise it. '+label(sc)+'.'
-        : 'Route — strength here moves with '+rt.w.name+' across '+rt.n.toLocaleString()+' players (r '+rt.r.toFixed(2)+'); you '+(sc.played ? 'stand higher here ('+standing(sc)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise '+rt.w.name+'. '+label(sc)+'.'; },
+        ? 'Route — across the sampled players, strength in "'+rt.viaLabel+'" moves with strength in "'+rt.fromLabel+'" (mean r '+rt.r.toFixed(2)+' over '+rt.n+' scenario pairs), and '+rt.w.name+' is one of your weakest in "'+rt.fromLabel+'"; you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise it. '+label(sc)+'.'
+        : 'Route — strength here moves with '+rt.w.name+' across '+rt.n.toLocaleString()+' players (r '+rt.r.toFixed(2)+'); you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise '+rt.w.name+'. '+label(sc)+'.'; },
       SESSION_TEMPLATE.route, sc=>({ target: sc._route.w.name, r: sc._route.r, n: sc._route.n, viaLabel: sc._route.viaLabel||null }));
     // ---- FILL OUT: gaps in the playlists you have mostly played
     const fillPl = Object.keys(playlistFill).map(k=>Object.assign({key:k}, playlistFill[k])).filter(p=>p.total>0 && p.played<p.total && p.played/p.total>=0.6).sort((a,b)=> (b.played/b.total)-(a.played/a.total) || b.total-a.total);
