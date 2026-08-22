@@ -226,8 +226,30 @@ about skill structure.
   feel rating, return-collect count over the session log.
 - **Percentile harvest (D8)** — `dev/harvest-percentiles.ps1` samples the
   score at 7 anchor ranks per played scenario (the leaderboard endpoint takes
-  no player filter — probed); first run 2026-08-18 by hand. The engine's
-  interpolation and the metric swap follow once the numbers have been looked at.
+  no player filter — probed); first run 2026-08-18 by hand.
+- **2026-08-19 → 22: the population matrix and the overlap map (3b, D12).**
+  Players sampled at stratified ranks on 24 anchor boards, their `total-play`
+  PB lists → 22,080 sampled / 7,677 usable players × 1,054 curved scenarios.
+  Saturated by a convergence rule (batches until the map moved < 0.02 mean
+  |Δr| twice; knee at 11,440 players, every later reading 0.009–0.015).
+  Map computed label-blind first (percentile per cell → per-player residual →
+  pairwise Pearson), then compared: within-label mean r **0.364**, across-label
+  **0.057** — the curator structure re-emerges (weak confirmation, as the
+  protocol predicts); 35,000 cross-label pairs above 0.3 are the overlap.
+  Bridges with ≥20 scenario pairs: smoothness↔xyz 0.64, VAI↔vertical 0.64,
+  pasu-track↔smoothness ~0.6, pacing↔static clicking 0.58; negatives: 3×3 vs
+  control/reactive tracking ≈ −0.45. Sample skews high (median usable player
+  ~85th percentile — deep-board players mostly have empty profiles), so
+  correlations are attenuated, not inverted; trust is highest in the 0.7–1.0
+  band. Stamped as `data/percentiles.json` + `data/transfer.json`, shipped in
+  both builds.
+- **Session page v0.3 (2026-08-22)** — the metric is the population percentile
+  (D8 adopted in code); **routes** for the weakest items: a co-varying
+  scenario (n ≥ 100) or, when the weak scenario is too unpopular to have one,
+  a label bridge through the comparison table, guarded against same-skill
+  spellings via the facet vocabulary. Each route carries its r and player
+  count. Still a prior, not proof — the return-collect rate and the attempt
+  history are what will test it.
 
 ## Staging
 

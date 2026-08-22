@@ -58,6 +58,15 @@ check(!!scores && scores[1].trim() === '{}', 'scores-data block is not the empty
 // attempts-data (since 2026-08-18): the owner's logged runs on the personal page; the template ships {}
 const attempts = html.match(/<script id="attempts-data"[^>]*>([\s\S]*?)<\/script>/);
 check(!attempts || attempts[1].trim() === '{}', 'attempts-data block is not the empty {} seed');
+// population-data (since 2026-08-22): percentile curves + transfer neighbours -- population data,
+// the same for every player, so the template ships it too; it must parse and have the two maps
+const pop = html.match(/<script id="population-data"[^>]*>([\s\S]*?)<\/script>/);
+if (pop) {
+  try {
+    const o = JSON.parse(pop[1].replace(/<\\\//g, '</'));
+    check(o && typeof o === 'object' && typeof o.percentiles === 'object' && typeof o.transfer === 'object', 'population-data lacks percentiles/transfer objects');
+  } catch (e) { check(false, 'population-data does not parse: ' + e.message); }
+}
 
 // ---- SITE identity block: template build must have swapped in generic values
 const site = html.match(/const SITE = \{([\s\S]*?)\};/);
