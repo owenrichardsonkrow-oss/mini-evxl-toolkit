@@ -1096,19 +1096,264 @@ const MiniEvxlEngine = (function(){
   //   scenarios: [{ name, played:bool, pct:0..1|null, to2nd:0..1, toMax:0..1, toNext:0..1,
   //                 maxed:bool, rung:-1..8, labels:[curator], facets:[...], playlists:int,
   //                 plKeys:[benchKey...], att:{ n, lastT, nearness } | null, raises14d:int,
-  //                 neighbours:[[name, r, n], ...] }]
+  //                 neighbours:[[name, r, n], ...],
+  //                 -- v0.4 (all optional; absent = the v0.3 reading) --
+  //                 resp: responsiveness() | null, raises:[[t, pctFrom, pctTo], ...] oldest-first,
+  //                 runPcts:[[t, pct], ...] newest-first, boardN:int|null, gameHit:bool }]
   //   playlistFill: { benchKey: { name, played, total } }
-  //   opts: { size:10, seed:int (a day number), now:ms }
+  //   opts: { size:10, seed:int (a day number), now:ms, labelBridges,
+  //           gameWeight:0..1 (0), gameFacets:[...], confidence:{c}|null, template:{...}|null }
   // Returns { regime:'thin'|'normal', level:rung, popLevel:0..1|null, weakLabels:[{label, kind, median, n}],
-  //           items:[{ name, why, reason, label, rung, pct, to2nd, toMax, via }] }.
+  //           confidence, template, items:[{ name, why, reason, label, rung, pct, to2nd, toMax, via,
+  //           resp, forecast, boardN, conf, pctShrunk, game }] }.
   // Slices: WEAKEST (played, not maxed, rung <= level, ascending metric; spread --
   // at most 2 per primary label and 1 per playlist; "stuck" sinks), ROUTE (for
   // the weakest items, their strongest neighbour at/under level+1 that you are
   // better at or haven't played), FILL OUT (unplayed gaps in mostly-played
   // playlists), QUICK WIN, REVISIT. Thin regime (< SESSION_THIN_PLAYED played
   // rated scenarios): a placement round-robin across the mechanics -- "just play".
+  //
+  // v0.4 (2026-08-22 late) layers six things on v0.3, each built so that it is
+  // LITERALLY the identity when its evidence is missing -- the weakest sort key
+  // is v0.3's key plus terms that are 0, "plateaued" needs a responsiveness
+  // reading, the revisit forecast is null unless a neighbour actually moved,
+  // board confidence is 1 without a board size, the game bonus is 0 at weight 0,
+  // and the middle confidence band IS the v0.3 template. The toolkit's
+  // test/session.js pins v0.3's output on a synthetic fixture as the proof.
+  //   1. RESPONSIVENESS (D11, gain per ATTEMPT in percentile space): the weakest
+  //      key becomes percentile minus the gain a session's attempts can expect;
+  //      "plateaued" (>= PLATEAU_MIN_RUNS runs, no gain, recent best well under
+  //      the PB) sinks beside "stuck"; "unknown" (< RESP_MIN_RUNS runs) is
+  //      exactly v0.3 -- never penalised, never boosted.
+  //   2. REVISIT FORECAST: how the candidate's transfer neighbours and label-
+  //      bridged scenarios moved since its last visit, against its own gap to PB;
+  //      logged per item so the return-collect record can calibrate it.
+  //   3. ADAPTIVE TEMPLATE by profile confidence (three bands; mid = 5/2/1/1/1).
+  //   4. GAME-RELEVANCE knob: a capped percentile bonus for scenarios carrying
+  //      game:cs/val / game:tacfps, spread one hop through transfer neighbours.
+  //   5. BOARD CONFIDENCE: a small board's percentile is shrunk toward the
+  //      user's overall level in the ranking (log10(n)/4, clamped).
+  //   6. SESSION HISTORY stats (sessionHistoryStats) for the history view.
   const SESSION_THIN_PLAYED = 30;
   const SESSION_TEMPLATE = { weakest: 5, route: 2, fillout: 1, quickwin: 1, revisit: 1 };
+  // Profile-confidence bands -> templates (slot counts at size 10; a smaller
+  // session shrinks them by largest remainder, see sessionTemplate). Thin profile:
+  // fill the picture (more fill-out); full profile: get out of the way (more
+  // weakest, more revisits).
+  const SESSION_TEMPLATES = {
+    low:  { weakest: 4, route: 2, fillout: 2, quickwin: 1, revisit: 1 },
+    mid:  SESSION_TEMPLATE,
+    high: { weakest: 6, route: 1, fillout: 0, quickwin: 1, revisit: 2 }
+  };
+  // c < CONF_LOW -> low band; c > CONF_HIGH -> high band; between -> mid (= v0.3).
+  // 0.30, not 0.35: a profile whose played set is fully curved but has no logged
+  // runs and no history yet reads c = (1 + 0 + 0)/3 = 0.33 -- thin evidence, and
+  // thin evidence must compose the v0.3 list, not a different template.
+  const CONF_LOW = 0.30, CONF_HIGH = 0.65;
+  const CONF_HISTORY_DAYS = 90;                      // days of score history that count as a full picture
+  const RESP_MIN_RUNS = 4;                           // fewer runs in the window -> "unknown" (v0.3 treatment)
+  const RESP_WINDOW_DAYS = 60;                       // runs older than this say nothing about responsiveness now
+  const PLATEAU_MIN_RUNS = 6;                        // "plateaued" needs at least this many runs with no gain
+  const PLATEAU_GAP = 0.05;                          // ...and a recent best this many percentile points under the PB
+  const RESP_NEAR = 0.03;                            // recent best within this of the PB = still reproducing it
+  const SESSION_PLANNED_ATTEMPTS = 5;                // attempts a session item is budgeted; expected gain = gain/run x this
+  const EXPGAIN_CAP = 0.15;                          // cap on the expected-gain term (percentile points)
+  const GAME_BONUS = 0.08;                           // full-weight bonus for a direct game-facet carrier (percentile points)
+  const GAME_FACETS_DEFAULT = ['game:cs/val', 'game:tacfps'];
+  const FORECAST_SLOPE = 0.04;                       // logistic slope of the revisit forecast (a stated prior, uncalibrated)
+  const FORECAST_PRIOR_MARGIN = 0.05;                // gap to PB assumed when the candidate's recent runs are unknown
+  const FORECAST_MAX_BRIDGES = 3;                    // label bridges that may contribute forecast evidence (strongest by r)
+  const BOARD_CONF_MIN = 0.25;                       // 24-player board -> 0.35, 100 -> 0.5, 1,000 -> 0.75, >= 10,000 -> 1
+  const DAY_MS = 86400000;
+  // Board confidence from the number of unique players on the scenario's
+  // leaderboard: log10(n)/4 clamped to [BOARD_CONF_MIN, 1]; no size -> 1 (the
+  // identity, so an old build without boards ranks exactly as v0.3).
+  function boardConfidence(n){ if(!(Number.isFinite(n) && n>0)) return 1; return Math.max(BOARD_CONF_MIN, Math.min(1, Math.log10(n)/4)); }
+  // Responsiveness of one scenario: gain per attempt in PERCENTILE space over the
+  // runs inside the window (least-squares slope of percentile on run index), with
+  // the score history's raises as the fallback evidence when the attempts record
+  // is too short. rec = { n, last:[[t, s], ...] } newest-first (the ATTEMPTS
+  // record), raises = [[t, fromScore, toScore], ...] oldest-first, curve = the
+  // scenario's percentile anchors (null -> state 'unknown'), opts.pb = the PB.
+  // Returns { n (runs in window), gain (pct points per attempt | null), src
+  // ('attempts' | 'history' | null), nearness (best of last 5 / PB, score space),
+  // nearPct (pct(PB) - pct(best of last 5) | null), recentPct, state }.
+  //   responsive  gain > 0, or >= RESP_MIN_RUNS runs landing within RESP_NEAR of the PB
+  //   plateaued   >= PLATEAU_MIN_RUNS runs, gain <= 0, recent best > PLATEAU_GAP under the PB (or nearness < 0.85)
+  //   unknown     everything else -- "just hasn't played enough", treated exactly as v0.3
+  function responsiveness(rec, raises, curve, nowMs, opts){
+    opts = opts || {};
+    const last = rec && Array.isArray(rec.last) ? rec.last.map(x=>[Number(x[0]), Number(x[1])]).filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1])) : [];
+    const since = nowMs - RESP_WINDOW_DAYS*DAY_MS;
+    const pb = Number(opts.pb) > 0 ? Number(opts.pb) : Math.max(0, ...last.map(x=>x[1]));
+    const recent = last.slice().sort((a,b)=>b[0]-a[0]).slice(0, 5).map(x=>x[1]);
+    const recentBest = recent.length ? Math.max(...recent) : 0;
+    const nearness = pb>0 && recent.length ? recentBest/pb : null;
+    const hasCurve = Array.isArray(curve) && curve.length>=2;
+    const p = s => hasCurve ? percentileRank(s, curve) : null;
+    const inWin = last.filter(x=>x[0]>=since).sort((a,b)=>a[0]-b[0]);
+    const pcts = hasCurve ? inWin.map(x=>p(x[1])).filter(v=>v!==null) : [];
+    const n = inWin.length;
+    const out = { n, gain: null, src: null, nearness, nearPct: null, recentPct: null, state: 'unknown' };
+    if(!hasCurve) return out;
+    const pbPct = p(pb), recPct = recentBest>0 ? p(recentBest) : null;
+    out.recentPct = recPct;
+    out.nearPct = (pbPct!==null && recPct!==null) ? Math.max(0, pbPct - recPct) : null;
+    if(pcts.length >= RESP_MIN_RUNS){
+      // least-squares slope of percentile on run index
+      const k = pcts.length, mx = (k-1)/2, my = pcts.reduce((a,b)=>a+b, 0)/k;
+      let sxy = 0, sxx = 0;
+      pcts.forEach((y, i)=>{ sxy += (i-mx)*(y-my); sxx += (i-mx)*(i-mx); });
+      out.gain = sxx>0 ? sxy/sxx : 0; out.src = 'attempts';
+    } else {
+      const rs = (raises||[]).map(r=>[Number(r[0]), Number(r[1]), Number(r[2])]).filter(r=>r[0]>=since && r[1]>0 && r[2]>0).sort((a,b)=>a[0]-b[0]);
+      if(rs.length >= 2){
+        const from = p(rs[0][1]), to = p(rs[rs.length-1][2]);
+        if(from!==null && to!==null){ out.gain = (to - from)/rs.length; out.src = 'history'; }
+      }
+    }
+    if(out.gain!==null && out.gain>0) out.state = 'responsive';
+    else if(n >= RESP_MIN_RUNS && out.nearPct!==null && out.nearPct <= RESP_NEAR) out.state = 'responsive';
+    else if(n >= PLATEAU_MIN_RUNS && out.gain!==null && out.gain<=0 && ((out.nearPct!==null && out.nearPct > PLATEAU_GAP) || (nearness!==null && nearness < 0.85))) out.state = 'plateaued';
+    return out;
+  }
+  // How much of a picture the profile gives: coverage (played scenarios with a
+  // curve / played), attempts density (share of played scenarios with at least
+  // RESP_MIN_RUNS logged runs -- null and LEFT OUT of the mean when no row has
+  // an attempts record at all, so a user who never synced runs is not pushed
+  // into the low band by a missing source), days of score history / 90.
+  function profileConfidence(scenarios, nowMs, historyDays){
+    const played = (scenarios||[]).filter(sc=>sc.played);
+    const coverage = played.length ? played.filter(sc=>sc.pct!==null && sc.pct!==undefined).length/played.length : 0;
+    const anyAtt = played.some(sc=>sc.att && sc.att.n>0);
+    const density = anyAtt ? played.filter(sc=>sc.att && sc.att.n>=RESP_MIN_RUNS).length/played.length : null;
+    const days = Math.max(0, Math.min(1, (Number(historyDays)||0)/CONF_HISTORY_DAYS));
+    const parts = [coverage, days]; if(density!==null) parts.push(density);
+    const c = parts.reduce((a,b)=>a+b, 0)/parts.length;
+    return { c: Math.round(c*1000)/1000, coverage: Math.round(coverage*1000)/1000, density: density===null ? null : Math.round(density*1000)/1000, days: Math.round(days*1000)/1000 };
+  }
+  // The slice template for a confidence reading. c null or in the middle band
+  // -> SESSION_TEMPLATE itself. The bands are sized for 10 items; a SMALLER
+  // session shrinks the slots by largest-remainder rounding (they sum to size),
+  // a larger one keeps the slots and lets the top-up (more weakest, then
+  // unplayed) fill the rest, exactly as v0.3 did -- the toolkit's size-12
+  // snapshot pins that.
+  function sessionTemplate(c, size){
+    size = Number(size)>0 ? Math.round(Number(size)) : 10;
+    const band = (c===null || c===undefined || !Number.isFinite(Number(c))) ? 'mid' : (Number(c) < CONF_LOW ? 'low' : (Number(c) > CONF_HIGH ? 'high' : 'mid'));
+    const base = SESSION_TEMPLATES[band];
+    const keys = ['weakest', 'route', 'fillout', 'quickwin', 'revisit'];
+    const total = keys.reduce((a,k)=>a+base[k], 0);
+    if(size >= total) return Object.assign({ band }, base);
+    const raw = keys.map(k=>base[k]*size/total);
+    const out = {}; let used = 0;
+    keys.forEach((k, i)=>{ out[k] = Math.floor(raw[i]); used += out[k]; });
+    const order = keys.map((k, i)=>[raw[i]-Math.floor(raw[i]), -i, k]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
+    for(let i=0; used<size && i<order.length; i++){ out[order[i][2]]++; used++; }
+    for(let i=0; used<size; i++){ out[keys[i % keys.length]]++; used++; }
+    out.band = band;
+    return out;
+  }
+  // Revisit forecast for one candidate: how its transfer neighbours (r > 0,
+  // n >= 100) and its label-bridged scenarios moved in percentile space since the
+  // candidate's last visit T, against the candidate's own gap to its PB. A
+  // scenario is evidence only when it was TOUCHED since T (a run logged or a PB
+  // raise after T); its movement is pct(now) - pct(PB as of T), where the PB as
+  // of T is the `from` of the earliest raise after T (sync-dated) or the best
+  // logged run at or before T (run-dated), whichever is higher; an unmoved but
+  // touched scenario counts as 0 in the weighted mean. Returns null when no
+  // evidence moved -- the v0.3 reduction (revisits then keep the longest-unplayed
+  // order). p = logistic((gain - margin)/FORECAST_SLOPE): a stated prior, logged
+  // per item so the return-collect record can say whether 70% means 70%.
+  function revisitForecast(sc, byName, bridges, byLabel, helpers){
+    if(!(sc.att && sc.att.lastT>0)) return null;
+    const T = sc.att.lastT;
+    const hasP = row => row && row.played && row.pct!==null && row.pct!==undefined;
+    const touched = row => !!((row.att && row.att.lastT > T) || (row.raises||[]).some(r=>Number(r[0]) > T));
+    // PB as of T in percentile space; null = the scenario was unplayed at T (not evidence)
+    const pctAt = row => {
+      let best = null, synced = false;
+      const first = (row.raises||[]).find(r=>Number(r[0]) > T);
+      if(first){ if(first[1]===null || first[1]===undefined) return null; best = Number(first[1]); synced = true; }
+      (row.runPcts||[]).forEach(r=>{ if(Number(r[0]) <= T && r[1]!==null && r[1]!==undefined && (best===null || Number(r[1]) > best)){ best = Number(r[1]); synced = false; } });
+      return { pct: best===null ? row.pct : Math.min(row.pct, best), synced };
+    };
+    const evidence = [];
+    (sc.neighbours||[]).forEach(nb=>{
+      if(!(nb[1]>0) || !(nb[2]>=100)) return;
+      const row = byName.get(nb[0]); if(!hasP(row) || !touched(row)) return;
+      const at = pctAt(row); if(!at) return;
+      evidence.push({ name: row.name, r: nb[1], n: nb[2], delta: row.pct - at.pct, via: null, synced: at.synced });
+    });
+    if(bridges && byLabel && helpers){
+      // A label-rich scenario (nine curator labels is common) would re-count the
+      // same moved scenarios through every bridge, so only the strongest
+      // FORECAST_MAX_BRIDGES bridges by r contribute.
+      const seen = new Set(); const labelEv = [];
+      helpers.labelsOf(sc).forEach(L=>{
+        if(helpers.noSkillLabel(L)) return;
+        Object.keys(bridges).forEach(key=>{
+          const [a,b] = key.split('|'); if(a===b || helpers.sameSkill(a,b)) return;
+          const M = a===L ? b : (b===L ? a : null); if(!M || helpers.noSkillLabel(M) || seen.has(M)) return;
+          const r = bridges[key][0]; if(!(r>0)) return;
+          const rows = (byLabel.get(M)||[]).filter(row=>row.name!==sc.name && hasP(row) && touched(row) && !helpers.labelsOf(row).includes(L));
+          const ds = rows.map(row=>{ const at = pctAt(row); return at ? { d: row.pct - at.pct, synced: at.synced } : null; }).filter(Boolean);
+          if(!ds.length) return;
+          seen.add(M);
+          labelEv.push({ name: M, r, n: ds.length, delta: ds.reduce((s,x)=>s+x.d, 0)/ds.length, via: M, synced: ds.some(x=>x.synced) });
+        });
+      });
+      labelEv.sort((a,b)=> b.r - a.r).slice(0, FORECAST_MAX_BRIDGES).forEach(e=>evidence.push(e));
+    }
+    if(!evidence.some(e=>e.delta>0)) return null;
+    const wsum = evidence.reduce((s,e)=>s+e.r, 0);
+    const gain = evidence.reduce((s,e)=>s+e.r*e.delta, 0)/wsum;
+    const margin = sc.resp && sc.resp.nearPct!==null && sc.resp.nearPct!==undefined ? sc.resp.nearPct : FORECAST_PRIOR_MARGIN;
+    const odds = gain - margin;
+    const p = 1/(1+Math.exp(-odds/FORECAST_SLOPE));
+    return { gain, margin, odds, p, evidence, synced: evidence.some(e=>e.synced) };
+  }
+  // Session-history statistics for the history view. log = the session log
+  // ([{day, seedBump, startedAt, rating, regime, done, size, conf, template,
+  // items:[{name, why, pbAt, p}]}]), pbNow = name -> current PB (function, Map or
+  // object), liveKey = {day, seedBump} of the live session (its revisits are not
+  // resolved yet, so it is listed but left out of the return-collect totals).
+  // Weeks start on Monday (day numbers count from Thursday 1970-01-01) and run
+  // contiguously from the first logged week to the week of nowMs, oldest first.
+  function sessionHistoryStats(log, pbNow, nowMs, liveKey){
+    const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
+    const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
+    const sessions = (log||[]).filter(e=>e && Number.isFinite(e.day)).map(e=>{
+      const items = Array.isArray(e.items) ? e.items : [];
+      const revs = items.filter(it=>it.why==='revisit');
+      const collected = revs.filter(it=>(Number(pb(it.name))||0) > (Number(it.pbAt)||0)).length;
+      const ps = revs.map(it=>Number(it.p)).filter(v=>Number.isFinite(v));
+      const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
+      return { day: e.day, seedBump: e.seedBump||0, startedAt: e.startedAt, rating: e.rating||null, regime: e.regime||null, done, size: Number(e.size)||items.length,
+        revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
+    }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
+    const weekOf = day => day - (((day % 7) + 7 + 3) % 7);
+    const nowDay = Math.floor((nowMs - new Date(nowMs).getTimezoneOffset()*60000)/DAY_MS);
+    const weeks = [];
+    if(sessions.length){
+      const first = weekOf(Math.min(...sessions.map(s=>s.day))), lastW = weekOf(nowDay);
+      for(let w=first; w<=lastW; w+=7){
+        const ss = sessions.filter(s=>weekOf(s.day)===w);
+        const closed = ss.filter(s=>!s.live);
+        const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
+        const preds = closed.filter(s=>s.predicted!==null);
+        const ratings = { easy: 0, good: 0, hard: 0 }; ss.forEach(s=>{ if(s.rating && ratings[s.rating]!==undefined) ratings[s.rating]++; });
+        weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0), revisits, collected,
+          rate: revisits ? collected/revisits : null, predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null, ratings });
+      }
+    }
+    const closed = sessions.filter(s=>!s.live);
+    const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
+    const preds = closed.filter(s=>s.predicted!==null);
+    const overall = { sessions: sessions.length, revisits, collected, rate: revisits ? collected/revisits : null,
+      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null };
+    return { sessions, weeks, overall };
+  }
   function seededRandom(seed){ let s = (seed>>>0) || 1; return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   function medianOf(arr){ const s = arr.slice().sort((a,b)=>a-b); const n=s.length; if(!n) return null; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
   // The competency number for one scenario: percentile where a curve exists, else To 2nd.
@@ -1130,7 +1375,7 @@ const MiniEvxlEngine = (function(){
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
   function composeSession(scenarios, opts, playlistFill){
-    opts = Object.assign({ size: 10, seed: 1, now: Date.now() }, opts||{});
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null }, opts||{});
     playlistFill = playlistFill || {};
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -1149,7 +1394,27 @@ const MiniEvxlEngine = (function(){
     // reports the quantity that was actually compared.
     const betterThan = (y, w) => { const usePct = hasPct(y) && hasPct(w); return { ok: !y.played || (usePct ? y.pct >= w.pct + 0.05 : y.to2nd >= w.to2nd + 0.05), cmp: usePct ? 'pct' : 'to2nd' }; };
     const standingAs = (sc, cmp) => (cmp==='pct' && hasPct(sc)) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd));
-    const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name); items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null }); n--; } };
+    // ---- v0.4 terms, each 0 / the identity without its evidence ----
+    const gameW = Math.max(0, Math.min(1, Number(opts.gameWeight)||0));
+    const isHit = sc => !!(sc && sc.gameHit);
+    // direct carrier: the full bonus; a neighbour of one: the strongest positive r's share
+    const gameShare = sc => { if(gameW<=0) return 0; if(isHit(sc)) return 1; let best = 0; (sc.neighbours||[]).forEach(nb=>{ if(nb[1]>best && isHit(byName.get(nb[0]))) best = nb[1]; }); return best; };
+    const gameBonus = sc => gameW * GAME_BONUS * gameShare(sc);
+    const expectedGain = sc => (sc.resp && sc.resp.gain>0) ? Math.min(EXPGAIN_CAP, sc.resp.gain * SESSION_PLANNED_ATTEMPTS) : 0;
+    const conf = sc => boardConfidence(sc.boardN===null || sc.boardN===undefined ? null : Number(sc.boardN));
+    const plateaued = sc => !!(sc.resp && sc.resp.state==='plateaued');
+    // game-first stable partition for the shuffled pools (identity at weight 0)
+    const gameFirst = list => gameW>0 ? list.filter(sc=>gameShare(sc)>0).concat(list.filter(sc=>gameShare(sc)<=0)) : list;
+    const template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
+    const gameNote = sc => { const s = gameShare(sc); return s<=0 ? '' : (isHit(sc) ? ' · game-relevant (cs/val or tac-fps)' : ' · co-varies with game-relevant scenarios (r '+s.toFixed(2)+')'); };
+    const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name);
+      const cf = conf(sc);
+      items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
+        resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
+        forecast: sc._forecast || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
+        pctShrunk: (hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
+        game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null }); n--; } };
+    let popLevel = null;
     if(played.length < SESSION_THIN_PLAYED){
       const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
       const mechs = FACET_MECHANICS.slice();
@@ -1160,16 +1425,24 @@ const MiniEvxlEngine = (function(){
         if(!pick) break;
         take([Object.assign({}, pick, {_label: m})], 'placement', 'Placement — '+m+' at '+label(pick)+': there isn\'t enough played history yet to say where you stand, so play and generate evidence.', 1);
       }
-      return { regime: 'thin', level: null, popLevel: null, weakLabels: [], items };
+      return { regime: 'thin', level: null, popLevel: null, weakLabels: [], confidence: opts.confidence||null, template: null, items };
     }
     const level = Math.round(medianOf(played.map(sc=>sc.rung)));
     const curved = played.filter(hasPct);
-    const popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
+    popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
     const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
     // ---- WEAKEST: the loop, on the population metric. Rung <= level.
     const stuck = sc => !!(sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
+    // v0.3's stuck test OR-ed with v0.4's plateaued reading: both sink, neither routes.
+    const sinks = sc => stuck(sc) || plateaued(sc);
+    // Small-board shrinkage toward the user's overall level: identity at conf 1
+    // (no board size, or >= 10,000 players) and without a popLevel.
+    const shrunk = sc => { const m = sessionMetric(sc); if(!hasPct(sc) || popLevel===null) return m; const cf = conf(sc); return cf>=1 ? m : cf*m + (1-cf)*popLevel; };
+    // The v0.4 weakest key: v0.3's metric, shrunk, minus the gain a session can
+    // expect here, minus the game-relevance bonus -- every term 0 without evidence.
+    const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc);
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
-      .sort((a,b)=> (stuck(a)?1:0)-(stuck(b)?1:0) || sessionMetric(a)-sessionMetric(b) || a.toMax-b.toMax || b.playlists-a.playlists);
+      .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
     const perLabel = new Map(), perPl = new Set();
     const spread = [];
     for(const sc of weakPool){
@@ -1177,10 +1450,15 @@ const MiniEvxlEngine = (function(){
       if(l && (perLabel.get(l)||0) >= 2) continue;
       if((sc.plKeys||[]).some(k=>perPl.has(k))) continue;
       spread.push(sc); if(l) perLabel.set(l, (perLabel.get(l)||0)+1); (sc.plKeys||[]).forEach(k=>perPl.add(k));
-      if(spread.length >= SESSION_TEMPLATE.weakest*2) break;
+      if(spread.length >= template.weakest*2) break;
     }
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+'.';
-    take(spread, 'weakest', weakReason, SESSION_TEMPLATE.weakest);
+    const respNote = sc => { const r = sc.resp; if(!r) return '';
+      if(r.state==='responsive' && r.gain>0) return ' — responsive: +'+(r.gain*100).toFixed(1)+' pts/run over '+r.n+' runs'+(r.src==='history' ? ' (from PB raises)' : '');
+      if(r.state==='plateaued') return ' — plateaued: '+r.n+' runs, no gain, best recent '+(r.nearPct!==null ? Math.round(r.nearPct*100)+' pts' : 'well')+' under PB';
+      return ''; };
+    const shrinkNote = sc => { const cf = conf(sc); return (hasPct(sc) && cf<1 && popLevel!==null) ? ' — board of '+Number(sc.boardN).toLocaleString()+' players (confidence '+cf.toFixed(2)+'), ranked as '+percentileLabel(shrunk(sc)) : ''; };
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+gameNote(sc)+'.';
+    take(spread, 'weakest', weakReason, template.weakest);
     // ---- ROUTE: for the weakest items, a strong neighbour to train instead/as well.
     // Neighbour must exist in the pool, sit at or under level+1, not be maxed,
     // not be stuck, and either be unplayed or stand higher than the weak one --
@@ -1189,7 +1467,7 @@ const MiniEvxlEngine = (function(){
     const routes = [];
     weakItems.forEach(w=>{
       (w.neighbours||[]).forEach(nb=>{
-        const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || y.rung<0 || y.rung>level+1 || y.maxed || stuck(y)) return;
+        const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || y.rung<0 || y.rung>level+1 || y.maxed || sinks(y)) return;
         if(!(nb[1]>0)) return;   // positive co-variation only
         const bt = betterThan(y, w); if(!bt.ok) return;
         routes.push({ y, w, r: nb[1], n: nb[2], cmp: bt.cmp });
@@ -1217,12 +1495,17 @@ const MiniEvxlEngine = (function(){
     // A label the vocabulary marks as carrying no skill (section numbers, pack
     // names) or as a difficulty word ("easy") can't be either end of a route.
     const noSkillLabel = l => { const cats = FACET_VOCAB.categories, subs = FACET_VOCAB.subcategories; const e = Object.prototype.hasOwnProperty.call(cats, l) ? cats[l] : (Object.prototype.hasOwnProperty.call(subs, l) ? subs[l] : null); return !!(e && e.a); };
-    if(routeList.length < SESSION_TEMPLATE.route && Object.keys(bridges).length){
-      const labelsOf = sc => [...new Set((sc.labels||[]).map(lower).filter(Boolean))];
-      const byLabel = new Map();
-      rated.forEach(sc=>{ labelsOf(sc).forEach(l=>{ if(!byLabel.has(l)) byLabel.set(l, []); byLabel.get(l).push(sc); }); });
+    const labelsOf = sc => [...new Set((sc.labels||[]).map(lower).filter(Boolean))];
+    // scenarios per raw label (built once; the bridge loop and the revisit forecast both read it)
+    let _byLabel = null;
+    const byLabelMap = () => { if(_byLabel) return _byLabel; _byLabel = new Map(); rated.forEach(sc=>{ labelsOf(sc).forEach(l=>{ if(!_byLabel.has(l)) _byLabel.set(l, []); _byLabel.get(l).push(sc); }); }); return _byLabel; };
+    // A bridge weaker than the map's own pair threshold (|r| >= 0.3) is noise, not
+    // a route (overlap review, 2026-08-22; v0.3 accepted any r > 0).
+    const BRIDGE_MIN_R = 0.3;
+    if(routeList.length < template.route && Object.keys(bridges).length){
+      const byLabel = byLabelMap();
       for(const w of weakItems){
-        if(routeList.length >= SESSION_TEMPLATE.route) break;
+        if(routeList.length >= template.route) break;
         if(routeSeen.has(w.name)) continue;
         const cands = [];
         labelsOf(w).forEach(L=>{
@@ -1230,9 +1513,9 @@ const MiniEvxlEngine = (function(){
           Object.keys(bridges).forEach(key=>{
             const [a,b] = key.split('|'); if(a===b || sameSkill(a,b)) return;
             const M = a===L ? b : (b===L ? a : null); if(!M || noSkillLabel(M)) return;
-            const [r, pairs] = bridges[key]; if(!(r>0)) return;
+            const [r, pairs] = bridges[key]; if(!(r>=BRIDGE_MIN_R)) return;
             (byLabel.get(M)||[]).forEach(y=>{
-              if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name) || y.rung>level+1 || y.maxed || stuck(y)) return;
+              if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name) || y.rung>level+1 || y.maxed || sinks(y)) return;
               if(labelsOf(y).includes(L)) return;   // must be a genuinely different label
               // ...and a genuinely different skill: "static" -> "static clicking" is one
               // skill spelled twice (identical facet sets), while "reactive tracking" ->
@@ -1255,22 +1538,35 @@ const MiniEvxlEngine = (function(){
       sc=>{ const rt = sc._route; return rt.labelRoute
         ? 'Route — across the sampled players, strength in "'+rt.viaLabel+'" moves with strength in "'+rt.fromLabel+'" (mean r '+rt.r.toFixed(2)+' over '+rt.n+' scenario pairs), and '+rt.w.name+' is one of your weakest in "'+rt.fromLabel+'"; you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise it. '+label(sc)+'.'
         : 'Route — strength here moves with '+rt.w.name+' across '+rt.n.toLocaleString()+' players (r '+rt.r.toFixed(2)+'); you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise '+rt.w.name+'. '+label(sc)+'.'; },
-      SESSION_TEMPLATE.route, sc=>({ target: sc._route.w.name, r: sc._route.r, n: sc._route.n, viaLabel: sc._route.viaLabel||null }));
+      template.route, sc=>({ target: sc._route.w.name, r: sc._route.r, n: sc._route.n, viaLabel: sc._route.viaLabel||null }));
     // ---- FILL OUT: gaps in the playlists you have mostly played
     const fillPl = Object.keys(playlistFill).map(k=>Object.assign({key:k}, playlistFill[k])).filter(p=>p.total>0 && p.played<p.total && p.played/p.total>=0.6).sort((a,b)=> (b.played/b.total)-(a.played/a.total) || b.total-a.total);
     const fillTargets = new Set(fillPl.map(p=>p.key));
-    const fillPool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=level+1 && (sc.plKeys||[]).some(k=>fillTargets.has(k))));
-    take(fillPool, 'fillout', sc=>{ const p = fillPl.find(x=>(sc.plKeys||[]).includes(x.key)); return 'Fill out — '+(p? p.name+' is '+Math.round(p.played/p.total*100)+'% played and this is one of its gaps' : 'a gap in a playlist you have mostly played')+'; a fuller played set settles the ordering. '+label(sc)+'.'; }, SESSION_TEMPLATE.fillout);
+    const fillPool = gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level+1 && (sc.plKeys||[]).some(k=>fillTargets.has(k)))));
+    take(fillPool, 'fillout', sc=>{ const p = fillPl.find(x=>(sc.plKeys||[]).includes(x.key)); return 'Fill out — '+(p? p.name+' is '+Math.round(p.played/p.total*100)+'% played and this is one of its gaps' : 'a gap in a playlist you have mostly played')+'; a fuller played set settles the ordering. '+label(sc)+gameNote(sc)+'.'; }, template.fillout);
     // ---- QUICK WIN
     const qw = played.filter(sc=>!sc.maxed && sc.toNext>=0.7 && !chosen.has(sc.name)).sort((a,b)=> b.playlists - a.playlists || b.toNext - a.toNext);
-    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', SESSION_TEMPLATE.quickwin);
-    // ---- REVISIT
+    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', template.quickwin);
+    // ---- REVISIT: the v0.3 pool (> 14 days away, not maxed, rung <= level).
+    // Candidates with a forecast (a neighbour or bridged label actually moved
+    // since the visit) come first by first-try PB odds; the rest keep v0.3's
+    // longest-unplayed order -- with no movement anywhere the two are the same list.
+    const helpers = { labelsOf, sameSkill, noSkillLabel };
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
-    take(rev, 'revisit', sc=>'Revisit — last played '+Math.round((opts.now - sc.att.lastT)/86400000)+' days ago; go collect the PB (if it falls first try, the time away did the work).', SESSION_TEMPLATE.revisit);
+    rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, Object.keys(bridges).length ? bridges : null, Object.keys(bridges).length ? byLabelMap() : null, helpers); });
+    const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
+    const oddsWord = p => p>=0.6 ? 'good' : p>=0.4 ? 'fair' : 'poor';
+    take(revOrdered, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
+      if(!f) return 'Revisit — last played '+days+' days ago; go collect the PB (if it falls first try, the time away did the work).';
+      const rs = f.evidence.map(e=>e.r); const rTxt = rs.length>1 ? Math.min(...rs).toFixed(1)+'–'+Math.max(...rs).toFixed(1) : rs[0].toFixed(2);
+      const moved = f.evidence.filter(e=>e.delta>0).length, nbs = f.evidence.filter(e=>!e.via).length, lbs = f.evidence.length - nbs;
+      const what = (nbs ? nbs+' co-varying '+(nbs===1 ? 'scenario' : 'scenarios') : '')+(nbs && lbs ? ' and ' : '')+(lbs ? lbs+' bridged '+(lbs===1 ? 'label' : 'labels') : '');
+      return 'Revisit — last played '+days+' days ago; since then '+what+' you touched moved '+(f.gain>=0?'+':'')+(f.gain*100).toFixed(0)+' pts on average ('+moved+' of '+f.evidence.length+' moved; r '+rTxt+') against a '+(f.margin*100).toFixed(0)+'-pt gap to your PB — first-try PB odds: '+oddsWord(f.p)+' ('+Math.round(f.p*100)+'%)'+(f.synced ? '; sync-dated evidence' : '')+'.'; }, template.revisit);
     // ---- top up: more of the weakest list, then unplayed at/under level
     take(weakPool, 'weakest', weakReason, opts.size-items.length);
-    if(items.length<opts.size) take(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level)), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture.', opts.size-items.length);
-    return { regime: 'normal', level, popLevel, weakLabels, items };
+    if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
+    rev.forEach(sc=>{ delete sc._forecast; });
+    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items };
   }
 
   // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
@@ -1695,6 +1991,6 @@ const MiniEvxlEngine = (function(){
     if(fx.exclude) out.push('no-aim');
     return out;
   }
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel };
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
