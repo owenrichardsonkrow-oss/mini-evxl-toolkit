@@ -7801,10 +7801,12 @@ const MiniEvxlEngine = (function(){
     }
     const kept = [], incoherent = [], thin = [], skipped = [];
     for(const g of cands){
-      const coh = matrix.cohesion(g.id);
-      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
+      // an own cell with too few tested pairs cannot be judged at all -> thin (never
+      // 'doesn't hold together'); only a measurable cell can be incoherent
       const own = matrix.cell(g.id, g.id);
       if(!own || own.tested < o.minTested){ thin.push({ id: g.id, tested: own ? own.tested : 0, vs: null }); continue; }
+      const coh = matrix.cohesion(g.id);
+      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
       let verdict = null;
       for(const k of kept){
         const c = matrix.cell(g.id, k.id);
@@ -10509,7 +10511,19 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     let weakLabels = null;
     const today = dayNumber(Date.now());
     // sessions composed by older engines are recomposed: v0 (`floor`/`wildcard`), v0.2 (no `pct`), v0.3 (no `conf`)
-    if(!session || session.day!==today || session.items.some(it=>it.why==='floor' || it.why==='wildcard' || it.pct===undefined) || session.conf===undefined){ const r = newSession(0); session = r.session; weakLabels = r.weakLabels; }
+    if(!session || session.day!==today || session.items.some(it=>it.why==='floor' || it.why==='wildcard' || it.pct===undefined) || session.conf===undefined){
+      // a same-day session recomposed only because the engine moved on (the v0.3 -> v0.4
+      // migration) keeps what the player already did with it: its rating and the
+      // tick-offs of items that are composed again
+      const old = session && session.day===today && session.conf===undefined ? session : null;
+      const r = newSession(0); session = r.session; weakLabels = r.weakLabels;
+      if(old){
+        let carried = false;
+        if(old.rating && !session.rating){ session.rating = old.rating; carried = true; }
+        Object.keys(old.done||{}).forEach(n=>{ if(session.items.some(it=>it.name===n)){ session.done[n] = old.done[n]; carried = true; } });
+        if(carried){ writeSession(session); logSession(session); }
+      }
+    }
     // same input set the engine used (rated scenarios only) and the stored regime, so the strip doesn't differ between the compose render and a later one
     if(!weakLabels) weakLabels = session.regime==='thin' ? [] : skillProfile(sessionScenarios().filter(sc=>sc.rung>=0)).filter(p=>p.n>=4);
     // tick-off: a run logged, or a PB raised, since the session was composed
@@ -10923,10 +10937,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // ---- the matrix ------------------------------------------------------------------
     const matEl = wrap.querySelector('#ov-matrix');
     let groups = [];
+    let pinNote = null;   // set when order=label:<id> names a group that is not on the matrix
     if(legacy){ matEl.innerHTML = '<h2>'+(grouping.kind==='cluster'?'Cluster':'Label')+' &times; '+(grouping.kind==='cluster'?'cluster':'label')+'</h2>'+absent('The matrix'); }
     else {
       groups = matrix.groups.slice();
       const m = /^label:(.+)$/.exec(st.order);
+      if(m && !groups.some(g=>g.id===m[1])) pinNote = m[1];   // not on the matrix at these knobs (under min, hidden by skill-only, or folded away)
       if(m && groups.some(g=>g.id===m[1])){
         const pin = m[1];
         const pos = new Map(groups.map((g,i)=>[g.id, i]));
@@ -10953,7 +10969,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
         }
       });
       if(G) parts.push('</div>');
-      matEl.innerHTML = '<h2>'+(grouping.kind==='cluster'?'Cluster':'Label')+' &times; '+(grouping.kind==='cluster'?'cluster':'label')+'</h2><p class="ov-lead">'+G+' '+(grouping.kind==='cluster'?'clusters':'labels')+' with at least '+st.min+' scenarios on the map; colour = '+(st.by==='overlap' ? 'overlap ratio (capped at ±1)' : 'mean r (capped at ±0.50)')+', green with, red against, hatched under '+OV_MIN_TESTED+' tested pairs, dotted = nothing tested. Hover for the numbers; click a cell for every scenario pair behind it; click a row head to order by overlap with it.</p>'+(G ? '<div class="ov-wrap">'+parts.join('')+'</div>' : '<p class="ov-muted">No '+(grouping.kind==='cluster'?'cluster':'label')+' of the active pool has '+st.min+' scenarios on the map.</p>');
+      matEl.innerHTML = '<h2>'+(grouping.kind==='cluster'?'Cluster':'Label')+' &times; '+(grouping.kind==='cluster'?'cluster':'label')+'</h2><p class="ov-lead">'+G+' '+(grouping.kind==='cluster'?'clusters':'labels')+' with at least '+st.min+' scenarios on the map; colour = '+(st.by==='overlap' ? 'overlap ratio (capped at ±1)' : 'mean r (capped at ±0.50)')+', green with, red against, hatched under '+OV_MIN_TESTED+' tested pairs, dotted = nothing tested. Hover for the numbers; click a cell for every scenario pair behind it; click a row head to order by overlap with it.</p>'+(pinNote ? '<p class="ov-muted">'+esc(grouping.display(pinNote))+' is not on the matrix at these knobs (fewer than '+st.min+' scenarios on the map, hidden by skill labels only, or folded into another spelling) &mdash; the order pin was ignored.</p>' : '')+(G ? '<div class="ov-wrap">'+parts.join('')+'</div>' : '<p class="ov-muted">No '+(grouping.kind==='cluster'?'cluster':'label')+' of the active pool has '+st.min+' scenarios on the map.</p>');
       if(G) matEl.querySelector('.ov-grid').addEventListener('click', e=>{
         const cell = e.target.closest('.ov-cell'); const head = e.target.closest('.ov-rowhead');
         if(cell){ st.cell = cell.getAttribute('data-a'); st.cell2 = cell.getAttribute('data-b'); rerender(); const insp = document.getElementById('ov-inspector'); if(insp) insp.scrollIntoView({ block: 'start', behavior: 'smooth' }); }
