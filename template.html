@@ -8830,9 +8830,35 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const ig = independentGroups(matrix, { maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence' });
     const blockOfKey = new Map();
     ig.kept.forEach(k=>{ blockOfKey.set(k.id, k.id); k.coveredBy.forEach(c=>{ if(!blockOfKey.has(c.id)) blockOfKey.set(c.id, k.id); }); });
-    const list = ig.kept.map(k=>({ id: k.id, name: dominant(k.id), covers: k.coveredBy.map(c=>dominant(c.id)) }));
-    const of = name => { const ks = groupsOf(name); let hit = null; for(const k of ks){ if(blockOfKey.get(k)===k) return k; if(hit===null && blockOfKey.has(k)) hit = blockOfKey.get(k); } return hit; };
-    _blocksCache = list.length ? { of, list } : false;
+    const labelList = ig.kept.map(k=>({ id: k.id, name: dominant(k.id), covers: k.coveredBy.map(c=>dominant(c.id)) }));
+    const labelOf = name => { const ks = groupsOf(name); let hit = null; for(const k of ks){ if(blockOfKey.get(k)===k) return k; if(hit===null && blockOfKey.has(k)) hit = blockOfKey.get(k); } return hit; };
+    // HYBRID (v0.5.1, 2026-08-22 late, Claude's call on the evidence): where a
+    // scenario is a STABLE MEMBER of a D12 community (the label-blind lens, two to
+    // three times the label blocks' cohesion where it is tight) its block is that
+    // community; everything else (provisional, unstable, unassigned, no curve)
+    // falls back to the label block above, renamed "<label> (other)". A community
+    // needs BLOCK_MIN_MEMBERS stable members to be a block (cluster 6 has two).
+    // Names are data-derived until Owen ratifies them: the members' two most
+    // frequent curator labels + the id, so the three tracking communities read
+    // apart. Block ids 'c:<id>' link to #/overlap?grp=cluster&order=label:<id>.
+    const BLOCK_MIN_MEMBERS = 10;
+    const cd = clusterData();
+    const commList = [];
+    const commOf = new Map();
+    if(cd){
+      const members = new Map();
+      Object.keys(cd.scenario).forEach(n=>{ const row = cd.scenario[n]; if(Array.isArray(row) && row[3]==='member' && row[0]!==null && row[0]!==undefined){ const id = String(row[0]); if(!members.has(id)) members.set(id, []); members.get(id).push(n); } });
+      [...members.entries()].filter(([, ns])=>ns.length>=BLOCK_MIN_MEMBERS).sort((a,b)=> b[1].length-a[1].length || (a[0]<b[0]?-1:1)).forEach(([id, ns])=>{
+        const lc = new Map(); ns.forEach(n=>(labelsOf.get(n)||[]).forEach(l=>{ if(!noSkillLabel(l)) lc.set(keyOf(l), (lc.get(keyOf(l))||0)+1); }));
+        const top = [...lc.entries()].sort((a,b)=> b[1]-a[1] || (a[0]<b[0]?-1:1)).slice(0, 2).map(e=>dominant(e[0]));
+        const bid = 'c:'+id;
+        commList.push({ id: bid, name: (top.length ? top.join(' · ') : 'cluster')+' (c'+id+')', covers: [], members: ns.length });
+        ns.forEach(n=>commOf.set(n, bid));
+      });
+    }
+    const list = commList.length ? commList.concat(labelList.map(b=>Object.assign({}, b, { name: b.name+' (other)' }))) : labelList;
+    const of = name => commOf.get(name) || labelOf(name);
+    _blocksCache = list.length ? { of, list, hybrid: commList.length>0 } : false;
     return _blocksCache || null;
   }
   let _labelsOfCache = null;
@@ -10792,6 +10818,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     logSession(session);
     return { session, weakLabels: s.weakLabels };
   }
+  // a block id c:<id> is a D12 community (opens the map in cluster mode); anything else a label block
+  const blockHref = id => String(id).startsWith('c:') ? '#/overlap?grp=cluster&order=label:'+encodeURIComponent(String(id).slice(2)) : '#/overlap?order=label:'+encodeURIComponent(id);
   const WHY_LABEL = { weakest: 'weakest', route: 'route', fillout: 'fill out', placement: 'placement', quickwin: 'quick win', revisit: 'revisit', coverage: 'coverage' };
   const templateText = t => t ? [t.weakest, t.route, t.fillout, t.quickwin, t.revisit].map(x=>Number(x)||0).join('/') : '';
 
@@ -10861,7 +10889,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       const weakestMedian = rated.length ? Math.min(...rated.map(b=>b.median)) : null;
       const ordered = session.blocks.slice().sort((a,b)=> (a.median===null?1:0)-(b.median===null?1:0) || a.median-b.median);
       blockStrip = '<div class="prof-row" id="sess-blocks"><span class="prof-label" title="the Overlap page\'s practise-separately set at its default knobs: labels measured to move independently of each other — a different skill each. The weakest slice is spread across them by standing; the coverage slot goes to a block nothing touched in 14 days.">blocks</span>'
-        + ordered.map(b=>'<a class="prof-chip'+(b.median!==null && b.median===weakestMedian ? ' weak' : '')+'" href="#/overlap?order=label:'+encodeURIComponent(b.id)+'" title="'+esc(b.played+' played, '+b.rated+' with a curve'+(b.lastT ? '; last run '+agoText(b.lastT) : '; no run on record'))+'"><b>'+esc(b.name)+'</b> '+(b.median!==null ? esc(percentileLabel(b.median)) : 'no standing')+' <span class="prof-n">'+b.rated+'</span></a>').join('')
+        + ordered.map(b=>'<a class="prof-chip'+(b.median!==null && b.median===weakestMedian ? ' weak' : '')+'" href="'+blockHref(b.id)+'" title="'+esc(b.played+' played, '+b.rated+' with a curve'+(b.lastT ? '; last run '+agoText(b.lastT) : '; no run on record'))+'"><b>'+esc(b.name)+'</b> '+(b.median!==null ? esc(percentileLabel(b.median)) : 'no standing')+' <span class="prof-n">'+b.rated+'</span></a>').join('')
         + '<a class="prof-chip" href="#/overlap" title="the whole map">map &rarr;</a></div>';
     }
     wrap.innerHTML = `
@@ -10898,7 +10926,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       const chips = '<span class="chip chip-why why-'+it.why+'">'+esc(WHY_LABEL[it.why]||it.why)+'</span>'
         + '<span class="chip '+diffChipClass(rungLbl==='Unrated'?'':rungLbl)+'">'+esc(diffChipLabel(rungLbl==='Unrated'?'':rungLbl))+'</span>'
         + (it.label ? '<span class="chip chip-facet">'+esc(it.label)+'</span>' : '')
-        + (it.blockName ? '<a class="chip chip-facet sess-block" href="#/overlap?order=label:'+encodeURIComponent(it.block)+'" title="its block on the overlap map: labels measured to move together, apart from the other blocks">'+esc(it.blockName)+' block</a>' : '')
+        + (it.blockName ? '<a class="chip chip-facet sess-block" href="'+blockHref(it.block)+'" title="its block on the overlap map: labels measured to move together, apart from the other blocks">'+esc(it.blockName)+' block</a>' : '')
         + (sc ? '<span class="chip chip-facet" title="playlists carrying it">'+sc.playlists.length+' pl</span>' : '')
         + (it.resp && it.resp.state && it.resp.state!=='unknown' ? '<span class="chip sess-resp '+esc(it.resp.state)+'" title="'+esc(it.resp.state==='responsive' ? (it.resp.gain>0 ? '+'+(it.resp.gain*100).toFixed(1)+' percentile points per attempt over '+it.resp.n+' runs in the last 60 days'+(it.resp.src==='history' ? ' (from PB raises)' : '') : 'recent runs land within 3 points of the PB') : it.resp.n+' runs in the last 60 days, no gain per attempt, recent best '+(it.resp.nearPct!==null && it.resp.nearPct!==undefined ? Math.round(it.resp.nearPct*100)+' points' : 'well')+' under the PB')+'">'+esc(it.resp.state)+'</span>' : '')
         + (it.game ? '<span class="chip sess-game" title="'+esc(it.game==='direct' ? 'carries a game facet (cs/val or tac-fps); game-relevance bonus applied' : 'co-varies with a game-relevant scenario; a share of the bonus applied')+'">game</span>' : '');
