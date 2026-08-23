@@ -152,7 +152,8 @@
   function thinFixture(E){
     return fixture(E).map((sc, i)=> i < 12 ? sc : Object.assign({}, sc, { played: false, pct: null, to2nd: 0, toMax: 0, toNext: 0, maxed: false, att: null }));
   }
-  const OPTS = { size: 10, seed: 1, now: FIXED_MS, labelBridges: LABEL_BRIDGES };
+  // historySince: the score history covers the last 90 days, so a touched scenario with no raise after T is UNMOVED (counts 0); without it such a scenario is not evidence at all (its runs are only a lower bound on the PB)
+  const OPTS = { size: 10, seed: 1, now: FIXED_MS, labelBridges: LABEL_BRIDGES, historySince: FIXED_MS - 90*86400000 };
   const item = it => ({ name: it.name, why: it.why, via: it.via ? { target: it.via.target, viaLabel: it.via.viaLabel, r: it.via.r, n: it.via.n } : null });
   const routeOf = it => ({ name: it.name, target: it.via ? it.via.target : null, viaLabel: it.via ? it.via.viaLabel : null });
   function compute(E){
@@ -301,7 +302,9 @@
       if(cn!==null && cn<0.3 && t[0]!=='low') problems.push('template '+k+': c < 0.30 is the low band, got '+J(t));
       if(cn!==null && cn>0.65 && t[0]!=='high') problems.push('template '+k+': c > 0.65 is the high band, got '+J(t));
     });
-    if(R.confNoAtt.density!==null || !near(R.confNoAtt.c, (R.confNoAtt.coverage + 0.5)/2, 0.001)) problems.push('profileConfidence without attempts: density null and c = mean(coverage, days), got '+J(R.confNoAtt));
+    // no run evidence: density reads as 0 in the mean (reported null) and c is capped at the
+    // high band's floor, so calendar time alone never reaches the high band
+    if(R.confNoAtt.density!==null || !near(R.confNoAtt.c, Math.min((R.confNoAtt.coverage + 0.5)/3, 0.65), 0.001)) problems.push('profileConfidence without attempts: density null and c = min((coverage + 0 + days)/3, 0.65), got '+J(R.confNoAtt));
     if(R.confWithAtt.density===null) problems.push('profileConfidence with attempts records must carry a density, got '+J(R.confWithAtt));
     if(R.bands.low.n!==10 || R.bands.high.n!==10 || R.bands.low.template.band!=='low' || R.bands.high.template.band!=='high') problems.push('bands: low/high templates must still compose 10 items, got '+J({ low: R.bands.low, high: R.bands.high }));
     if(R.bands.high.whys.fillout) problems.push('bands: the high band has no fill-out slot (top-up only adds weakest first), got '+J(R.bands.high.whys));
@@ -317,7 +320,9 @@
     // history stats
     const h = R.history;
     if(h.sessions.length!==3 || h.sessions[0][6]!==true || h.sessions[1][6]!==false) problems.push('history: 3 sessions newest first, the live one flagged: '+J(h.sessions));
-    if(J(h.sessions.map(s=>[s[3], s[4]]))!==J([[1,1],[2,1],[1,1]])) problems.push('history: revisits/collected per session must be [1,1] (live, shown but not totalled), [2,1], [1,1], got '+J(h.sessions));
+    // the live session has nothing done yet, so its revisits are not counted (a session that
+    // was never played must not deflate the return-collect rate)
+    if(J(h.sessions.map(s=>[s[3], s[4]]))!==J([[0,0],[2,1],[1,1]])) problems.push('history: revisits/collected per session must be [0,0] (live, nothing done), [2,1], [1,1], got '+J(h.sessions));
     if(h.overall.revisits!==3 || h.overall.collected!==2 || !near(h.overall.rate, 2/3, 1e-9) || !near(h.overall.predicted, (0.8*1 + 0.5*2)/3, 1e-9)) problems.push('history: overall must exclude the live session (3 revisits, 2 collected, predicted mean weighted by revisits), got '+J(h.overall));
     if(h.weeks.length!==2 || h.weeks[0][1]!==1 || h.weeks[1][1]!==2) problems.push('history: two contiguous Monday-start weeks (1 session, then 2), got '+J(h.weeks));
     if(!(h.weeks[0][3]===1 && h.weeks[1][3]===1 && h.weeks[1][2]===2)) problems.push('history: weekly collected/revisits must follow the sessions, got '+J(h.weeks));

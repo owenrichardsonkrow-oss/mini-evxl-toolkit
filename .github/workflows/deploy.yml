@@ -34,6 +34,8 @@ jobs:
       - run: node test/golden.js
       - run: node test/difficulty.js
       - run: node test/facets.js
+      - run: node test/session.js
+      - run: node test/overlap.js
       - run: node test/template-integrity.js
   deploy:
     needs: test

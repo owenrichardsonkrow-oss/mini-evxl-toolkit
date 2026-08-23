@@ -238,10 +238,10 @@ about skill structure.
   protocol predicts); 35,000 cross-label pairs above 0.3 are the overlap.
   Bridges with ≥20 scenario pairs: smoothness↔xyz 0.64, VAI↔vertical 0.64,
   pasu-track↔smoothness ~0.6, pacing↔static clicking 0.58; negatives: 3×3 vs
-  control/reactive tracking ≈ −0.45. Sample skews high (median usable player
-  ~85th percentile — deep-board players mostly have empty profiles), so
-  correlations are attenuated, not inverted; trust is highest in the 0.7–1.0
-  band. Stamped as `data/percentiles.json` + `data/transfer.json`, shipped in
+  control/reactive tracking ≈ −0.45. [Retracted 2026-08-22: the first reading
+  was "sample skews high (median usable player ~85th percentile)"; the skew
+  diagnostic below measured the median at 0.646 and found residual r flat
+  across strata — see D14.] Stamped as `data/percentiles.json` + `data/transfer.json`, shipped in
   both builds.
 - **Session page v0.3 (2026-08-22)** — the metric is the population percentile
   (D8 adopted in code); **routes** for the weakest items: a co-varying

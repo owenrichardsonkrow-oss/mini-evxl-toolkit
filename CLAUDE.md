@@ -10,7 +10,7 @@ Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
 `template.html` from `master` / root — enabled in the repo's Settings → Pages by
 Owen. Since 2026-08-18 (`.github/workflows/deploy.yml`, written on the remote
 branch; active once merged, with the Pages source on "GitHub Actions") the live
-page only updates when all four test suites pass on the pushed master — a red
+page only updates when all six test suites pass on the pushed master — a red
 push leaves the previous deploy up. Pushing is routine now; the personal
 tracker repo has no remote and stays that way (it embeds Owen's own scores).
 
@@ -67,7 +67,7 @@ rulings executable). `test/template-integrity.js` guards the
 shipped page itself: every script block parses, the embedded engine byte-equals
 `src/engine.js`, SITE stays generic, `esc()` keeps escaping `"` — the gaps
 golden can't see because it requires `src/engine.js` directly. GitHub Actions
-runs all four on every push including `claude/**` remote branches (template-
+runs all six on every push including `claude/**` remote branches (template-
 integrity is skipped on `dev`, whose tracked template is the last release by design)
 (`.github/workflows/test.yml`). The golden file is regenerated only from the
 personal repo (`dev\run-tests.ps1 -WriteGolden`) after an intended engine change
@@ -289,9 +289,10 @@ since 2026-08-17 the tracker's `weekly-refresh.ps1` (Task Scheduler, Sunday
 04:00) runs the whole chain unattended and **commits `template.html`
 here** when the structure moved — so a `template.html` commit titled "Weekly
 structure refresh <date> (automated)" is expected, not a stray. Since
-2026-08-16 late it does **not push** (a sanity gate blocks bad upstream days,
-and the push waits for a human glance; `weekly-refresh.ps1 -Push` opts in) —
-so `master` may be ahead of `origin/master` on a Monday; look, then push.
+2026-08-17 the scheduled task passes `-Push` (the commit is gated by the sanity
+gate and the headless tests, so an unattended push publishes only a tested
+commit; `register-weekly-refresh.ps1 -NoPush` restores commit-only) — so
+`origin/master` moves on Sunday mornings; a revert commit undoes a bad one.
 
 **Dropped from the template (2026-08-16)**: `Black Dawn [Celestial Forge]` — it is
 empty at the source (KovaaK's returns no scenarios for that benchmark id, evxl

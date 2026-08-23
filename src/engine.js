@@ -1148,7 +1148,9 @@ const MiniEvxlEngine = (function(){
   // c < CONF_LOW -> low band; c > CONF_HIGH -> high band; between -> mid (= v0.3).
   // 0.30, not 0.35: a profile whose played set is fully curved but has no logged
   // runs and no history yet reads c = (1 + 0 + 0)/3 = 0.33 -- thin evidence, and
-  // thin evidence must compose the v0.3 list, not a different template.
+  // thin evidence must compose the v0.3 list, not a different template. The high
+  // band additionally needs run evidence (profileConfidence caps c at CONF_HIGH
+  // while the attempts store is empty).
   const CONF_LOW = 0.30, CONF_HIGH = 0.65;
   const CONF_HISTORY_DAYS = 90;                      // days of score history that count as a full picture
   const RESP_MIN_RUNS = 4;                           // fewer runs in the window -> "unknown" (v0.3 treatment)
@@ -1157,6 +1159,7 @@ const MiniEvxlEngine = (function(){
   const PLATEAU_GAP = 0.05;                          // ...and a recent best this many percentile points under the PB
   const RESP_NEAR = 0.03;                            // recent best within this of the PB = still reproducing it
   const SESSION_PLANNED_ATTEMPTS = 5;                // attempts a session item is budgeted; expected gain = gain/run x this
+  const RESP_DEADBAND = 0.01/SESSION_PLANNED_ATTEMPTS; // |gain| under this per attempt reads as 0 (flat series = no signal)
   const EXPGAIN_CAP = 0.15;                          // cap on the expected-gain term (percentile points)
   const GAME_BONUS = 0.08;                           // full-weight bonus for a direct game-facet carrier (percentile points)
   const GAME_FACETS_DEFAULT = ['game:cs/val', 'game:tacfps'];
@@ -1212,6 +1215,11 @@ const MiniEvxlEngine = (function(){
         if(from!==null && to!==null){ out.gain = (to - from)/rs.length; out.src = 'history'; }
       }
     }
+    // Dead band: a least-squares slope over 4-20 runs is never exactly 0, so a flat
+    // series must not flip between 'responsive' and 'plateaued' on the sign of noise.
+    // Below RESP_DEADBAND per attempt (one percentile point over a planned session)
+    // the gain reads as 0 (review 2026-08-22 late).
+    if(out.gain!==null && Math.abs(out.gain) < RESP_DEADBAND) out.gain = 0;
     if(out.gain!==null && out.gain>0) out.state = 'responsive';
     else if(n >= RESP_MIN_RUNS && out.nearPct!==null && out.nearPct <= RESP_NEAR) out.state = 'responsive';
     else if(n >= PLATEAU_MIN_RUNS && out.gain!==null && out.gain<=0 && ((out.nearPct!==null && out.nearPct > PLATEAU_GAP) || (nearness!==null && nearness < 0.85))) out.state = 'plateaued';
@@ -1219,17 +1227,20 @@ const MiniEvxlEngine = (function(){
   }
   // How much of a picture the profile gives: coverage (played scenarios with a
   // curve / played), attempts density (share of played scenarios with at least
-  // RESP_MIN_RUNS logged runs -- null and LEFT OUT of the mean when no row has
-  // an attempts record at all, so a user who never synced runs is not pushed
-  // into the low band by a missing source), days of score history / 90.
+  // RESP_MIN_RUNS logged runs -- 0 when no row has an attempts record: missing
+  // evidence, not a missing source; reported as null so the meta line can say
+  // "no runs logged"), days of score history / 90. Without any run evidence the
+  // reading is capped at CONF_HIGH: calendar time alone must never put a
+  // profile in the high band (review 2026-08-22 late). A fully-curved profile
+  // with no runs and no history reads (1 + 0 + 0)/3 = 0.33 -> mid band = v0.3.
   function profileConfidence(scenarios, nowMs, historyDays){
     const played = (scenarios||[]).filter(sc=>sc.played);
     const coverage = played.length ? played.filter(sc=>sc.pct!==null && sc.pct!==undefined).length/played.length : 0;
     const anyAtt = played.some(sc=>sc.att && sc.att.n>0);
     const density = anyAtt ? played.filter(sc=>sc.att && sc.att.n>=RESP_MIN_RUNS).length/played.length : null;
     const days = Math.max(0, Math.min(1, (Number(historyDays)||0)/CONF_HISTORY_DAYS));
-    const parts = [coverage, days]; if(density!==null) parts.push(density);
-    const c = parts.reduce((a,b)=>a+b, 0)/parts.length;
+    let c = (coverage + days + (density===null ? 0 : density))/3;
+    if(density===null) c = Math.min(c, CONF_HIGH);
     return { c: Math.round(c*1000)/1000, coverage: Math.round(coverage*1000)/1000, density: density===null ? null : Math.round(density*1000)/1000, days: Math.round(days*1000)/1000 };
   }
   // The slice template for a confidence reading. c null or in the middle band
@@ -1258,25 +1269,32 @@ const MiniEvxlEngine = (function(){
   // n >= 100) and its label-bridged scenarios moved in percentile space since the
   // candidate's last visit T, against the candidate's own gap to its PB. A
   // scenario is evidence only when it was TOUCHED since T (a run logged or a PB
-  // raise after T); its movement is pct(now) - pct(PB as of T), where the PB as
-  // of T is the `from` of the earliest raise after T (sync-dated) or the best
-  // logged run at or before T (run-dated), whichever is higher; an unmoved but
-  // touched scenario counts as 0 in the weighted mean. Returns null when no
-  // evidence moved -- the v0.3 reduction (revisits then keep the longest-unplayed
-  // order). p = logistic((gain - margin)/FORECAST_SLOPE): a stated prior, logged
-  // per item so the return-collect record can say whether 70% means 70%.
+  // raise after T); its movement is pct(now) - pct(PB as of T). The PB as of T
+  // is read from the score history ONLY: the `from` of the earliest raise after
+  // T (sync-dated), and when no raise is logged after T while the history window
+  // (helpers.historySince, the app's raisesSince start) reaches back to T, the PB
+  // simply has not moved (delta 0). A logged run at or before T is NOT used as
+  // the PB as of T -- it is only a lower bound (the PB run is evicted from the
+  // 20-run record, and seeded/imported PBs never had one), and reading it as the
+  // PB reported movement that never happened (review 2026-08-22 late). When T is
+  // older than the history window and nothing was logged after it, the scenario
+  // is not evidence. An unmoved but touched scenario counts as 0 in the weighted
+  // mean. Returns null when no evidence moved -- the v0.3 reduction (revisits
+  // then keep the longest-unplayed order). p = logistic((gain - margin)/
+  // FORECAST_SLOPE): a stated prior, logged per item so the return-collect
+  // record can say whether 70% means 70%.
   function revisitForecast(sc, byName, bridges, byLabel, helpers){
     if(!(sc.att && sc.att.lastT>0)) return null;
     const T = sc.att.lastT;
     const hasP = row => row && row.played && row.pct!==null && row.pct!==undefined;
     const touched = row => !!((row.att && row.att.lastT > T) || (row.raises||[]).some(r=>Number(r[0]) > T));
-    // PB as of T in percentile space; null = the scenario was unplayed at T (not evidence)
+    const historySince = helpers && Number.isFinite(Number(helpers.historySince)) ? Number(helpers.historySince) : null;
+    // PB as of T in percentile space; null = not evidence (unplayed at T, or T older than the history window)
     const pctAt = row => {
-      let best = null, synced = false;
       const first = (row.raises||[]).find(r=>Number(r[0]) > T);
-      if(first){ if(first[1]===null || first[1]===undefined) return null; best = Number(first[1]); synced = true; }
-      (row.runPcts||[]).forEach(r=>{ if(Number(r[0]) <= T && r[1]!==null && r[1]!==undefined && (best===null || Number(r[1]) > best)){ best = Number(r[1]); synced = false; } });
-      return { pct: best===null ? row.pct : Math.min(row.pct, best), synced };
+      if(first){ if(first[1]===null || first[1]===undefined) return null; return { pct: Math.min(row.pct, Number(first[1])), synced: true }; }
+      if(historySince!==null && T >= historySince) return { pct: row.pct, synced: false };   // history covers (T, now] and holds no raise: unmoved
+      return null;
     };
     const evidence = [];
     (sc.neighbours||[]).forEach(nb=>{
@@ -1325,10 +1343,14 @@ const MiniEvxlEngine = (function(){
     const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
     const sessions = (log||[]).filter(e=>e && Number.isFinite(e.day)).map(e=>{
       const items = Array.isArray(e.items) ? e.items : [];
-      const revs = items.filter(it=>it.why==='revisit');
+      const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
+      // The log is written at compose time, so a session that was opened and never
+      // played is in it too; its revisits were never attempted and must not count
+      // toward the return-collect rate (review 2026-08-22 late): only sessions with
+      // at least one item done contribute revisits.
+      const revs = done > 0 ? items.filter(it=>it.why==='revisit') : [];
       const collected = revs.filter(it=>(Number(pb(it.name))||0) > (Number(it.pbAt)||0)).length;
       const ps = revs.map(it=>Number(it.p)).filter(v=>Number.isFinite(v));
-      const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
       return { day: e.day, seedBump: e.seedBump||0, startedAt: e.startedAt, rating: e.rating||null, regime: e.regime||null, done, size: Number(e.size)||items.length,
         revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
     }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
@@ -1594,7 +1616,7 @@ const MiniEvxlEngine = (function(){
     // Candidates with a forecast (a neighbour or bridged label actually moved
     // since the visit) come first by first-try PB odds; the rest keep v0.3's
     // longest-unplayed order -- with no movement anywhere the two are the same list.
-    const helpers = { labelsOf, sameSkill, noSkillLabel };
+    const helpers = { labelsOf, sameSkill, noSkillLabel, historySince: opts.historySince };
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, Object.keys(bridges).length ? bridges : null, Object.keys(bridges).length ? byLabelMap() : null, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
