@@ -306,6 +306,18 @@ about skill structure.
   matches the permutation null through the same pipeline (0.315) — sparsity,
   not inconsistency; a soft-impute/ALS second freeze stays open as a separate
   run, never a tweak of this one.
+- **The map steers the session (v0.5, 2026-08-22 late).** Owen: why find the
+  overlap if it is not used to serve the scenarios that make the most
+  efficient improvement path? So the coach's skill unit is now the map's
+  practise-separately set (the blocks measured to move independently): the
+  weakest slice is spread across blocks in proportion to how far each stands
+  under the others (floor-biased, never all from one block — D1's mixed
+  session falls out of the structure), one coverage slot goes to the block
+  nothing touched in 14 days (an independent skill does not improve by proxy),
+  and within a block a hub — a scenario whose strength co-varies with many
+  others — ranks a little earlier as the shared-skill prior's best bet. Every
+  item names its block and links to the map; the session shows the block
+  standings. Without a pairs block the session is v0.4 exactly.
 - **Overlap page (2026-08-22 late)** — `#/overlap`: the map itself, scenario-first
   (pick a scenario: what moves with it, against it, and not at all, with the
   player's own percentile on every row), a label × label matrix and a greedy

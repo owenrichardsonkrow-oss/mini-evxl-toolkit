@@ -1166,6 +1166,9 @@ const MiniEvxlEngine = (function(){
   const FORECAST_SLOPE = 0.04;                       // logistic slope of the revisit forecast (a stated prior, uncalibrated)
   const FORECAST_PRIOR_MARGIN = 0.05;                // gap to PB assumed when the candidate's recent runs are unknown
   const FORECAST_MAX_BRIDGES = 3;                    // label bridges that may contribute forecast evidence (strongest by r)
+  const HUB_BONUS = 0.03;                            // v0.5: full bonus for a scenario with >= HUB_FULL positive neighbours (practice there co-varies with the most)
+  const HUB_FULL = 8;
+  const BLOCK_UNTOUCHED_DAYS = 14;                   // v0.5: a block with no run or raise this long gets the coverage slot
   const BOARD_CONF_MIN = 0.25;                       // 24-player board -> 0.35, 100 -> 0.5, 1,000 -> 0.75, >= 10,000 -> 1
   const DAY_MS = 86400000;
   // Board confidence from the number of unique players on the scenario's
@@ -1477,13 +1480,33 @@ const MiniEvxlEngine = (function(){
     const gameFirst = list => gameW>0 ? list.filter(sc=>gameShare(sc)>0).concat(list.filter(sc=>gameShare(sc)<=0)) : list;
     const template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
     const gameNote = sc => { const s = gameShare(sc); return s<=0 ? '' : (isHit(sc) ? ' · game-relevant (cs/val or tac-fps)' : ' · co-varies with game-relevant scenarios (r '+s.toFixed(2)+')'); };
+    // ---- v0.5: the overlap map steers the session (DESIGN_INTENT: the map exists
+    // to prescribe practice). opts.blocks = { of(name) -> block id | null,
+    // list: [{id, name}] } is the page's practise-separately set at its default
+    // knobs (the app builds it from the shipped pairs block; absent -> every term
+    // below is the identity and the session is v0.4 exactly). A block is a set of
+    // scenarios measured to move independently of the other blocks -- a different
+    // skill. Three uses: (1) the WEAKEST slice is spread across blocks by how far
+    // each stands under the others (floor-biased, never all from one block);
+    // (2) one COVERAGE slot goes to the block nothing touched in BLOCK_UNTOUCHED_DAYS
+    // (variety is the efficient path, and an untouched independent skill decays
+    // unseen); (3) within a block, a HUB -- a scenario whose strength co-varies
+    // with many others (>= HUB_FULL positive neighbours at n >= 100) -- ranks a
+    // little earlier: practice there is the shared-skill prior's best bet.
+    const blocks = opts.blocks && typeof opts.blocks.of==='function' ? opts.blocks : null;
+    const blockOf = sc => blocks ? (blocks.of(sc.name) || null) : null;
+    const blockList = blocks ? (blocks.list||[]).map(b=>({ id: b.id, name: b.name||b.id })) : [];
+    const blockNameOf = sc => { const id = blockOf(sc); if(!id) return null; const b = blockList.find(x=>x.id===id); return b ? b.name : id; };
+    const hubDegree = sc => (sc.neighbours||[]).filter(nb=>nb && nb[1]>0 && nb[2]>=100).length;
+    const hubBonus = sc => blocks ? HUB_BONUS*Math.min(1, hubDegree(sc)/HUB_FULL) : 0;
     const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name);
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
         forecast: sc._forecast || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         pctShrunk: (hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
-        game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null }); n--; } };
+        game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
+        block: blockOf(sc), blockName: blockNameOf(sc) }); n--; } };
     let popLevel = null;
     if(played.length < SESSION_THIN_PLAYED){
       const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
@@ -1510,7 +1533,7 @@ const MiniEvxlEngine = (function(){
     const shrunk = sc => { const m = sessionMetric(sc); if(!hasPct(sc) || popLevel===null) return m; const cf = conf(sc); return cf>=1 ? m : cf*m + (1-cf)*popLevel; };
     // The v0.4 weakest key: v0.3's metric, shrunk, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
-    const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc);
+    const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
       .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
     const perLabel = new Map(), perPl = new Set();
@@ -1528,7 +1551,52 @@ const MiniEvxlEngine = (function(){
       return ''; };
     const shrinkNote = sc => { const cf = conf(sc); return (hasPct(sc) && cf<1 && popLevel!==null) ? ' — board of '+Number(sc.boardN).toLocaleString()+' players (confidence '+cf.toFixed(2)+'), ranked as '+percentileLabel(shrunk(sc)) : ''; };
     const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+gameNote(sc)+'.';
-    take(spread, 'weakest', weakReason, template.weakest);
+    // Block standings: median percentile over the played, curved scenarios of each
+    // block (the same number the Overlap page shows as 'you N%'); lastT = the newest
+    // run on any of its scenarios.
+    let blockStats = [];
+    if(blocks){
+      const per = new Map();
+      played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
+      blockStats = blockList.map(b=>{ const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 }; return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median: e.pcts.length ? medianOf(e.pcts) : null, lastT: e.lastT||null }; });
+    }
+    const blockNote = sc => { if(!blocks) return ''; const id = blockOf(sc); const bs = blockStats.find(b=>b.id===id); if(!bs || bs.median===null) return ''; const ranked = blockStats.filter(b=>b.median!==null).sort((a,b)=>a.median-b.median); const pos = ranked.findIndex(b=>b.id===id)+1; return ' — '+bs.name+' block: your standing '+percentileLabel(bs.median)+(ranked.length>1 ? ' ('+(pos===1 ? 'your weakest' : ordinal(pos)+' weakest')+' of '+ranked.length+' blocks)' : '')+(hubDegree(sc)>=HUB_FULL ? '; a hub — moves with '+hubDegree(sc)+' others' : ''); };
+    const weakReasonB = sc => weakReason(sc)+blockNote(sc);
+    if(blocks && blockStats.some(b=>b.median!==null)){
+      // Slots across blocks by how far each stands under the others: weight =
+      // 1 - median (floor at 0.05), largest-remainder rounding, weakest block first;
+      // a block whose pool runs dry hands its slots to the next weakest.
+      const ranked = blockStats.filter(b=>b.median!==null && b.rated>=2).sort((a,b)=> a.median-b.median || (a.name<b.name?-1:1));
+      const coverageSlot = template.weakest>1 && blockStats.some(b=>b.lastT===null || (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS) ? 1 : 0;
+      const slots = template.weakest - coverageSlot;
+      const ws = ranked.map(b=>Math.max(0.05, 1-b.median)); const wsum = ws.reduce((a,b)=>a+b, 0) || 1;
+      const raw = ws.map(w=>w*slots/wsum); const alloc = raw.map(Math.floor); let used = alloc.reduce((a,b)=>a+b, 0);
+      const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
+      for(let i=0; used<slots && i<order.length; i++){ alloc[-order[i][1]]++; used++; }
+      const perPlB = new Set(); let carry = 0;
+      ranked.forEach((b, i)=>{
+        let want = alloc[i] + carry; carry = 0;
+        const pool = spread.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name)).concat(weakPool.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name) && !spread.includes(sc)));
+        const before = items.length;
+        take(pool.filter(sc=>!(sc.plKeys||[]).some(k=>perPlB.has(k))), 'weakest', weakReasonB, want);
+        items.slice(before).forEach(it=>{ const sc = byName.get(it.name); (sc && sc.plKeys||[]).forEach(k=>perPlB.add(k)); });
+        carry = want - (items.length - before);
+      });
+      if(carry>0) take(spread, 'weakest', weakReasonB, carry);   // no block could absorb them: the plain v0.4 order
+      // COVERAGE: the block nothing touched for BLOCK_UNTOUCHED_DAYS -- its weakest
+      // non-sink scenario at or under level; the least recently touched block first.
+      if(coverageSlot){
+        const cold = blockStats.filter(b=>b.played>0 && (b.lastT===null || (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS)).sort((a,b)=> (a.lastT||0)-(b.lastT||0) || (a.name<b.name?-1:1));
+        for(const b of cold){
+          const pool = weakPool.filter(sc=>blockOf(sc)===b.id && !sinks(sc) && !chosen.has(sc.name));
+          const before = items.length;
+          take(pool, 'coverage', sc=>'Coverage — nothing in the '+b.name+' block '+(b.lastT ? 'for '+Math.round((opts.now-b.lastT)/DAY_MS)+' days' : 'on record')+': it moves independently of the blocks you have been training, so it does not improve by proxy; '+standing(sc)+', '+label(sc)+blockNote(sc)+'.', 1);
+          if(items.length>before) break;
+        }
+      }
+    } else {
+      take(spread, 'weakest', weakReasonB, template.weakest);
+    }
     // ---- ROUTE: for the weakest items, a strong neighbour to train instead/as well.
     // Neighbour must exist in the pool, sit at or under level+1, not be maxed,
     // not be stuck, and either be unplayed or stand higher than the weak one --
@@ -1628,10 +1696,10 @@ const MiniEvxlEngine = (function(){
       const what = (nbs ? nbs+' co-varying '+(nbs===1 ? 'scenario' : 'scenarios') : '')+(nbs && lbs ? ' and ' : '')+(lbs ? lbs+' bridged '+(lbs===1 ? 'label' : 'labels') : '');
       return 'Revisit — last played '+days+' days ago; since then '+what+' you touched moved '+(f.gain>=0?'+':'')+(f.gain*100).toFixed(0)+' pts on average ('+moved+' of '+f.evidence.length+' moved; r '+rTxt+') against a '+(f.margin*100).toFixed(0)+'-pt gap to your PB — first-try PB odds: '+oddsWord(f.p)+' ('+Math.round(f.p*100)+'%)'+(f.synced ? '; sync-dated evidence' : '')+'.'; }, template.revisit);
     // ---- top up: more of the weakest list, then unplayed at/under level
-    take(weakPool, 'weakest', weakReason, opts.size-items.length);
+    take(weakPool, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; });
-    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items };
+    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------

@@ -232,6 +232,22 @@
     R.templates = {};
     [null, 0, 0.1, 0.29, 0.3, 0.35, 0.5, 0.65, 0.66, 0.9, 1].forEach(c=>{ [8, 10, 12].forEach(size=>{ const t = E.sessionTemplate(c, size); R.templates[String(c)+'@'+size] = [t.band, t.weakest, t.route, t.fillout, t.quickwin, t.revisit]; }); });
     R.confNoAtt = E.profileConfidence(fixture(E).map(sc=>Object.assign({}, sc, { att: null })), FIXED_MS, 45);
+    // v0.5 blocks: the overlap map's independent set as the skill unit. Three
+    // blocks by mechanic facet (clicking / tracking / switching); with them the
+    // weakest slice must be SPREAD across blocks by standing, one COVERAGE item
+    // goes to a block nothing touched in 14 days, every item carries its block,
+    // and the result lists the block standings. Without opts.blocks the output is
+    // the pinned v0.4 snapshot (asserted by `main` above).
+    const fxBlocks = fixture(E);
+    const blockOfRow = sc => { const f = sc.facets||[]; return f.includes('tracking') ? 'tracking' : f.includes('clicking') ? 'clicking' : f.includes('switching') ? 'switching' : null; };
+    const BLOCKS = { of: name => { const sc = fxBlocks.find(x=>x.name===name); return sc ? blockOfRow(sc) : null; }, list: [{ id: 'tracking', name: 'tracking' }, { id: 'clicking', name: 'clicking' }, { id: 'switching', name: 'switching' }] };
+    const sBl = E.composeSession(fxBlocks, Object.assign({}, OPTS, { blocks: BLOCKS }), FILL);
+    const weakB = sBl.items.filter(it=>it.why==='weakest');
+    R.blocks = { standings: (sBl.blocks||[]).map(b=>[b.id, b.rated, b.median===null ? null : Math.round(b.median*100)/100]),
+      weakestBlocks: [...new Set(weakB.map(it=>it.block))].sort(), weakestCount: weakB.length,
+      coverage: sBl.items.filter(it=>it.why==='coverage').map(it=>[it.name, it.block]),
+      itemsWithBlock: sBl.items.filter(it=>it.block).length, size: sBl.items.length,
+      sameAsV04: JSON.stringify(sBl.items.map(it=>it.name))===JSON.stringify(E.composeSession(fixture(E), OPTS, FILL).items.map(it=>it.name)) };
     R.confWithAtt = E.profileConfidence(fixture(E), FIXED_MS, 45);
     const sLow = E.composeSession(fixture(E), Object.assign({}, OPTS, { confidence: { c: 0.2 } }), FILL);
     const sHigh = E.composeSession(fixture(E), Object.assign({}, OPTS, { confidence: { c: 0.9 } }), FILL);
@@ -294,6 +310,13 @@
     // bridge (r 0.62) over its two touched scenarios (+0.10 and 0 -> +0.05): gain 0.075, prior
     // margin 0.05 (no recent-runs reading), odds 0.025 -> p 0.65 -- ahead of the 40-day candidate
     if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.65]])) problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d, p 0.65) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    // v0.5 blocks
+    const B = R.blocks;
+    if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
+    if(!B || B.weakestBlocks.length < 2) problems.push('blocks: the weakest slice must span at least two blocks, got '+J(B && B.weakestBlocks));
+    if(!B || B.coverage.length!==1) problems.push('blocks: exactly one coverage item expected (a block untouched for 14 days), got '+J(B && B.coverage));
+    if(!B || B.size!==10) problems.push('blocks: the session must still hold 10 items, got '+J(B && B.size));
+    if(!B || B.sameAsV04) problems.push('blocks: with blocks the item list must differ from the v0.4 list (the map is steering)');
     // templates
     Object.keys(R.templates).forEach(k=>{ const [c, size] = k.split('@'); const t = R.templates[k]; const sum = t.slice(1).reduce((a,b)=>a+b, 0); const want = Math.min(Number(size), 10);
       if(sum!==want) problems.push('template '+k+': slots sum to '+sum+', expected '+want+' ('+J(t)+')');
