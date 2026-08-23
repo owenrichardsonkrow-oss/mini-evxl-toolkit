@@ -1813,10 +1813,12 @@ const MiniEvxlEngine = (function(){
     }
     const kept = [], incoherent = [], thin = [], skipped = [];
     for(const g of cands){
-      const coh = matrix.cohesion(g.id);
-      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
+      // an own cell with too few tested pairs cannot be judged at all -> thin (never
+      // 'doesn't hold together'); only a measurable cell can be incoherent
       const own = matrix.cell(g.id, g.id);
       if(!own || own.tested < o.minTested){ thin.push({ id: g.id, tested: own ? own.tested : 0, vs: null }); continue; }
+      const coh = matrix.cohesion(g.id);
+      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
       let verdict = null;
       for(const k of kept){
         const c = matrix.cell(g.id, k.id);

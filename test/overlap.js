@@ -193,10 +193,11 @@
     eq('independent kept (evidence order)', ig.kept.map(k=>[k.id, k.size, k.tested, k.coveredBy.map(c=>c.id)]), [[RT, 4, 4, [SC]]]);
     near('independent: SC covered by RT at overlap 0.264', ig.kept[0].coveredBy[0].overlap, 0.136/Math.sqrt(0.55*0.4825));
     eq('independent skipped', ig.skipped.map(s=>[s.id, s.by]), [[SC, RT]]);
-    eq('independent thin (BO: own cell 1 < 2)', ig.thin.map(t=>[t.id, t.tested, t.vs]), [[BO, 1, null]]);
-    eq('independent incoherent (SK: no cohesion)', ig.incoherent.map(t=>t.id), [SK]);
+    // SK has no own pair at all: that is 'cannot be measured' (thin, tested 0), not 'does not hold together'
+    eq('independent thin (BO: own cell 1 < 2; SK: no own cell)', ig.thin.map(t=>[t.id, t.tested, t.vs]), [[BO, 1, null], [SK, 0, null]]);
+    eq('independent incoherent (none: an unmeasurable cell is thin, not incoherent)', ig.incoherent.map(t=>t.id), []);
     eq('independent: cut 0.30 keeps both', E.independentGroups(M, { minTested: 2, maxOverlap: 0.30 }).kept.map(k=>k.id), [RT, SC]);
-    eq('independent: default minTested 30 makes everything thin', E.independentGroups(M).kept.length + E.independentGroups(M).thin.length, 0 + 3);
+    eq('independent: default minTested 30 makes everything thin (all four groups, SK included)', E.independentGroups(M).kept.length + E.independentGroups(M).thin.length, 0 + 4);
     // weakness order: the caller's standing decides who is walked first -> a different set
     const standing = new Map([[SC, { median: 0.2, n: 3 }], [RT, { median: 0.5, n: 4 }]]);
     const iw = E.independentGroups(M, { minTested: 2, order: 'weakness', standing });
