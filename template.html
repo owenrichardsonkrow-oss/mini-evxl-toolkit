@@ -8097,13 +8097,21 @@ const MiniEvxlEngine = (function(){
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, Object.keys(bridges).length ? bridges : null, Object.keys(bridges).length ? byLabelMap() : null, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
+    // The bucket, never the percentage. p comes from a logistic with an INVENTED
+    // slope (FORECAST_SLOPE) over an invented prior margin, so "83%" reads as a
+    // measured probability sitting next to real percentiles when it is nothing of
+    // the kind -- a score that looks more principled than it is. The measured
+    // quantities (how far the co-varying scenarios moved, over how many, at what r,
+    // against your own gap to the PB) are all printed; p is still logged per item
+    // so the return-collect record can calibrate it, and the percentage comes back
+    // the day predicted and collected can be compared (2026-08-24).
     const oddsWord = p => p>=0.6 ? 'good' : p>=0.4 ? 'fair' : 'poor';
     take(revOrdered, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
       if(!f) return 'Revisit — last played '+days+' days ago; go collect the PB (if it falls first try, the time away did the work).';
       const rs = f.evidence.map(e=>e.r); const rTxt = rs.length>1 ? Math.min(...rs).toFixed(1)+'–'+Math.max(...rs).toFixed(1) : rs[0].toFixed(2);
       const moved = f.evidence.filter(e=>e.delta>0).length, nbs = f.evidence.filter(e=>!e.via).length, lbs = f.evidence.length - nbs;
       const what = (nbs ? nbs+' co-varying '+(nbs===1 ? 'scenario' : 'scenarios') : '')+(nbs && lbs ? ' and ' : '')+(lbs ? lbs+' bridged '+(lbs===1 ? 'label' : 'labels') : '');
-      return 'Revisit — last played '+days+' days ago; since then '+what+' you touched moved '+(f.gain>=0?'+':'')+(f.gain*100).toFixed(0)+' pts on average ('+moved+' of '+f.evidence.length+' moved; r '+rTxt+') against a '+(f.margin*100).toFixed(0)+'-pt gap to your PB — first-try PB odds: '+oddsWord(f.p)+' ('+Math.round(f.p*100)+'%)'+(f.synced ? '; sync-dated evidence' : '')+'.'; }, template.revisit);
+      return 'Revisit — last played '+days+' days ago; since then '+what+' you touched moved '+(f.gain>=0?'+':'')+(f.gain*100).toFixed(0)+' pts on average ('+moved+' of '+f.evidence.length+' moved; r '+rTxt+') against a '+(f.margin*100).toFixed(0)+'-pt gap to your PB — first-try PB odds: '+oddsWord(f.p)+' (uncalibrated: the bucket comes from an assumed curve, not from your record yet)'+(f.synced ? '; sync-dated evidence' : '')+'.'; }, template.revisit);
     // ---- top up: more of the weakest list, then unplayed at/under level
     take(weakPool, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
