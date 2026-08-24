@@ -18,7 +18,9 @@
 #
 # Accepts either the Settings-page export ({"format":"mini-evxl-scores", ...,
 # "scores":{name:score}}) or a bare {name: score} object. The tracker file must
-# be the current (v2) format -- see lib\kovaaks-table.ps1.
+# be the current (v3) format -- see lib\kovaaks-table.ps1. v3 (2026-08-24) adds
+# history and sessionLog alongside scores/attempts; this script reads only the
+# two it needs, so a v2 or v3 file both work.
 
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(

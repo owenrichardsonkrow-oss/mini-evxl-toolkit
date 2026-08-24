@@ -8898,8 +8898,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // The store is max-only, so on its own it can't say what improved when. This
   // log records every raise that comes from a sync or an import (not the seed
   // from the file's own rows, which isn't a play event): {t, name, from, to,
-  // src}. Capped; cleared with the store on reset-to-demo. Local telemetry —
-  // deliberately not part of the scores export.
+  // src}. Capped; cleared with the store on reset-to-demo. Carried by
+  // Export/Import since v3 (2026-08-24): it is the responsiveness fallback, the
+  // revisit forecast's "PB as of T" and the confidence's days term, and nothing
+  // can rebuild it — a per-origin store with no backup was the coach's most
+  // fragile input.
   const HISTORY_KEY = storeKey('score-history');
   const HISTORY_CAP = 4000;
   let HISTORY = [];
@@ -9124,7 +9127,16 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     [...SCORES.keys()].sort((a,b)=>a.localeCompare(b)).forEach(k=>{ scores[k]=SCORES.get(k); });
     const attempts = {};
     [...ATTEMPTS.keys()].sort((a,b)=>a.localeCompare(b)).forEach(k=>{ attempts[k]=ATTEMPTS.get(k); });
-    return { format: SCORES_EXPORT_FORMAT, version: 2, exportedAt: new Date().toISOString(), count: SCORES.size, scores, attempts };
+    // v3 (2026-08-24) also carries the two records the COACH is judged by and
+    // nothing else can rebuild: the score history (every raise: the responsiveness
+    // fallback, the revisit forecast's "PB as of T", the confidence's days term)
+    // and the session log (every composed session with its revisit predictions ->
+    // the return-collect rate, D11's KPI for whether the coach works). Both live
+    // only in one browser's localStorage, per ORIGIN -- play on the Pages copy and
+    // rate on the artifact and the record silently splits, and a reset ends it.
+    // Exporting them makes the evidence portable and backupable.
+    return { format: SCORES_EXPORT_FORMAT, version: 3, exportedAt: new Date().toISOString(), count: SCORES.size, scores, attempts,
+      history: HISTORY.slice(), sessionLog: readSessionLog() };
   }
   // Accepts our export (v1 or v2), or a bare {name: score} object. Max-merge, never lowers.
   function importScoresText(text){
@@ -9141,10 +9153,37 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       Object.keys(parsed.attempts).forEach(k=>{ const r = parsed.attempts[k]; if(k && r && Array.isArray(r.last)) am.set(k.trim(), r.last); });
       attemptsAdded = recordAttempts(am);
     }
-    if(map.size===0 && attemptsAdded===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
+    // v3: merge the coach's records. Both are UNIONS -- an import may add rows,
+    // never drop them, so importing an older backup can only fill gaps.
+    let historyAdded = 0, sessionsAdded = 0;
+    if(parsed && Array.isArray(parsed.history)){
+      const seen = new Set(HISTORY.map(e=>e.t+'|'+e.name+'|'+e.to));
+      parsed.history.forEach(e=>{
+        if(!e || !Number.isFinite(Number(e.t)) || !e.name) return;
+        const k = Number(e.t)+'|'+e.name+'|'+e.to;
+        if(seen.has(k)) return;
+        seen.add(k); HISTORY.push({ t: Number(e.t), name: String(e.name), from: Number(e.from)||0, to: Number(e.to)||0, src: e.src||'import' }); historyAdded++;
+      });
+      if(historyAdded){ HISTORY.sort((a,b)=>a.t-b.t); if(HISTORY.length>HISTORY_CAP) HISTORY = HISTORY.slice(-HISTORY_CAP); persistHistory(); }
+    }
+    if(parsed && Array.isArray(parsed.sessionLog)){
+      const log = readSessionLog();
+      const keyOf = e => e.day+'|'+(e.seedBump||0);
+      const byKey = new Map(log.map(e=>[keyOf(e), e]));
+      // the richer entry wins a collision: more items done, then a rating, then the later start
+      const better = (a, b) => (Number(b.done)||0) - (Number(a.done)||0) || (b.rating?1:0) - (a.rating?1:0) || (Number(b.startedAt)||0) - (Number(a.startedAt)||0);
+      parsed.sessionLog.forEach(e=>{
+        if(!e || !Number.isFinite(Number(e.day)) || !Array.isArray(e.items)) return;
+        const k = keyOf(e), cur = byKey.get(k);
+        if(!cur){ byKey.set(k, e); sessionsAdded++; }
+        else if(better(cur, e) > 0){ byKey.set(k, e); sessionsAdded++; }
+      });
+      if(sessionsAdded){ const merged = [...byKey.values()].sort((a,b)=>(a.startedAt||0)-(b.startedAt||0)); writeSessionLog(merged); }
+    }
+    if(map.size===0 && attemptsAdded===0 && historyAdded===0 && sessionsAdded===0) throw new Error('No usable scores in that file'+(ignored?' ('+ignored+' entries were not name → positive number)':'')+'.');
     const raised = recordScores(map, 'import');
     if(raised>0) invalidateCaches();   // attempts are read live at render time (attemptsFor), no cache to drop
-    return { raised, unchanged: map.size - raised, ignored, attemptsAdded };
+    return { raised, unchanged: map.size - raised, ignored, attemptsAdded, historyAdded, sessionsAdded };
   }
 
   // ---- Excluded playlists ---------------------------------------------
@@ -12025,7 +12064,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       </div>
 
       <h2 class="pagehead" style="margin-top:36px;">Your scores</h2>
-      <p class="sub">Synced scores &mdash; and, since 2026-08-18, the runs behind them (the last 20 attempts per scenario, from Sync Scores Online, Sync Scores Locally and the auto-check) &mdash; live in <em>this browser's</em> storage for <em>this address</em> only; a copy opened from a different folder, port, or site starts empty, and clearing browser data wipes them. Export is your backup and your way to carry them across; import merges a backup in and never lowers a score.</p>
+      <p class="sub">Synced scores &mdash; and, since 2026-08-18, the runs behind them (the last 20 attempts per scenario, from Sync Scores Online, Sync Scores Locally and the auto-check) &mdash; live in <em>this browser's</em> storage for <em>this address</em> only; a copy opened from a different folder, port, or site starts empty, and clearing browser data wipes them. Since 2026-08-24 the export also carries your <em>score history</em> (every raise, with when) and your <em>session log</em> (every session the coach composed, with its revisit predictions and what you rated it) &mdash; the coach's own record of whether it works, and the one thing here that nothing can rebuild. Export is your backup and your way to carry them across; import merges a backup in and never lowers a score or drops a session.</p>
       <div class="meta" id="scores-summary"></div>
       ${isEmbedded()
         ? '<p class="hint" style="margin-top:12px;max-width:560px;">Export and import aren\'t available inside the embedded viewer (it can\'t hand out files or read your local ones). Open the tracker as a normal tab to use them.</p>'
@@ -12065,7 +12104,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       if(!f) return;
       try{
         const res = importScoresText(await f.text());
-        paintScoresSummary(res.raised+' raised, '+res.unchanged+' already as high or higher'+(res.attemptsAdded>0 ? ', '+res.attemptsAdded+' runs logged' : '')+', from '+f.name);
+        paintScoresSummary(res.raised+' raised, '+res.unchanged+' already as high or higher'+(res.attemptsAdded>0 ? ', '+res.attemptsAdded+' runs logged' : '')+(res.historyAdded>0 ? ', '+res.historyAdded+' history events' : '')+(res.sessionsAdded>0 ? ', '+res.sessionsAdded+' sessions' : '')+', from '+f.name);
         if(res.raised>0) updateTopnavSource();
       }catch(err){ scoresErr.textContent = err.message || String(err); }
     });
@@ -12367,7 +12406,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
 
   // Test hook — read-only handles on the rank engine for dev/rank-diff-test.js
   // and console poking. Nothing in the page reads this.
-  window.__miniEvxl = Object.freeze({ benchmarkStanding, entryItems, convertV1Entry, parsedItemsFor, defaultSelection, selectionFor, achievedIndex, preciseTier, subcategoryGroups, RANK_RULES, getBenchmarks: ()=>BENCHMARKS, scenarioCluster, clusterInfo, overlapIndex });
+  window.__miniEvxl = Object.freeze({ benchmarkStanding, entryItems, convertV1Entry, parsedItemsFor, defaultSelection, selectionFor, achievedIndex, preciseTier, subcategoryGroups, RANK_RULES, getBenchmarks: ()=>BENCHMARKS, scenarioCluster, clusterInfo, overlapIndex, exportScoresPayload, importScoresText });
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
   // copy hides the importer (its data is baked in), the template shows it.
