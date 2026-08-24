@@ -304,7 +304,10 @@
       const gain = (0.5*0.12 + 0.4*0 + 0.45*0.12)/(0.5+0.4+0.45);
       if(!near(f.gain, gain, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gain-0.02, 1e-9)) problems.push('forecast: gain = r-weighted mean over touched evidence (unmoved counts as 0), margin = nearPct, got '+J(f));
       if(!near(f.p, 1/(1+Math.exp(-(gain-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
-      if(!/first-try PB odds: good \(83%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry the odds (good, 83%) and the sync-dated flag: '+R.forecast.reason);
+      // the BUCKET and the uncalibrated note, never a percentage: p is an invented
+      // logistic and must not read as a measured probability (2026-08-24)
+      if(!/first-try PB odds: good \(uncalibrated/.test(R.forecast.reason) || /\(\d+%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry the bucket + the uncalibrated note, no percentage, and the sync-dated flag: '+R.forecast.reason);
+      if(!Number.isFinite(f.p)) problems.push('forecast: p must still be computed and logged for calibration, got '+J(f.p));
     }
     // Tr Old Smooth: neighbour Tr Recent Sphere +0.10 (r 0.6) and the smoothness|reactive tracking
     // bridge (r 0.62) over its two touched scenarios (+0.10 and 0 -> +0.05): gain 0.075, prior
