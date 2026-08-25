@@ -1049,6 +1049,62 @@ const MiniEvxlEngine = (function(){
     return { n: Math.max(Number(rec.n)||0, last.length), lastT, recentBest, nearness, daysSince: nowMs ? (nowMs-lastT)/86400000 : null };
   }
 
+  // ---- "Stuck", without the play-count drift (Review Ledger III S6, 2026-08-25) -----
+  // The old test was `>= 4 logged tries and best-of-last-5 < 85% of the PB`. The PB is the
+  // maximum of EVERY run ever recorded, and the best of five is the maximum of five, so
+  // the ratio falls as the run count grows purely by arithmetic: a scenario played 200
+  // times reads as stuck at a skill level where one played six times reads as fine. The
+  // flag was partly measuring how much you had played something -- and stuck items both
+  // sink out of the weakest slice AND are refused as routes, so the drift had teeth.
+  //
+  // The replacement is a rank statistic with a FIXED expectation. Split the record into
+  // the recent k runs and the older ones; ask what share of the older runs the best of the
+  // recent k beats. If the runs are exchangeable -- the null of "nothing has changed" --
+  // then for any single older run P(it is below the max of k) = k/(k+1), so the expected
+  // share is k/(k+1) whatever n is. Materially below that, by more than the binomial
+  // standard error over the older runs, is a recent window genuinely worse than the
+  // scenario's own history. No dependence on the run count at all.
+  //
+  // When the record holds no older runs to compare against (a short record, or one where
+  // every logged run is recent) the PB may still sit above everything logged -- evicted
+  // from the 20-run window, or seeded from an import that carried no runs. There the old
+  // nearness reading is the only signal available, so it is kept, flagged `weak`.
+  // One older run is enough to compute the share, because the BINOMIAL STANDARD ERROR over
+  // those runs is already the small-sample guard: at m = 1 it is 0.37, so the bar sits at
+  // 0.46 and a single older run can only swing the call when the recent best is genuinely
+  // below it. A hard floor of 3 was arbitrary caution on top of that, and it did real harm
+  // -- it pushed short records into the nearness fallback, which is the drift-prone reading
+  // this whole statistic exists to replace, so the SAME recent form read 'ok' on a long
+  // history and 'stuck' on a short one. The fixture asserts that invariant directly.
+  const STUCK_SHARE_MIN_OLDER = 1;
+  const STUCK_NEARNESS = 0.85;        // the legacy fallback, used only when there is no older window
+  function stuckness(rec, pb, k){
+    k = k || 5;
+    const last = rec && Array.isArray(rec.last) ? rec.last.map(x=>[Number(x[0]), Number(x[1])]).filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1])) : [];
+    const out = { runs: last.length, recentBest: null, older: 0, share: null, expected: k/(k+1), se: null, state: 'unknown', src: null };
+    if(!last.length) return out;
+    const sorted = last.slice().sort((a,b)=>b[0]-a[0]);          // newest first
+    const recent = sorted.slice(0, k).map(x=>x[1]);
+    const older = sorted.slice(k).map(x=>x[1]);
+    const recentBest = Math.max(...recent);
+    out.recentBest = recentBest; out.older = older.length;
+    if(older.length >= STUCK_SHARE_MIN_OLDER){
+      const beaten = older.filter(v=>v < recentBest).length;
+      const share = beaten/older.length;
+      const se = Math.sqrt(out.expected*(1-out.expected)/older.length);
+      out.share = share; out.se = se; out.src = 'rank';
+      out.state = (share < out.expected - se) ? 'stuck' : 'ok';
+      return out;
+    }
+    // no older window: fall back to the PB reading, and say it is the weaker one
+    const best = Number(pb) > 0 ? Number(pb) : Math.max(...sorted.map(x=>x[1]));
+    if(best > 0 && recentBest < best){
+      out.src = 'nearness';
+      out.state = (last.length >= 4 && recentBest/best < STUCK_NEARNESS) ? 'stuck-weak' : 'ok';
+    }
+    return out;
+  }
+
   // ---- Population percentiles (DESIGN_INTENT D8, stamped 2026-08-22) ------------
   // data/percentiles.json -> #population-data.percentiles: scenario -> anchors
   // [[fractionFromTop, score], ...] ascending fraction (= descending score), 7 per
@@ -1322,6 +1378,77 @@ const MiniEvxlEngine = (function(){
     else if(n >= PLATEAU_MIN_RUNS && out.gain!==null && out.gain<=0 && ((out.nearPct!==null && out.nearPct > PLATEAU_GAP) || (nearness!==null && nearness < 0.85))) out.state = 'plateaued';
     return out;
   }
+  // ---- When it stopped improving (Review Ledger III R6, 2026-08-25) ----------------
+  // `responsiveness` fits one straight line over the window and calls the result
+  // responsive / plateaued / unknown. That answers WHETHER, never WHEN -- and a scenario
+  // that climbed for a month and then flattened reads as mildly responsive on the pooled
+  // slope, which is the reading least useful to a coach: the revisit scheduler wants a
+  // date, and "you stopped improving here about three weeks ago" is a different
+  // instruction from "you have never improved here".
+  //
+  // A single-changepoint search: for every interior split, fit a mean to each side and
+  // take the split with the lowest total squared error, then keep it only if it beats the
+  // no-changepoint fit by more than a BIC-style penalty for the two extra parameters. So
+  // a genuinely straight series reports NO changepoint rather than the least-bad one --
+  // which is the failure mode of changepoint searches used without a penalty.
+  const CHANGEPOINT_MIN_RUNS = 8;     // fewer points than this and a two-segment fit is fitting noise
+  const CHANGEPOINT_MIN_SEG = 3;      // each side needs this many points to have a slope at all
+  // Least-squares line through (0..k-1, ys): returns {slope, sse}.
+  function lineFit(ys){
+    const k = ys.length;
+    if(k < 2) return { slope: 0, sse: 0 };
+    const mx = (k-1)/2, my = ys.reduce((a,b)=>a+b, 0)/k;
+    let sxy = 0, sxx = 0;
+    ys.forEach((y, i)=>{ sxy += (i-mx)*(y-my); sxx += (i-mx)*(i-mx); });
+    const slope = sxx>0 ? sxy/sxx : 0;
+    let sse = 0;
+    ys.forEach((y, i)=>{ const fit = my + slope*(i-mx); sse += (y-fit)*(y-fit); });
+    return { slope, sse };
+  }
+  // SEGMENTED LINEAR fit, not a change in mean. Fitting means to each side is the usual
+  // shortcut and it is wrong for a series with a trend: a steadily rising run history
+  // splits into "low half" and "high half" and reports a changepoint that is really just
+  // the slope. The fixture's monotone ramp is the case that proves it, and it caught this
+  // exact mistake on the first run.
+  function changePoint(series){
+    const ys = (Array.isArray(series) ? series : []).map(Number).filter(Number.isFinite);
+    const n = ys.length;
+    const out = { n, index: null, before: null, after: null, drop: null, penalty: null };
+    if(n < CHANGEPOINT_MIN_RUNS) return out;
+    const whole = lineFit(ys);
+    let best = null;
+    for(let i=CHANGEPOINT_MIN_SEG; i<=n-CHANGEPOINT_MIN_SEG; i++){
+      const left = lineFit(ys.slice(0, i)), right = lineFit(ys.slice(i));
+      const total = left.sse + right.sse;
+      if(best===null || total < best.total) best = { i, total, left, right };
+    }
+    if(!best) return out;
+    // BIC-style penalty for the two extra parameters, on the SSE scale. Without it a
+    // search always returns the least-bad split of pure noise; with it, a straight series
+    // reports null, which is the answer that makes the detector usable.
+    const variance = whole.sse/Math.max(n-2, 1);
+    const penalty = 2*Math.log(n)*variance;
+    out.penalty = penalty;
+    // A series one line already explains exactly has nothing to improve on -- and with a
+    // zero residual the penalty is zero too, so without this a float epsilon is enough to
+    // "find" a changepoint in a perfectly straight ramp. (It did.)
+    if(!(whole.sse > 1e-12)) return out;
+    if(whole.sse - best.total <= penalty) return out;
+    out.index = best.i;
+    out.before = best.left.slope;         // slope per run BEFORE the change
+    out.after = best.right.slope;         // ...and after it
+    out.drop = out.before - out.after;
+    return out;
+  }
+  // The plateau date: a changepoint where the SLOPE fell to at most zero. An upward
+  // change is a breakthrough and is deliberately not reported as a plateau.
+  function plateauSince(pcts, times){
+    const cp = changePoint(pcts);
+    if(cp.index===null || !(cp.drop > 0) || cp.after > 0) return null;
+    const ts = Array.isArray(times) ? Number(times[cp.index]) : NaN;
+    return { at: Number.isFinite(ts) ? ts : null, index: cp.index, before: cp.before, after: cp.after, drop: cp.drop, runs: cp.n };
+  }
+
   // How much of a picture the profile gives: coverage (played scenarios with a
   // curve / played), attempts density (share of played scenarios with at least
   // RESP_MIN_RUNS logged runs -- 0 when no row has an attempts record: missing
@@ -1648,7 +1775,11 @@ const MiniEvxlEngine = (function(){
   // The user's level: median rung of the played, rated scenarios (rounded); null with none.
   function sessionLevel(scenarios){ const rungs = (scenarios||[]).filter(sc=>sc.played && sc.rung>=0).map(sc=>sc.rung); return rungs.length ? Math.round(medianOf(rungs)) : null; }
   // Stuck: several recent tries (>= 4) whose best sits well under the PB (nearness < 0.85).
-  const isStuck = sc => !!(sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
+  // S6: the row's rank-based reading when the app supplied one (`sc.stuck`), else the
+  // pre-2026-08-25 rule, so a caller that never computed it behaves exactly as before.
+  const isStuck = sc => sc && sc.stuck && sc.stuck.state
+    ? (sc.stuck.state==='stuck' || sc.stuck.state==='stuck-weak')
+    : !!(sc && sc.att && sc.att.n>=4 && sc.att.nearness!==null && sc.att.nearness<0.85);
   const isPlateaued = sc => !!(sc.resp && sc.resp.state==='plateaued');
   // Can y serve as a route for the weak scenario w at this level? The session's
   // rule in one place: y rated, at or under level+1, not maxed, not stuck, not
@@ -1707,7 +1838,8 @@ const MiniEvxlEngine = (function(){
         if(memberNames.has(e.name)) return;                        // inside the block is not a route out of it
         if(o.exclude && o.exclude.has(e.name)) return;
         let a = acc.get(e.name); if(!a){ a = { sum: 0, sumSq: 0, n: 0 }; acc.set(e.name, a); }
-        a.sum += e.r; a.sumSq += e.r*e.r; a.n++;
+        const rs = shrinkR(e.r, e.n);
+        a.sum += rs; a.sumSq += rs*rs; a.n++;
       });
     });
     const out = [];
@@ -1755,7 +1887,7 @@ const MiniEvxlEngine = (function(){
     const out = [];
     entries.forEach(([id, members])=>{
       if(!members || (members.has ? members.has(name) : false)) return;
-      const rs = edges.filter(e=>members.has ? members.has(e.name) : false).map(e=>e.r);
+      const rs = edges.filter(e=>members.has ? members.has(e.name) : false).map(e=>shrinkR(e.r, e.n));
       if(rs.length < o.minPairs) return;
       const mean = rs.reduce((a,b)=>a+b, 0)/rs.length;
       const varr = rs.length>1 ? rs.reduce((a,b)=>a+(b-mean)*(b-mean), 0)/(rs.length-1) : 0;
@@ -2156,6 +2288,30 @@ const MiniEvxlEngine = (function(){
   // n >= minShared, r100 = round(r*100), ai < bi) and/or the legacy per-scenario
   // lists name -> [[neighbour, r, n], ...] (top k positive + up to kNeg negative
   // at |r| >= minR, the session's input).
+  // ---- One shrinkage rule (Review Ledger III R4 + S8, 2026-08-25) ------------------
+  // The project shrank in four places with four different rules: n/(n+50) inside the
+  // emergence freeze, log10(n)/4 for board confidence, a hard n >= 4 floor for label
+  // medians, and nothing at all on the shipped neighbour lists. The board one is retired
+  // (A1 replaced it with a measured offset); this is the single rule for correlations.
+  //
+  // S8, the reason it matters here: the shipped lists are the TOP EIGHT by raw r out of
+  // roughly six hundred candidates per scenario. Selecting the maximum of many noisy
+  // estimates is the classic winner's curse -- what you select is selected partly for its
+  // noise, so the r you display is biased upward, and worst exactly where n is smallest.
+  // The freeze already shrinks before clustering; the numbers on the page did not.
+  //
+  // shrinkR(r, n) = r * n/(n + SHRINK_LAMBDA), the freeze's own rule at its own lambda, so
+  // one estimator now runs through the whole product. At the shipped floor of n = 100 it
+  // costs a third of the value (0.60 -> 0.40); at n = 1,000 almost nothing (0.60 -> 0.57).
+  // That IS the point: a pair resting on a hundred shared players should not read like one
+  // resting on a thousand.
+  const SHRINK_LAMBDA = 50;
+  function shrinkR(r, n){
+    const rv = Number(r), nv = Number(n);
+    if(!Number.isFinite(rv)) return null;
+    if(!Number.isFinite(nv) || nv <= 0) return rv;
+    return rv * (nv/(nv + SHRINK_LAMBDA));
+  }
   // ±band on one Pearson r at n shared players: 1.96/sqrt(n-3), the width of a
   // 95% interval in Fisher-z space read straight off as r -- an approximation
   // (exact only near r = 0, narrower at large |r|), used as a claim-strength
@@ -2388,9 +2544,11 @@ const MiniEvxlEngine = (function(){
   function neighboursFromIndex(index, name, opts){
     const o = Object.assign({ k: 8, kNeg: 4, minR: 0.3, minN: index.minShared }, opts||{});
     const cmpName = (x, y) => x.name<y.name ? -1 : x.name>y.name ? 1 : 0;
-    const rows = index.edges(name).filter(e=>e.n>=o.minN && Math.abs(e.r)>=o.minR);
-    const pos = rows.filter(e=>e.r>0).sort((x,y)=> y.r-x.r || cmpName(x,y)).slice(0, o.k);
-    const neg = rows.filter(e=>e.r<=0).sort((x,y)=> x.r-y.r || cmpName(x,y)).slice(0, o.kNeg);
+    // S8: select on the SHRUNK value, not the raw one -- picking the top k by raw r is a
+    // max over noisy estimates and favours whichever pair got lucky at the smallest n.
+    const rows = index.edges(name).filter(e=>e.n>=o.minN && Math.abs(e.r)>=o.minR).map(e=>Object.assign({}, e, { rs: shrinkR(e.r, e.n) }));
+    const pos = rows.filter(e=>e.rs>0).sort((x,y)=> y.rs-x.rs || cmpName(x,y)).slice(0, o.k);
+    const neg = rows.filter(e=>e.rs<=0).sort((x,y)=> x.rs-y.rs || cmpName(x,y)).slice(0, o.kNeg);
     return pos.concat(neg).map(e=>[e.name, e.r, e.n]);
   }
   // groupsOf for the clusters block ({meta, scenario: {name: [id|null, loading,
@@ -2832,7 +2990,8 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
-    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS,
+    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer

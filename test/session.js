@@ -307,6 +307,49 @@
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
     R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
 
+    // ---- R6: WHEN it stopped improving (2026-08-25) ---------------------------------
+    // A changepoint search without a penalty always finds a changepoint -- it returns the
+    // least-bad split of pure noise. The penalty is what makes a null answer possible, so
+    // the straight and the flat series are the load-bearing cases here.
+    const rising  = [0.10, 0.14, 0.18, 0.22, 0.26, 0.30, 0.34, 0.38, 0.42, 0.46];
+    const flat    = [0.30, 0.31, 0.29, 0.30, 0.31, 0.29, 0.30, 0.31, 0.29, 0.30];
+    const plateau = [0.10, 0.16, 0.22, 0.28, 0.34, 0.40, 0.40, 0.41, 0.40, 0.39];   // climbs, then stops
+    const times   = plateau.map((u, i)=>FIXED_MS - (plateau.length-1-i)*DAY);
+    R.changepoint = {
+      rising:  E.changePoint(rising).index,
+      flat:    E.changePoint(flat).index,
+      plateau: E.changePoint(plateau).index,
+      short:   E.changePoint([0.1, 0.5, 0.1, 0.5]).index,
+      minRuns: E.CHANGEPOINT_MIN_RUNS,
+      since:   (()=>{ const ps = E.plateauSince(plateau, times); return ps ? { index: ps.index, days: Math.round((FIXED_MS - ps.at)/DAY), drop: Math.round(ps.drop*1000)/1000, after: Math.round(ps.after*1000)/1000 } : null; })(),
+      // an UPWARD change is a breakthrough, not a plateau, and must not be reported as one
+      breakthrough: E.plateauSince([0.10, 0.11, 0.09, 0.10, 0.11, 0.40, 0.41, 0.39, 0.42, 0.40], times)
+    };
+    // ---- S6: "stuck" without the play-count drift (2026-08-25) ----------------------
+    // The old test compared the best of the last five against the ALL-TIME PB, which is
+    // the maximum of every run ever -- so the ratio falls as the run count grows, purely
+    // by arithmetic. The replacement asks what share of the OLDER runs the recent best
+    // beats; under "nothing has changed" that expectation is k/(k+1) whatever n is.
+    const mkRec = scores => ({ n: scores.length, last: scores.map((v, i)=>[FIXED_MS - i*DAY, v]) });
+    // the same recent form (best of five = 82) against a long history and a short one:
+    // the old rule's reading drifts between them, the new one does not
+    const longHist  = mkRec([78, 80, 75, 82, 79].concat(Array.from({ length: 15 }, (u, i)=>70 + (i % 7))));
+    const shortHist = mkRec([78, 80, 75, 82, 79, 71, 73]);
+    R.stuck = {
+      // recent best 82 beats every older run in the 70-76 band -> not stuck, on both
+      longNotStuck:  E.stuckness(longHist, 100, 5),
+      shortNotStuck: E.stuckness(shortHist, 100, 5),
+      // recent window well under an older run history -> stuck, and by the SAME reading
+      // whether the history is long or short
+      longStuck:  E.stuckness(mkRec([60, 62, 58, 61, 59].concat(Array.from({ length: 15 }, (u, i)=>90 + (i % 5)))), 100, 5),
+      shortStuck: E.stuckness(mkRec([60, 62, 58, 61, 59, 90, 92, 91]), 100, 5),
+      // no older window at all: the PB reading is the only signal, and it says so
+      noOlder: E.stuckness(mkRec([60, 62, 58, 61]), 100, 5),
+      empty:   E.stuckness(null, 100, 5),
+      // the drift the fix removes: the OLD rule on the two histories above
+      oldRuleLong:  Math.max(82) / 100,
+      oldRuleShort: Math.max(82) / 100
+    };
     // ---- A4 SOFT MEMBERSHIP (2026-08-25) --------------------------------------------
     // A scenario that is not a stable member of any community can still be PLACED by
     // measurement: its mean r against each community's members, cross-playlist. But only
@@ -460,11 +503,36 @@
       if(!(B2.minPairs > 0)) problems.push('blockRoutes: the engine exports no ROUTE_MIN_PAIRS');
       else if(B2.members < B2.minPairs) problems.push('blockRoutes: the fixture must give the block at least ROUTE_MIN_PAIRS ('+B2.minPairs+') members or the candidate can never clear the floor, got '+B2.members);
       if(!B2.cand.length || B2.cand[0][0]!=='Cl Dynamic Large') problems.push('blockRoutes: the candidate with ten measured pairs into the block must be found, got '+J(B2.cand));
-      else if(!(B2.cand[0][1] > 0.37 && B2.cand[0][1] < 0.43) || B2.cand[0][2]!==B2.members || !B2.cand[0][3]) problems.push('blockRoutes: mean r ~0.40 over '+B2.members+' pairs, surviving its standard error, got '+J(B2.cand[0]));
+      else if(!(B2.cand[0][1] > 0.30 && B2.cand[0][1] < 0.36) || B2.cand[0][2]!==B2.members || !B2.cand[0][3]) problems.push('blockRoutes: mean SHRUNK r (~0.40 raw at n 200-290 -> ~0.33 after n/(n+50), S8) over '+B2.members+' pairs, surviving its standard error, got '+J(B2.cand[0]));
       if(B2.thin!==0) problems.push('blockRoutes: under ROUTE_MIN_PAIRS measured pairs there is no claim to make, got '+B2.thin+' candidates');
       const br = B2.routes.filter(r=>r.block);
       if(!br.length) problems.push('blockRoutes: no route carried a block -- the block-level path never fired: '+J(B2.routes));
       else if(br[0].name!=='Cl Dynamic Large') problems.push('blockRoutes: the block route must be the aggregated candidate, got '+J(br));
+    }
+    // R6 changepoint
+    const CP = R.changepoint;
+    if(!CP) problems.push('changepoint: missing');
+    else {
+      if(CP.flat!==null) problems.push('changepoint: a flat series must report NO changepoint -- without the penalty a search always finds one, got '+J(CP.flat));
+      if(CP.rising!==null) problems.push('changepoint: a steadily rising series is one line, not two, got '+J(CP.rising));
+      if(CP.plateau===null) problems.push('changepoint: a series that climbs then stops must be found');
+      else if(!(CP.plateau >= 4 && CP.plateau <= 7)) problems.push('changepoint: the split must land where the climb stops, got index '+CP.plateau);
+      if(CP.short!==null) problems.push('changepoint: under CHANGEPOINT_MIN_RUNS ('+CP.minRuns+') a two-segment fit is fitting noise, got '+J(CP.short));
+      if(!CP.since || !(CP.since.days > 0) || !(CP.since.drop > 0) || !(CP.since.after <= 0)) problems.push('changepoint: plateauSince must date the run the climb stopped at, got '+J(CP.since));
+      if(CP.breakthrough!==null) problems.push('changepoint: an UPWARD change is a breakthrough, not a plateau, got '+J(CP.breakthrough));
+    }
+    // S6 stuck
+    const SK = R.stuck;
+    if(!SK) problems.push('stuck: missing');
+    else {
+      if(SK.longNotStuck.state!=='ok' || SK.shortNotStuck.state!=='ok') problems.push('stuck: a recent best above the older runs is not stuck, got '+J([SK.longNotStuck.state, SK.shortNotStuck.state]));
+      if(SK.longStuck.state!=='stuck' || SK.shortStuck.state!=='stuck') problems.push('stuck: a recent window well under the older runs IS stuck, got '+J([SK.longStuck.state, SK.shortStuck.state]));
+      // the point of the change: the same recent form reads the same however much history sits behind it
+      if(SK.longNotStuck.state!==SK.shortNotStuck.state || SK.longStuck.state!==SK.shortStuck.state) problems.push('stuck: the reading must not depend on how many runs are on record -- that was the whole defect');
+      if(SK.longStuck.src!=='rank' || SK.longNotStuck.src!=='rank') problems.push('stuck: with an older window the reading is the rank statistic, got '+J([SK.longStuck.src, SK.longNotStuck.src]));
+      if(Math.abs(SK.longNotStuck.expected - 5/6) > 1e-12) problems.push('stuck: the expected share under exchangeability is k/(k+1), got '+SK.longNotStuck.expected);
+      if(SK.noOlder.src!=='nearness' || SK.noOlder.state!=='stuck-weak') problems.push('stuck: with no older runs the PB reading is the fallback and must be flagged weak, got '+J(SK.noOlder));
+      if(SK.empty.state!=='unknown') problems.push('stuck: no record is unknown, got '+J(SK.empty));
     }
     // A4 soft membership
     const AF = R.affinity;

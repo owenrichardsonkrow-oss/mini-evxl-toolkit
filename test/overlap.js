@@ -9,7 +9,13 @@
 // "bonus"), fourteen tested pairs with known r / n (two at n = 100 to exercise
 // the band, one negative, three near zero, one at the 0.30 floor, one weak
 // 0.20), plus the equivalent legacy per-scenario lists written by hand with the
-// stamper's rule (top 8 positive by r, up to 4 negative by |r|, |r| >= 0.3).
+// stamper's rule: top 8 positive then up to 4 negative, |r| >= 0.3, ORDERED BY THE
+// SHRUNK r since 2026-08-25 (review S8/R4) -- r * n/(n+50), because these lists are a
+// top-k out of hundreds of candidates and picking the maximum of many noisy estimates
+// favours whichever pair got lucky at the smallest n. The stored r is still the raw,
+// measured one; only the order changes. This fixture demonstrates it: Click Two at
+// r 0.60 on n = 100 shrinks to 0.400 while Click Three at r 0.58 on n = 1,800 shrinks
+// to 0.564, so the better-supported pair now leads.
 // Every expected number below is computed by hand in the comments -- the test
 // is the arithmetic, not a snapshot.
 //
@@ -44,10 +50,10 @@
   // The legacy per-scenario lists, the stamper's rule applied by hand (k 8, kNeg 4, |r| >= 0.3):
   // positives r desc (ties by name), then negatives r asc.
   const LEGACY = {
-    [C1]: [[C2, 0.60, 100], [C3, 0.58, 1800], [M1, 0.50, 600], [T1, -0.35, 300]],
+    [C1]: [[C3, 0.58, 1800], [M1, 0.50, 600], [C2, 0.60, 100], [T1, -0.35, 300]],   // shrunk: .564, .462, .400
     [C2]: [[C1, 0.60, 100], [C3, 0.45, 400], [X1, 0.30, 150]],
     [C3]: [[C1, 0.58, 1800], [C2, 0.45, 400]],
-    [T1]: [[T2, 0.55, 900], [T3, 0.50, 250], [M1, 0.48, 700], [C1, -0.35, 300]],
+    [T1]: [[T2, 0.55, 900], [M1, 0.48, 700], [T3, 0.50, 250], [C1, -0.35, 300]],   // shrunk: .521, .448, .417
     [T2]: [[T1, 0.55, 900], [T3, 0.40, 1200]],
     [T3]: [[T1, 0.50, 250], [T2, 0.40, 1200]],
     [M1]: [[C1, 0.50, 600], [T1, 0.48, 700]],
@@ -237,9 +243,9 @@
     eq('bridgeRows on nothing', E.bridgeRows(null), []);
     // neighboursFromIndex == the hand-written legacy lists, for every scenario
     NAMES.forEach(n=>eq('neighboursFromIndex('+n+') == legacy list', E.neighboursFromIndex(P, n), LEGACY[n]));
-    eq('neighboursFromIndex k 2', E.neighboursFromIndex(P, C1, { k: 2 }), [[C2, 0.60, 100], [C3, 0.58, 1800], [T1, -0.35, 300]]);
+    eq('neighboursFromIndex k 2', E.neighboursFromIndex(P, C1, { k: 2 }), [[C3, 0.58, 1800], [M1, 0.50, 600], [T1, -0.35, 300]]);   // the two best-SUPPORTED, not the two highest raw r
     eq('neighboursFromIndex kNeg 0', E.neighboursFromIndex(P, C1, { kNeg: 0 }).length, 3);
-    eq('neighboursFromIndex minR 0.5', E.neighboursFromIndex(P, C1, { minR: 0.5 }).map(r=>r[0]), [C2, C3, M1]);
+    eq('neighboursFromIndex minR 0.5', E.neighboursFromIndex(P, C1, { minR: 0.5 }).map(r=>r[0]), [C3, M1, C2]);   // the |r| floor still reads the RAW r; only the order is shrunk
     eq('neighboursFromIndex unknown', E.neighboursFromIndex(P, 'nope'), []);
     // clusterGroupsOf
     const g0 = E.clusterGroupsOf(CLUSTERS);
