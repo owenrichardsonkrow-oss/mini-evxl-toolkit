@@ -11,6 +11,11 @@
 #   overlap.js            -- the overlap page's engine layer (pair index, group
 #                            matrix, independent set, route/label helpers) on a
 #                            hand fixture, every number worked by hand
+#   percentile.js         -- percentileRank against test/pctrank-fixture.json, the
+#                            SAME cases the tracker's PowerShell Get-PctRank is
+#                            checked against: the page and the transfer map must
+#                            compute one percentile, and nothing checked that
+#                            across the two languages until 2026-08-25
 #   template-integrity.js -- shipped template.html invariants: every script block
 #                            parses, embedded engine matches src/engine.js,
 #                            SITE block generic, scores seed empty, population
@@ -36,6 +41,7 @@ jobs:
       - run: node test/facets.js
       - run: node test/session.js
       - run: node test/overlap.js
+      - run: node test/percentile.js
       # On `dev` the tracked template.html is the last RELEASED build by design
       # (dev builds write template.dev.html, gitignored), so "embedded engine ==
       # src/engine.js" is stale there until the next release. master and claude/*

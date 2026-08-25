@@ -106,6 +106,27 @@ eligible scenarios (32 are measured ties); the limit is coverage -- 82% of the c
 have no tested pair at n >= 100 at all -- and the fix is a lower shared-player floor on
 the map, not a different model.
 
+**The percentile rule changed, and gained a cross-language test (2026-08-25, Review
+Ledger IV).** `percentileRank` interpolates the share beaten on its **LOGIT** between
+anchors, not linearly, and extrapolates below the last anchor the same way instead of
+ramping linearly to zero. Measured by holding each shipped curve's own anchors out: mean
+absolute error 0.0291 -> 0.0154 between anchors, and **0.1037 -> 0.0180 below the last
+one, where the old ramp was one-signed (+0.1030 mean, too generous on 98.9% of curves)**.
+The SCORE axis is unchanged and must stay linear -- logging it is worse for interpolation,
+and eight shipped curves have negative lower anchors (pressure scenarios) where a log has
+no answer. Extrapolation falls back to the old ramp when the last anchor pair cannot
+define a slope, and a curve whose scores are not monotone now returns null rather than a
+plausible-looking 0.5.
+
+The rule exists in two languages and **`test/percentile.js` is the check that they agree**
+-- run against `test/pctrank-fixture.json`, which `build.ps1 -Template` copies from the
+tracker exactly as it copies `src/engine.js`, and which the tracker's
+`dev/emergence-selftest.ps1` checks its own `Get-PctRank` against. Seven suites in CI now;
+`deploy.yml` gates on all of them. Before this the only parity guard compared two
+POWERSHELL copies of the rule with each other, which cannot catch a JS/PS divergence --
+and the new check found one immediately (`Get-PctRank 0` answered a percentile where
+`percentileRank` answered null). A checkout without the fixture skips rather than fails.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
@@ -119,7 +140,7 @@ statistical findings (the percentile metric is confounded with leaderboard size;
 two-thirds of transfer routes are playlist-mates) are staged behind them and not
 started.
 
-**Tests (six since 2026-08-22):** `test/session.js` pins the session coach's
+**Tests (seven since 2026-08-25):** `test/session.js` pins the session coach's
 output (`composeSession`, `skillProfile`) on a synthetic fixture — no dataset;
 the snapshot lives in the test source as `EXPECTED`, regenerated with
 `node test/session.js --print` (or `/test/harness.html?session=1`) only for an

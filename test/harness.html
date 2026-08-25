@@ -2,7 +2,7 @@
 <meta charset="utf-8">
 <title>mini-evxl test harness</title>
 <!-- Browser runner for test/golden.js, test/difficulty.js, test/facets.js,
-     test/session.js AND test/overlap.js (for machines without Node): serve this
+     test/session.js, test/overlap.js AND test/percentile.js (for machines without Node): serve this
      folder (static-server.ps1) and open /test/harness.html -- or let the personal
      repo's dev/run-tests.ps1 read the <pre> below from headless Edge. The
      RESULT line keeps its original keys (golden results, problemCount) so
@@ -21,6 +21,7 @@
 <script src="/test/facets.js"></script>
 <script src="/test/session.js"></script>
 <script src="/test/overlap.js"></script>
+<script src="/test/percentile.js"></script>
 <pre id="out">RUNNING</pre>
 <script>
 (async () => {
@@ -31,6 +32,7 @@
     const F = window.__miniEvxlFacets;
     const S = window.__miniEvxlSession;
     const O = window.__miniEvxlOverlap;
+    const P = window.__percentileTest;
     const q = new URLSearchParams(location.search);
     // The session test needs no dataset: a synthetic fixture through composeSession.
     const sActual = S.compute(MiniEvxlEngine);
@@ -38,6 +40,14 @@
     const sProblems = S.compare(S.EXPECTED, sActual);
     // The overlap test needs no dataset either: a hand fixture through the pair-index layer.
     const oActual = O.compute(MiniEvxlEngine);
+    // Cross-language parity for the percentile rule. The fixture is generated in the tracker
+    // repo beside the curves it is drawn from and copied here by build.ps1 -Template, so the
+    // bytes the JS is checked against are the bytes the PowerShell is checked against.
+    let pResult = null;
+    try {
+      const pFix = await fetch('/test/pctrank-fixture.json');
+      if (pFix.ok) pResult = P.run(MiniEvxlEngine, await pFix.json());
+    } catch (e) { pResult = null; }
     const html = await (await fetch('/template.html')).text();
     const data = G.extractData(html);
     const actual = G.compute(MiniEvxlEngine, data);
@@ -60,7 +70,9 @@
         problems: fProblems.slice(0, 20), problemCount: fProblems.length },
       session: { items: sActual.main.items.length, level: sActual.main.level, playedRated: sActual.playedRated.main,
         problems: sProblems.slice(0, 20), problemCount: sProblems.length },
-      overlap: { checks: oActual.checks, problems: oActual.problems.slice(0, 30), problemCount: oActual.problems.length } });
+      overlap: { checks: oActual.checks, problems: oActual.problems.slice(0, 30), problemCount: oActual.problems.length },
+      percentile: pResult ? { checks: pResult.checks, maxDiff: pResult.maxDiff,
+        problems: pResult.problems.slice(0, 20), problemCount: pResult.problems.length } : { skipped: true } });
   } catch (e) {
     out.textContent = 'ERROR ' + String(e && e.stack || e);
   }

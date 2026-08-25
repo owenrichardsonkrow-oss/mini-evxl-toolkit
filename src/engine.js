@@ -1114,21 +1114,80 @@ const MiniEvxlEngine = (function(){
   // 1 - topFraction (0.99), below the last anchor it tapers toward 0 in proportion
   // to how far under the last score it is. Caveats on record: per-scenario boards
   // are self-selected populations, and a board's size is its confidence.
+  // ---- The share axis is a logit, not a line (Review Ledger IV MET-1/MET-2, 2026-08-25) ----
+  // The anchors are sampled ranks, so everything between and below them is a MODEL, and
+  // until this date both models were chosen rather than measured: the share beaten moved
+  // linearly with the score between anchors, and below the last anchor it ramped linearly
+  // to zero. Held each curve's own anchors out and asked the rules to predict them, over
+  // the 1,257 shipped curves that are well formed:
+  //
+  //   between anchors  linear score x LINEAR share  mean |err| 0.0291   <- was shipped
+  //                    linear score x LOGIT  share  mean |err| 0.0154
+  //                    log    score x logit  share  mean |err| 0.0193
+  //   below the last   linear ramp, share x s/sLast mean |err| 0.1037   <- was shipped
+  //                    linear score x LOGIT  share  mean |err| 0.0180
+  //
+  // Two readings. The SCORE axis was never the problem -- taking its log makes both cases
+  // worse -- so it stays exactly as it was. The SHARE axis was: a share of a population is
+  // a probability, and probabilities interpolate on their log-odds, not on a line.
+  //
+  // And the ramp was not merely imprecise, it was one-signed: +0.1030 mean signed error,
+  // too generous on 98.9% of curves. It read a score as about ten percentile points better
+  // than it is at the very first point below the last anchor, and worse further down --
+  // which is exactly where the coach's primary output lives (S9 measured 10 of the owner's
+  // weakest 20 inside it). On his played set the change moves 32 scenarios by more than 2
+  // percentile points and reorders his weakest ten; membership of the weakest 20 moves by
+  // one scenario.
+  //
+  // Below the last anchor is still EXTRAPOLATION -- the slope comes from the last anchor
+  // PAIR -- so it is clamped to the last anchor's own share and falls back to the old ramp
+  // whenever the anchors cannot define a slope (equal scores, or a share at 0 or 1). The
+  // eight shipped curves whose lower anchors are NEGATIVE (pressure scenarios: cA
+  // fuglaapressure, darkPressure, FB DynMicros, rA S4 SNAPCLICK HARD, Reflex Flick -
+  // Horizontal, Reflex Flick Horizontal Small, shimPressure Micro, VAL pressureWide) are
+  // the reason the score axis must not be logged: they are all played, and log(-3) has no
+  // answer. Keeping the score axis linear costs 0.003 of accuracy in the tail and buys
+  // every signed-score scenario for free.
+  //
+  // MIRROR: dev/population-lib.ps1's Get-PctRank must move with this or the page and the
+  // map compute different percentiles. dev/pctrank-fixture.json pins both against the same
+  // expected values (toolkit test/percentile.js on the JS side, dev/emergence-selftest.ps1
+  // on the PowerShell side) -- the cross-language check that did not exist before.
+  const logitShare = p => Math.log(p/(1-p));
+  const shareOfLogit = z => z < -700 ? 0 : (z > 700 ? 1 : 1/(1+Math.exp(-z)));
   function percentileRank(score, anchors){
     if(!(score>0) || !Array.isArray(anchors) || anchors.length<2) return null;
-    const pts = anchors;               // stamped sorted ascending by fraction
+    const pts = anchors;               // stamped sorted ascending by fraction (= descending score)
     const n = pts.length;
     if(score >= pts[0][1]) return 1 - pts[0][0];
-    const last = pts[n-1];
-    if(score <= last[1]){ const below = last[1]>0 ? (last[1]-score)/last[1] : 1; return Math.max(0, (1-last[0]) * (1-below)); }
+    const last = pts[n-1], lastShare = 1 - last[0];
+    if(score <= last[1]){
+      const prev = pts[n-2], prevShare = 1 - prev[0], span = prev[1] - last[1];
+      // the pair has to define a slope: distinct scores, and both shares strictly inside (0, 1)
+      if(!(span > 0) || !(lastShare > 0 && lastShare < prevShare && prevShare < 1)){
+        const below = last[1]>0 ? (last[1]-score)/last[1] : 1;
+        return Math.max(0, lastShare * (1-below));                       // the pre-2026-08-25 ramp
+      }
+      const t = (score - last[1])/span;                                  // negative below the anchor
+      return Math.min(lastShare, shareOfLogit(logitShare(lastShare) + t*(logitShare(prevShare) - logitShare(lastShare))));
+    }
     for(let i=0;i<n-1;i++){
       const hi = pts[i], lo = pts[i+1];
       if(score <= hi[1] && score >= lo[1]){
-        const span = hi[1]-lo[1]; const t = span>0 ? (score-lo[1])/span : 0.5;
-        return 1 - (lo[0] + t*(hi[0]-lo[0]));
+        const span = hi[1]-lo[1], loShare = 1 - lo[0], hiShare = 1 - hi[0];
+        if(!(span > 0) || !(loShare > 0 && loShare < hiShare && hiShare < 1)){
+          const t0 = span>0 ? (score-lo[1])/span : 0.5;
+          return 1 - (lo[0] + t0*(hi[0]-lo[0]));                         // ties or a degenerate share: as before
+        }
+        const t = (score-lo[1])/span;
+        return shareOfLogit(logitShare(loShare) + t*(logitShare(hiShare) - logitShare(loShare)));
       }
     }
-    return 0.5;
+    // No anchor interval brackets the score, which can only happen on a curve whose scores
+    // are not monotone. It used to answer 0.5 -- a plausible-looking number for "no answer",
+    // the exact failure shape the Number(null) trap taught this file to refuse. Null reads
+    // downstream as "no curve", which is what is true (Review Ledger IV COACH-6).
+    return null;
   }
   // ---- Board calibration (Review Ledger III S1/A1, 2026-08-25) -------------------
   // A percentile is a rank inside ONE scenario's leaderboard, and the leaderboards are
