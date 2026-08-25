@@ -306,8 +306,91 @@
     ];
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
     R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
+
+    // ---- A3 ROTATION (2026-08-25) --------------------------------------------------
+    // Owen: "I don't like that every session has the same structure." The day now has a
+    // PURPOSE, chosen by a trigger, and the trigger is asserted here rather than trusted.
+    const T0 = { confidence: { c: 0.5 }, collectReady: 0, weakBlockTouchedDays: 30, weakBlockSinks: false, blocksWithoutStanding: 0, recentTypes: [] };
+    const pick = over => E.chooseSessionType(Object.assign({}, T0, over)).type;
+    R.types = {
+      dflt:        pick({}),
+      collect:     pick({ collectReady: E.COLLECT_MIN }),
+      belowCollect:pick({ collectReady: E.COLLECT_MIN - 1 }),
+      thinConf:    pick({ confidence: { c: 0.2 } }),
+      noStanding:  pick({ blocksWithoutStanding: 1 }),
+      sinks:       pick({ weakBlockSinks: true }),
+      justWorked:  pick({ weakBlockTouchedDays: 3 }),
+      // never the same thing three days running -- but a ripe revisit does not get less ripe
+      flipFloor:   pick({ recentTypes: ['floor', 'floor'] }),
+      flipTransfer:pick({ weakBlockSinks: true, recentTypes: ['transfer', 'transfer'] }),
+      collectSticks: pick({ collectReady: 3, recentTypes: ['collect', 'collect'] }),
+      // Number(null) is 0 and 0 is finite, so the careless spelling reads "this block has
+      // never been touched" as "worked today" (always transfer) and "no confidence reading"
+      // as confidence 0 (always breadth). Both bit here on the day this was written.
+      neverTouched: pick({ weakBlockTouchedDays: null }),
+      noConfReading: pick({ confidence: { c: null } }),
+      noConfAtAll: pick({ confidence: null })
+    };
+    // ...and the composition follows the type: the template is that type's, the size holds,
+    // and turning the rotation OFF is the pre-A3 behaviour exactly (which the main snapshot pins).
+    const rotOpts = extra => Object.assign({}, OPTS, { blocks: BLOCKS, rotate: true }, extra||{});
+    const sRot = E.composeSession(fixture(E), rotOpts(), FILL);
+    const slotsOf = res => { const c = {}; res.items.forEach(it=>{ c[it.why] = (c[it.why]||0)+1; }); return c; };
+    R.rotation = { type: sRot.type, hasWhy: !!(sRot.typeWhy && sRot.typeWhy.length > 20), size: sRot.items.length,
+      template: sRot.template ? [sRot.template.weakest, sRot.template.route, sRot.template.fillout, sRot.template.quickwin, sRot.template.revisit] : null,
+      wanted: (()=>{ const t = E.SESSION_TYPES[sRot.type]; return t ? [t.weakest, t.route, t.fillout, t.quickwin, t.revisit] : null; })(),
+      offType: E.composeSession(fixture(E), Object.assign({}, OPTS, { blocks: BLOCKS }), FILL).type,
+      slots: slotsOf(sRot) };
+    // Sampling: the same rules, different scenarios day to day. Across twenty day-seeds the
+    // weakest slice must not be the same list every time (that was the complaint) while the
+    // scenarios it draws from stay the weak end of the pool.
+    const weakestNamesFor = (seed, extra) => E.composeSession(fixture(E), rotOpts(Object.assign({ seed }, extra||{})), FILL)
+      .items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>it.name);
+    const seeds = Array.from({ length: 20 }, (unused, i)=>i+1);
+    const lists = seeds.map(sd=>weakestNamesFor(sd));
+    R.sampling = {
+      distinctLists: new Set(lists.map(l=>JSON.stringify(l))).size,
+      // determinism: the same seed twice is the same list
+      stable: JSON.stringify(weakestNamesFor(7))===JSON.stringify(weakestNamesFor(7)),
+      // the pool it draws from: every drawn name must be a played, non-maxed row at/under level
+      allEligible: (()=>{ const ok = new Set(fixture(E).filter(sc=>sc.played && !sc.maxed && sc.rung<=4).map(sc=>sc.name)); return lists.every(l=>l.every(n=>ok.has(n))); })(),
+      // recency damping: naming the three most-drawn scenarios as recently served must
+      // reduce how often they come back
+      damped: (()=>{
+        const count = (ls, names) => ls.reduce((a, l)=>a + l.filter(n=>names.has(n)).length, 0);
+        const freq = new Map(); lists.forEach(l=>l.forEach(n=>freq.set(n, (freq.get(n)||0)+1)));
+        const top3 = new Set([...freq.entries()].sort((a,b)=> b[1]-a[1] || (a[0]<b[0]?-1:1)).slice(0, 3).map(e=>e[0]));
+        const before = count(lists, top3);
+        const after = count(seeds.map(sd=>weakestNamesFor(sd, { recentItems: top3 })), top3);
+        return { before, after };
+      })()
+    };
+    // ---- R2 SCORING (2026-08-25) ----------------------------------------------------
+    // The return-collect rate needs a null model or it cannot say anything. P(first-try PB)
+    // with nothing changed is 1/(n+1) on n prior attempts -- parameter-free.
+    R.baseline = { n0: E.collectBaseline(0), n1: E.collectBaseline(1), n9: E.collectBaseline(9), missing: E.collectBaseline(null) };
+    const logOf = rows => rows.map((r, i)=>({ day: 100+i, seedBump: 0, startedAt: i, rating: null, regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'S'+i, why: 'revisit', pbAt: 100, p: r.p, n: r.n }] }));
+    // four revisits: the coach says 0.9/0.9/0.1/0.1 and two of them land, on scenarios with
+    // 9 attempts each (baseline 0.1 throughout)
+    const mixed = E.sessionHistoryStats(logOf([{ p: 0.9, n: 9 }, { p: 0.9, n: 9 }, { p: 0.1, n: 9 }, { p: 0.1, n: 9 }]),
+      name => (name==='S0' || name==='S1') ? 200 : 50, FIXED_MS, null);
+    // a forecast that is exactly the null model can have no skill over it
+    const same = E.sessionHistoryStats(logOf([{ p: 0.1, n: 9 }, { p: 0.1, n: 9 }]), name => name==='S0' ? 200 : 50, FIXED_MS, null);
+    // a perfect forecast removes all of the null model's error
+    const perfect = E.sessionHistoryStats(logOf([{ p: 1, n: 9 }, { p: 0, n: 9 }]), name => name==='S0' ? 200 : 50, FIXED_MS, null);
+    R.scoring = {
+      mixed: { rate: mixed.overall.rate, baseline: mixed.overall.baseline, scoredOn: mixed.overall.scoredOn,
+        brier: mixed.overall.brier, brierBase: mixed.overall.brierBase, skill: mixed.overall.skill,
+        bins: mixed.overall.reliability.filter(b=>b.n>0).map(b=>[b.n, b.predicted, b.observed]) },
+      sameAsBase: same.overall.skill,
+      perfect: { brier: perfect.overall.brier, skill: perfect.overall.skill },
+      noN: E.sessionHistoryStats(logOf([{ p: 0.5 }]), () => 200, FIXED_MS, null).overall.scoredOn
+    };
+
     return R;
   }
+  const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
   function compareFeatures(R, problems){
     const near = (a, b, eps) => Math.abs(a-b) <= eps;
     const J = x => JSON.stringify(x);
@@ -341,6 +424,57 @@
       const br = B2.routes.filter(r=>r.block);
       if(!br.length) problems.push('blockRoutes: no route carried a block -- the block-level path never fired: '+J(B2.routes));
       else if(br[0].name!=='Cl Dynamic Large') problems.push('blockRoutes: the block route must be the aggregated candidate, got '+J(br));
+    }
+    // A3 rotation: each trigger, asserted rather than trusted
+    const TY = R.types;
+    if(!TY) problems.push('types: missing');
+    else {
+      if(TY.dflt!=='floor') problems.push('types: with nothing triggered the day is a floor session, got '+TY.dflt);
+      if(TY.collect!=='collect') problems.push('types: COLLECT_MIN ripe revisits must make it a collect day, got '+TY.collect);
+      if(TY.belowCollect==='collect') problems.push('types: one under COLLECT_MIN must not be a collect day, got '+TY.belowCollect);
+      if(TY.thinConf!=='breadth') problems.push('types: confidence under CONF_LOW must fill the picture, got '+TY.thinConf);
+      if(TY.noStanding!=='breadth') problems.push('types: a block with no standing must fill the picture, got '+TY.noStanding);
+      if(TY.sinks!=='transfer') problems.push('types: a weakest block of sinks must go through the map, got '+TY.sinks);
+      if(TY.justWorked!=='transfer') problems.push('types: a weakest block worked days ago must go through the map, got '+TY.justWorked);
+      if(TY.flipFloor!=='transfer' || TY.flipTransfer!=='floor') problems.push('types: two of the same in a row must alternate, got floor->'+TY.flipFloor+', transfer->'+TY.flipTransfer);
+      if(TY.collectSticks!=='collect') problems.push('types: a ripe revisit does not get less ripe -- collect must not be flipped away, got '+TY.collectSticks);
+      if(TY.neverTouched!=='floor') problems.push('types: a block never touched is UNKNOWN, not "worked today" -- Number(null) is 0, got '+TY.neverTouched);
+      if(TY.noConfReading!=='floor' || TY.noConfAtAll!=='floor') problems.push('types: a missing confidence reading is not confidence 0, got '+TY.noConfReading+' / '+TY.noConfAtAll);
+    }
+    const RO = R.rotation;
+    if(!RO) problems.push('rotation: missing');
+    else {
+      if(!RO.type || !E_SESSION_TYPES_HAS(RO.type)) problems.push('rotation: composeSession with rotate must name a type, got '+J(RO.type));
+      if(!RO.hasWhy) problems.push('rotation: the type must come with a reason the page can print, got '+J(RO.hasWhy));
+      if(RO.size!==10) problems.push('rotation: the session is still ten items, got '+RO.size);
+      if(J(RO.template)!==J(RO.wanted)) problems.push('rotation: the template must be the slots of that type, got '+J(RO.template)+' wanted '+J(RO.wanted));
+      if(RO.offType!==null) problems.push('rotation: WITHOUT opts.rotate there is no type and the pre-A3 behaviour stands, got '+J(RO.offType));
+    }
+    const SA = R.sampling;
+    if(!SA) problems.push('sampling: missing');
+    else {
+      if(!(SA.distinctLists > 1)) problems.push('sampling: twenty day-seeds produced ONE weakest list -- the sameness complaint is unaddressed');
+      if(!SA.stable) problems.push('sampling: the same seed must give the same list (a session must not reshuffle under you)');
+      if(!SA.allEligible) problems.push('sampling: a drawn scenario was outside the eligible pool (played, not maxed, at or under level)');
+      if(!(SA.damped.after < SA.damped.before)) problems.push('sampling: naming the most-drawn scenarios as recently served did not reduce how often they come back ('+SA.damped.before+' -> '+SA.damped.after+')');
+    }
+    // R2 scoring: the null model and the proper scoring rule
+    const BL = R.baseline;
+    if(!BL || BL.n0!==1 || !near(BL.n1, 0.5, 1e-12) || !near(BL.n9, 0.1, 1e-12) || BL.missing!==null) problems.push('baseline: 1/(n+1) -- 0 attempts is certainty, 9 attempts is 0.1, an unknown count is null, got '+J(BL));
+    const SC = R.scoring;
+    if(!SC) problems.push('scoring: missing');
+    else {
+      const m = SC.mixed;
+      if(!near(m.rate, 0.5, 1e-12) || !near(m.baseline, 0.1, 1e-12) || m.scoredOn!==4) problems.push('scoring: two of four collected against a 1/(9+1) baseline, got '+J(m));
+      // the coach said 0.9 twice (both landed) and 0.1 twice (neither did): squared error 0.01 each
+      if(!near(m.brier, 0.01, 1e-12)) problems.push('scoring: Brier over [.9 hit, .9 hit, .1 miss, .1 miss] is 0.01, got '+J(m.brier));
+      // the null said 0.1 for all four: (0.9^2 + 0.9^2 + 0.1^2 + 0.1^2)/4
+      if(!near(m.brierBase, (0.81+0.81+0.01+0.01)/4, 1e-12)) problems.push('scoring: the null model Brier is wrong, got '+J(m.brierBase));
+      if(!near(m.skill, 1 - m.brier/m.brierBase, 1e-12) || !(m.skill > 0.9)) problems.push('scoring: a forecast that called all four must score near 1, got '+J(m.skill));
+      if(!m.bins.length) problems.push('scoring: the reliability plot has no populated bins, got '+J(m.bins));
+      if(!near(SC.sameAsBase, 0, 1e-12)) problems.push('scoring: a forecast identical to the null model has skill exactly 0, got '+J(SC.sameAsBase));
+      if(!near(SC.perfect.brier, 0, 1e-12) || !near(SC.perfect.skill, 1, 1e-12)) problems.push('scoring: a perfect forecast is Brier 0, skill 1, got '+J(SC.perfect));
+      if(SC.noN!==0) problems.push('scoring: a revisit with no attempt count cannot be scored (no baseline), got '+SC.noN);
     }
     // revisit forecast
     const f = R.forecast && R.forecast.forecast;

@@ -369,6 +369,27 @@ about skill structure.
   pairs that already passed |r| >= 0.3, so it was a truncated tail tested against the
   threshold that produced it. The Overlap page still shows it, labelled as such.
 
+- **The session got a purpose, and the KPI got a null model (2026-08-25, A3 + R2).**
+  The first real feedback from using the coach was that every session had the same shape:
+  weakest group, one never-played, one not-played-in-a-year. That is what a fixed slice
+  template does when the list it draws from moves slowly. The composition now follows the
+  mechanism Owen described instead — work the weak block, work what feeds it, come back
+  and collect — as four session types with stated triggers, never the same one three days
+  running, with the weakest slice sampled by weakness rather than taken off the top (D1
+  says floor-*biased*, explicitly not maximin, so sampling is what the objective actually
+  asked for; taking the argmin every day was the stricter reading it warned against).
+  **Built in the same step as the scoring, deliberately:** a rotation makes the coach
+  harder to evaluate, because a floor day and a transfer day are different treatments and
+  the return-collect rate mixes them. So the rate finally got something to be measured
+  against. P(first-try PB) with nothing changed is **1/(n+1)** on n prior attempts —
+  parameter-free — and the history view now reports Brier scores against that null model,
+  a skill score (negative = the forecast weights are actively wrong, which is the reading
+  D11 always wanted to be able to reach) and a predicted-vs-observed reliability plot.
+  Gated at 20 resolved revisits, because a skill score is unbounded below and reads as a
+  catastrophe on a handful. The baseline is deliberately generous to itself — attempts are
+  not exchangeable and the attempt count under-counts, both of which raise it — so beating
+  it means something.
+
 ## Staging
 
 Remote-session-doable now: this document; the taxonomy proposal and
@@ -452,3 +473,15 @@ run-history import; both transfer analyses.
   into the number. Where no offsets are stamped the old shrinkage still applies, so
   an older build is unchanged — the same "identity without its evidence" rule the
   v0.4 layers follow.
+- **D18** — the session composes by TYPE, not by one template. Four purposes with stated
+  triggers (collect / breadth / transfer / floor), priority in that order, and never the
+  same alternating type three days running. Within the weakest slice the choice is a
+  weighted draw rather than the argmin: D1 ratified floor-*biased* and explicitly not
+  strict maximin, so sampling is the objective read correctly, and it is what stops every
+  session looking identical. Opt-in (`opts.rotate`), so every earlier path is unchanged.
+- **D19** — the return-collect rate is always reported against the **1/(n+1)** null model
+  (the chance of a first-try PB if nothing had changed), scored with Brier and a skill
+  score, and is NOT scored at all under 20 resolved revisits. A KPI that cannot come out
+  negative is not a report card; a KPI reported on five samples is noise. Both caveats on
+  the baseline — attempts are not exchangeable, and the attempt count under-counts — push
+  it upward, against the coach, and are printed rather than buried.

@@ -1176,6 +1176,70 @@ const MiniEvxlEngine = (function(){
   // band additionally needs run evidence (profileConfidence caps c at CONF_HIGH
   // while the attempts store is empty).
   const CONF_LOW = 0.30, CONF_HIGH = 0.65;
+  // ---- Session TYPES (A3, 2026-08-25) ------------------------------------------------
+  // Owen, on using the coach: "I don't like that every session has the same structure.
+  // First I work on my weakest percentile group, 1 scenario spot has me play something
+  // I've never played, 1 has me play something I haven't played in 1+ years." That is an
+  // accurate description of a fixed 5/2/1/1/1 template filled from the head of a list
+  // that moves very slowly -- two slots in ten are furniture.
+  //
+  // He also gave the mechanism it should follow instead: work the weak block; work the
+  // skills indirectly linked to it; come back and collect. That is a CYCLE, and a cycle
+  // varies by construction rather than by shuffling. Each day is mostly one purpose:
+  //   floor     direct work in the weakest block                       (the default)
+  //   transfer  the indirect path -- routes into the weak block        (when direct work
+  //             is already happening there, or its weakest are sinks)
+  //   collect   revisits the forecast says are ripe                    (when enough are)
+  //   breadth   unplayed gaps and placement, to fill the picture       (when evidence is thin)
+  // Every template sums to 10 and none is a single purpose: D1's "floor-BIASED, never
+  // 100% to the argmin" holds inside each one.
+  const SESSION_TYPES = {
+    floor:    { weakest: 6, route: 1, fillout: 0, quickwin: 1, revisit: 2 },
+    transfer: { weakest: 3, route: 4, fillout: 0, quickwin: 1, revisit: 2 },
+    collect:  { weakest: 3, route: 1, fillout: 0, quickwin: 1, revisit: 5 },
+    breadth:  { weakest: 3, route: 1, fillout: 4, quickwin: 1, revisit: 1 }
+  };
+  const SAMPLE_TEMP = 0.05;           // A3: weakness-weighted sampling temperature, in percentile points
+  const SAMPLE_RECENT_DAMP = 0.25;    // ...and how hard a scenario served in the last few sessions is damped
+  const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
+  const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
+  const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
+  // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
+  // state: { confidence: {c}|null, collectReady: int, weakBlockTouchedDays: number|null,
+  //          weakBlockSinks: bool, blocksWithoutStanding: int, recentTypes: [newest first] }
+  function chooseSessionType(state){
+    const st = state || {};
+    const recent = Array.isArray(st.recentTypes) ? st.recentTypes : [];
+    // Explicit null checks, not Number.isFinite guards: Number(null) is 0 and 0 is finite,
+    // so the short spelling reads "no confidence reading" as confidence 0 (-> always breadth)
+    // and "this block has never been touched" as touched TODAY (-> always transfer).
+    const confRaw = st.confidence ? st.confidence.c : null;
+    const conf = (confRaw===null || confRaw===undefined || !Number.isFinite(Number(confRaw))) ? null : Number(confRaw);
+    const ready = Number(st.collectReady) || 0;
+    const touchedRaw = st.weakBlockTouchedDays;
+    const touched = (touchedRaw===null || touchedRaw===undefined || !Number.isFinite(Number(touchedRaw))) ? null : Number(touchedRaw);
+    let type = 'floor', why = 'nothing is ripe to collect and the weakest block has been left alone, so the direct work is the move.';
+    if(ready >= COLLECT_MIN){
+      type = 'collect'; why = ready+' revisits are ripe — the scenarios that move with them have gained more than your own gap to their PBs, so today is for going back and banking them.';
+    } else if((conf!==null && conf < CONF_LOW) || Number(st.blocksWithoutStanding) > 0){
+      type = 'breadth'; why = conf!==null && conf < CONF_LOW
+        ? 'the profile is still thin (confidence '+conf.toFixed(2)+') — filling the picture buys more than optimising against numbers this uncertain.'
+        : 'a block has no standing yet — a skill with no evidence cannot be ranked against the others.';
+    } else if(st.weakBlockSinks){
+      type = 'transfer'; why = 'the weakest scenarios in your weakest block are stuck or plateaued — more volume there is not the move, so today goes through the map instead.';
+    } else if(touched!==null && touched <= TRANSFER_RECENT_DAYS){
+      type = 'transfer'; why = 'you worked your weakest block '+(touched<=1 ? 'today' : Math.round(touched)+' days ago')+' — the indirect path adds more than another direct pass.';
+    }
+    // ...and never the same thing three days running: if the last two were this type and it
+    // is one of the two that alternate by design, take the other. Collect and breadth are
+    // trigger-driven and are not suppressed -- a ripe revisit does not get less ripe.
+    if((type==='floor' || type==='transfer') && recent.length>=2 && recent[0]===type && recent[1]===type){
+      const flipped = type==='floor' ? 'transfer' : 'floor';
+      why = 'your last two sessions were '+type+' sessions; alternating keeps the '+(flipped==='transfer' ? 'indirect path' : 'direct work')+' in the rotation.';
+      type = flipped;
+    }
+    return { type, why };
+  }
   const CONF_HISTORY_DAYS = 90;                      // days of score history that count as a full picture
   const RESP_MIN_RUNS = 4;                           // fewer runs in the window -> "unknown" (v0.3 treatment)
   const RESP_WINDOW_DAYS = 60;                       // runs older than this say nothing about responsiveness now
@@ -1321,7 +1385,8 @@ const MiniEvxlEngine = (function(){
     const T = sc.att.lastT;
     const hasP = row => row && row.played && row.pct!==null && row.pct!==undefined;
     const touched = row => !!((row.att && row.att.lastT > T) || (row.raises||[]).some(r=>Number(r[0]) > T));
-    const historySince = helpers && Number.isFinite(Number(helpers.historySince)) ? Number(helpers.historySince) : null;
+    const hsRaw = helpers ? helpers.historySince : null;
+    const historySince = (hsRaw===null || hsRaw===undefined || !Number.isFinite(Number(hsRaw))) ? null : Number(hsRaw);
     // PB as of T in percentile space; null = not evidence (unplayed at T, or T older than the history window)
     const pctAt = row => {
       const first = (row.raises||[]).find(r=>Number(r[0]) > T);
@@ -1372,6 +1437,41 @@ const MiniEvxlEngine = (function(){
   // resolved yet, so it is listed but left out of the return-collect totals).
   // Weeks start on Monday (day numbers count from Thursday 1970-01-01) and run
   // contiguously from the first logged week to the week of nowMs, oldest first.
+  // ---- The return-collect KPI needs something to be measured AGAINST (R2, 2026-08-25).
+  // D11 makes the return-collect rate the tool's own report card, and the history view
+  // showed it beside the forecast's mean. But a raw rate cannot say whether the coach
+  // works, because there was no null model. If you go back to a scenario you have
+  // attempted n times and NOTHING has changed, the chance the next run is your best is
+  //     P(first-try PB) = 1/(n+1)
+  // under exchangeability -- the next attempt is equally likely to be any rank among the
+  // n+1. Parameter-free, no fitting. Collecting 20% of revisits is a triumph against a
+  // baseline of 8% and a failure against 33%.
+  //
+  // Two honest caveats, both on record. Attempts are not exchangeable -- you improve,
+  // which pushes the true null above 1/(n+1). And `n` is what the attempts store has
+  // SEEN (KovaaK's returns the last 10 runs per scenario), so it under-counts, which
+  // makes 1/(n+1) too large. Both push the baseline UP, i.e. against the coach: if it
+  // beats this bar it beats it with room to spare.
+  function collectBaseline(n){ if(n===null || n===undefined) return null; const v = Number(n); return Number.isFinite(v) && v >= 0 ? 1/(v+1) : null; }   // Number(null) is 0, and 1/(0+1) would report CERTAINTY for a revisit with no attempt count -- the third time this trap has bitten today
+  // Brier score over predictions and 0/1 outcomes (lower is better); null when empty.
+  function brierScore(rows, get){ const ps = rows.map(get).filter(x=>Number.isFinite(x[0])); if(!ps.length) return null; return ps.reduce((a,x)=>a+(x[0]-x[1])*(x[0]-x[1]), 0)/ps.length; }
+  // Reliability bins: predicted vs observed in fixed slices, the shape a calibration plot draws.
+  // A Brier skill score is unbounded below, so on a handful of revisits it produces
+  // numbers like -2129% that read as a damning verdict and are pure sampling noise.
+  // Below this many RESOLVED revisits the page reports the count and refuses the verdict.
+  const SCORE_MIN_REVISITS = 20;
+  const RELIABILITY_BINS = [0, 0.2, 0.4, 0.6, 0.8, 1.0001];
+  function reliabilityBins(rows){
+    const out = [];
+    for(let i=0;i<RELIABILITY_BINS.length-1;i++){
+      const lo = RELIABILITY_BINS[i], hi = RELIABILITY_BINS[i+1];
+      const inBin = rows.filter(r=>Number.isFinite(r.p) && r.p>=lo && r.p<hi);
+      out.push({ lo, hi: Math.min(hi, 1), n: inBin.length,
+        predicted: inBin.length ? inBin.reduce((a,r)=>a+r.p, 0)/inBin.length : null,
+        observed: inBin.length ? inBin.filter(r=>r.hit).length/inBin.length : null });
+    }
+    return out;
+  }
   function sessionHistoryStats(log, pbNow, nowMs, liveKey){
     const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
     const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
@@ -1383,10 +1483,17 @@ const MiniEvxlEngine = (function(){
       // toward the return-collect rate (review 2026-08-22 late): only sessions with
       // at least one item done contribute revisits.
       const revs = done > 0 ? items.filter(it=>it.why==='revisit') : [];
-      const collected = revs.filter(it=>(Number(pb(it.name))||0) > (Number(it.pbAt)||0)).length;
+      // one row per scheduled revisit: what the coach predicted, what the null model
+      // predicted from the attempts behind it, and whether the PB actually fell
+      const rows = revs.map(it=>({ name: it.name, p: Number(it.p), base: collectBaseline(it.n),
+        hit: (Number(pb(it.name))||0) > (Number(it.pbAt)||0) ? 1 : 0 }));
+      const collected = rows.filter(r=>r.hit).length;
       const ps = revs.map(it=>Number(it.p)).filter(v=>Number.isFinite(v));
+      const bases = rows.map(r=>r.base).filter(Number.isFinite);
       return { day: e.day, seedBump: e.seedBump||0, startedAt: e.startedAt, rating: e.rating||null, regime: e.regime||null, done, size: Number(e.size)||items.length,
-        revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
+        revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null,
+        baseline: bases.length ? bases.reduce((a,b)=>a+b, 0)/bases.length : null, rows,
+        type: e.type||null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
     }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
     const weekOf = day => day - (((day % 7) + 7 + 3) % 7);
     const nowDay = Math.floor((nowMs - new Date(nowMs).getTimezoneOffset()*60000)/DAY_MS);
@@ -1399,15 +1506,31 @@ const MiniEvxlEngine = (function(){
         const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
         const preds = closed.filter(s=>s.predicted!==null);
         const ratings = { easy: 0, good: 0, hard: 0 }; ss.forEach(s=>{ if(s.rating && ratings[s.rating]!==undefined) ratings[s.rating]++; });
+        const bws = closed.filter(s=>s.baseline!==null);
         weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0), revisits, collected,
-          rate: revisits ? collected/revisits : null, predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null, ratings });
+          rate: revisits ? collected/revisits : null, predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
+          baseline: bws.length ? bws.reduce((a,s)=>a+s.baseline*s.revisits, 0)/bws.reduce((a,s)=>a+s.revisits, 0) : null, ratings });
       }
     }
     const closed = sessions.filter(s=>!s.live);
     const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
     const preds = closed.filter(s=>s.predicted!==null);
+    // Every resolved revisit, pooled: the coach's p, the null model's 1/(n+1), the outcome.
+    const allRows = [];
+    closed.forEach(s=>s.rows.forEach(r=>allRows.push(r)));
+    const scored = allRows.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
+    const brier = brierScore(scored, r=>[r.p, r.hit]);
+    const brierBase = brierScore(scored, r=>[r.base, r.hit]);
+    // Skill score: how much of the null model's error the coach removes. 0 = no better
+    // than "nothing changed since you were last here"; 1 = perfect; NEGATIVE = worse than
+    // the null, which is the reading that would say the forecast weights are wrong.
+    const skill = (brier!==null && brierBase!==null && brierBase>0) ? 1 - brier/brierBase : null;
+    const baseRows = allRows.filter(r=>Number.isFinite(r.base));
     const overall = { sessions: sessions.length, revisits, collected, rate: revisits ? collected/revisits : null,
-      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null };
+      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
+      baseline: baseRows.length ? baseRows.reduce((a,r)=>a+r.base, 0)/baseRows.length : null,
+      scoredOn: scored.length, brier, brierBase, skill, scorable: scored.length >= SCORE_MIN_REVISITS, scoreMin: SCORE_MIN_REVISITS,
+      reliability: scored.length ? reliabilityBins(scored) : [] };
     return { sessions, weeks, overall };
   }
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
@@ -1630,6 +1753,28 @@ const MiniEvxlEngine = (function(){
     const calibrated = !!scenarios.calibrated;
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
+    // Sampling instead of argmin (A3). D1 ratifies floor-BIASED, explicitly not strict
+    // maximin, and taking the head of a slow-moving list every day is what made every
+    // session look the same. This draws without replacement with weight exp(-(key - best)
+    // / SAMPLE_TEMP): a scenario a temperature-width weaker is e times less likely, so the
+    // bias is unchanged in expectation while the particular scenarios move day to day.
+    // Anything served in the last few sessions is damped, so repetition has to be earned.
+    // Deterministic: the same seeded rnd as everything else, so a day's list is stable.
+    const weightedOrder = (list, keyFn, damp) => {
+      const pool = list.slice();
+      if(pool.length < 2) return pool;
+      const keys = new Map(pool.map(sc=>[sc.name, keyFn(sc)]));
+      const best = Math.min(...keys.values());
+      const out = [];
+      while(pool.length){
+        let total = 0;
+        const ws = pool.map(sc=>{ const w = Math.exp(-(keys.get(sc.name) - best)/SAMPLE_TEMP) * (damp && damp(sc) ? SAMPLE_RECENT_DAMP : 1); total += w; return w; });
+        let pick = pool.length - 1, roll = rnd()*total;
+        for(let i=0;i<ws.length;i++){ roll -= ws[i]; if(roll <= 0){ pick = i; break; } }
+        out.push(pool[pick]); pool.splice(pick, 1);
+      }
+      return out;
+    };
     const byName = new Map(scenarios.map(sc=>[sc.name, sc]));
     const rated = scenarios.filter(sc=>sc.rung>=0);
     const played = rated.filter(sc=>sc.played);
@@ -1661,7 +1806,13 @@ const MiniEvxlEngine = (function(){
     const plateaued = isPlateaued;
     // game-first stable partition for the shuffled pools (identity at weight 0)
     const gameFirst = list => gameW>0 ? list.filter(sc=>gameShare(sc)>0).concat(list.filter(sc=>gameShare(sc)<=0)) : list;
-    const template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
+    // The ROTATION (A3) is opt-in: opts.rotate. Without it every path below is exactly
+    // what it was, which is what keeps the v0.4/v0.5 snapshot byte-identical -- the type
+    // machinery is a layer, like every other one here, and it is the identity when off.
+    const rotate = !!opts.rotate;
+    const recentItems = opts.recentItems instanceof Set ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
+    let sessionType = null, sessionTypeWhy = '';
+    let template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
     const gameNote = sc => { const s = gameShare(sc); return s<=0 ? '' : (isHit(sc) ? ' · game-relevant (cs/val or tac-fps)' : ' · co-varies with game-relevant scenarios (r '+s.toFixed(2)+')'); };
     // ---- v0.5: the overlap map steers the session (DESIGN_INTENT: the map exists
     // to prescribe practice). opts.blocks = { of(name) -> block id | null,
@@ -1725,15 +1876,6 @@ const MiniEvxlEngine = (function(){
     const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
       .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
-    const perLabel = new Map(), perPl = new Set();
-    const spread = [];
-    for(const sc of weakPool){
-      const l = primary(sc);
-      if(l && (perLabel.get(l)||0) >= 2) continue;
-      if((sc.plKeys||[]).some(k=>perPl.has(k))) continue;
-      spread.push(sc); if(l) perLabel.set(l, (perLabel.get(l)||0)+1); (sc.plKeys||[]).forEach(k=>perPl.add(k));
-      if(spread.length >= template.weakest*2) break;
-    }
     const respNote = sc => { const r = sc.resp; if(!r) return '';
       if(r.state==='responsive' && r.gain>0) return ' — responsive: +'+(r.gain*100).toFixed(1)+' pts/run over '+r.n+' runs'+(r.src==='history' ? ' (from PB raises)' : '');
       if(r.state==='plateaued') return ' — plateaued: '+r.n+' runs, no gain, best recent '+(r.nearPct!==null ? Math.round(r.nearPct*100)+' pts' : 'well')+' under PB';
@@ -1749,7 +1891,46 @@ const MiniEvxlEngine = (function(){
       played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
       blockStats = blockList.map(b=>{ const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 }; return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median: e.pcts.length ? medianOf(e.pcts) : null, lastT: e.lastT||null }; });
     }
+    // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
+    if(rotate){
+      const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);
+      const weakBlock = ranked0.length ? ranked0[0] : null;
+      const weakBlockMembers = weakBlock ? weakPool.filter(sc=>blockOf(sc)===weakBlock.id) : [];
+      // ripe = a revisit candidate whose co-varying scenarios moved MORE than its own gap
+      // to the PB (forecast odds > 0). That is the measured half of the forecast; the
+      // logistic that turns it into a percentage is not consulted for this.
+      const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && sc.rung<=level);
+      const helpers0 = { historySince: opts.historySince, pairsIndex: opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null };
+      let collectReady = 0;
+      revPool.forEach(sc=>{ const f = revisitForecast(sc, byName, helpers0); if(f && f.odds > 0) collectReady++; });
+      const decision = chooseSessionType({
+        confidence: opts.confidence || null,
+        collectReady,
+        weakBlockTouchedDays: weakBlock && weakBlock.lastT ? (opts.now - weakBlock.lastT)/DAY_MS : null,
+        weakBlockSinks: weakBlockMembers.length > 0 && weakBlockMembers.slice(0, 3).every(sinks),
+        blocksWithoutStanding: blockStats.filter(b=>b.played>0 && b.median===null).length,
+        recentTypes: Array.isArray(opts.recentTypes) ? opts.recentTypes : []
+      });
+      sessionType = decision.type; sessionTypeWhy = decision.why;
+      template = Object.assign({ band: (template && template.band) || 'mid' }, SESSION_TYPES[sessionType]);
+      if(opts.size !== 10) template = Object.assign({ band: template.band }, sessionTemplate(null, opts.size), SESSION_TYPES[sessionType]);
+    }
     const blockNote = sc => { if(!blocks) return ''; const id = blockOf(sc); const bs = blockStats.find(b=>b.id===id); if(!bs || bs.median===null) return ''; const ranked = blockStats.filter(b=>b.median!==null).sort((a,b)=>a.median-b.median); const pos = ranked.findIndex(b=>b.id===id)+1; return ' — '+bs.name+' block: your standing '+percentileLabel(bs.median)+(ranked.length>1 ? ' ('+(pos===1 ? 'your weakest' : ordinal(pos)+' weakest')+' of '+ranked.length+' blocks)' : '')+(hubDegree(sc)>=HUB_FULL ? '; a hub — moves with '+hubDegree(sc)+' others' : ''); };
+    // The weakest ordering, and the candidate pool built from it. Sinks stay last however
+    // the list is ordered -- "more of the same isn't the move" outranks any sampling.
+    // Built AFTER the type is chosen, because the type sets template.weakest and the pool
+    // is sized off it.
+    const nonSinkPool = weakPool.filter(sc=>!sinks(sc)), sinkPool = weakPool.filter(sinks);
+    const weakOrdered = rotate ? weightedOrder(nonSinkPool, weakKey, sc=>recentItems.has(sc.name)).concat(sinkPool) : weakPool;
+    const perLabel = new Map(), perPl = new Set();
+    const spread = [];
+    for(const sc of weakOrdered){
+      const l = primary(sc);
+      if(l && (perLabel.get(l)||0) >= 2) continue;
+      if((sc.plKeys||[]).some(k=>perPl.has(k))) continue;
+      spread.push(sc); if(l) perLabel.set(l, (perLabel.get(l)||0)+1); (sc.plKeys||[]).forEach(k=>perPl.add(k));
+      if(spread.length >= template.weakest*2) break;
+    }
     const weakReasonB = sc => weakReason(sc)+blockNote(sc);
     if(blocks && blockStats.some(b=>b.median!==null)){
       // Slots across blocks by how far each stands under the others: weight =
@@ -1774,7 +1955,7 @@ const MiniEvxlEngine = (function(){
       const perPlB = new Set(); let carry = 0;
       ranked.forEach((b, i)=>{
         let want = alloc[i] + carry; carry = 0;
-        const pool = spread.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name)).concat(weakPool.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name) && !spread.includes(sc)));
+        const pool = spread.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name)).concat(weakOrdered.filter(sc=>blockOf(sc)===b.id && !chosen.has(sc.name) && !spread.includes(sc)));
         const before = items.length;
         take(pool.filter(sc=>!(sc.plKeys||[]).some(k=>perPlB.has(k))), 'weakest', weakReasonB, want);
         items.slice(before).forEach(it=>{ const sc = byName.get(it.name); (sc && sc.plKeys||[]).forEach(k=>perPlB.add(k)); });
@@ -1790,7 +1971,7 @@ const MiniEvxlEngine = (function(){
         // block happened to be coldest regardless of whether it needed the work.
         const cold = blockStats.filter(isCold).sort((a,b)=> (a.median===null?1:0)-(b.median===null?1:0) || (a.median-b.median) || (a.lastT||0)-(b.lastT||0) || (a.name<b.name?-1:1));
         for(const b of cold){
-          const pool = weakPool.filter(sc=>blockOf(sc)===b.id && !sinks(sc) && !chosen.has(sc.name));
+          const pool = weakOrdered.filter(sc=>blockOf(sc)===b.id && !sinks(sc) && !chosen.has(sc.name));
           const before = items.length;
           take(pool, 'coverage', sc=>'Coverage — nothing in the '+b.name+' block for '+Math.round((opts.now-b.lastT)/DAY_MS)+' days: it moves independently of the blocks you have been training, so it does not improve by proxy; '+standing(sc)+', '+label(sc)+blockNote(sc)+'.', 1);
           if(items.length>before) break;
@@ -1905,11 +2086,12 @@ const MiniEvxlEngine = (function(){
       const what = (nbs ? nbs+' co-varying '+(nbs===1 ? 'scenario' : 'scenarios') : '')+(nbs && lbs ? ' and ' : '')+(lbs ? lbs+' bridged '+(lbs===1 ? 'label' : 'labels') : '');
       return 'Revisit — last played '+days+' days ago; since then '+what+' you touched moved '+(f.gain>=0?'+':'')+(f.gain*100).toFixed(0)+' pts on average ('+moved+' of '+f.evidence.length+' moved; r '+rTxt+') against a '+(f.margin*100).toFixed(0)+'-pt gap to your PB — first-try PB odds: '+oddsWord(f.p)+' (uncalibrated: the bucket comes from an assumed curve, not from your record yet)'+(f.synced ? '; sync-dated evidence' : '')+'.'; }, template.revisit);
     // ---- top up: more of the weakest list, then unplayed at/under level
-    take(weakPool, 'weakest', weakReasonB, opts.size-items.length);
+    take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null,
-      calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0 };
+      calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
+      type: sessionType, typeWhy: sessionTypeWhy };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
@@ -2597,6 +2779,7 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS,
+    chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };

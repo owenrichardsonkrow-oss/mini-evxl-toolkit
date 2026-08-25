@@ -77,6 +77,21 @@ by construction — and the revisit forecast reads the measured neighbourhood fr
 index instead. `bridgeRows` and the Overlap page's bridge table stay, labelled as the
 different statistic they are.
 
+**The session rotates, and the KPI can be wrong (2026-08-25, A3 + R2).** A fixed
+5/2/1/1/1 template filled from the head of a slow-moving list made every session look the
+same, which is the one thing the user of the coach actually complained about. The day now
+has a PURPOSE chosen by a trigger -- `chooseSessionType` returns `{type, why}` over
+`SESSION_TYPES` (floor / transfer / collect / breadth, each summing to 10), never the
+same one three days running, and the weakest slice is SAMPLED by weakness rather than
+taken off the top (`exp(-(key-best)/SAMPLE_TEMP)`, damping what the last few sessions
+served). `opts.rotate` is opt-in, so every earlier path is untouched.
+Built with the scoring, not before it: the return-collect rate needs a null model or it
+cannot say whether the coach works. `collectBaseline(n) = 1/(n+1)` is the chance of a
+first-try PB if nothing changed at all, `sessionHistoryStats` returns Brier scores
+against it plus `skill = 1 - brier/brierBase` and reliability bins, and the verdict is
+gated at `SCORE_MIN_REVISITS` (20) because a skill score is unbounded below and reads as
+a catastrophe on a handful of samples.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
