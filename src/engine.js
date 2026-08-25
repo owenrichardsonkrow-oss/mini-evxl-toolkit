@@ -1391,6 +1391,14 @@ const MiniEvxlEngine = (function(){
   // profile the pool is dozens deep and the two coincide. This costs power, not validity:
   // under "the ordering carries no information" the expected excess over baseline is 0 for
   // either arm whatever the assignment probability or the slot position happened to be.
+  // The version of the forecast that produced a logged `p`. COACH-1 (step 2) changed the
+  // gain from an r-weighted mean of the neighbours' movements to an r-ATTENUATED one, which
+  // moves p by a lot -- 0.76 -> 0.56 on the toolkit fixture. Every `p` already in a store
+  // predates that, and pooling both into one Brier score calibrates a curve against two
+  // different quantities. Rows are stamped from here on, and only the current stamp is
+  // scored; the older rows still count toward return-collect and the arm, neither of which
+  // reads `p`.
+  const P_VERSION = 2;
   const ARM_B_SHARE = 0.25;      // share of revisit slots that serve the runner-up
   const ARM_MIN_PER_ARM = 10;    // resolved items per arm before the comparison gets a verdict
   // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
@@ -1797,7 +1805,8 @@ const MiniEvxlEngine = (function(){
       gain: (it.gain===null || it.gain===undefined) ? null : Number(it.gain),
       margin: (it.margin===null || it.margin===undefined) ? null : Number(it.margin),
       odds: (it.odds===null || it.odds===undefined) ? null : Number(it.odds),
-      arm: it.arm||null, pbAt, k: 0, resolved: false, hit: 0, hitAny: 0,
+      arm: it.arm||null, pv: (it.pv===null || it.pv===undefined) ? null : Number(it.pv),
+      pbAt, k: 0, resolved: false, hit: 0, hitAny: 0,
       base: collectBaseline(it.n), baseAny: null, src: null };
     const rows = typeof runsOf==='function' ? runsOf(it.name) : null;
     if(!Array.isArray(rows)){
@@ -1815,9 +1824,33 @@ const MiniEvxlEngine = (function(){
     const after = rows.map(x=>[Number(x[0]), Number(x[1])])
       .filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1]) && x[0] > startedAt && x[0] <= end)
       .sort((a,b)=>a[0]-b[0]);
+    // ---- the SEAL (step 3c follow-up) ------------------------------------------------
+    // The run record is a 20-run rolling buffer (ATTEMPT_KEEP), keeping the NEWEST runs. So
+    // `after[0]` is not "the first run after this was served" -- it is the earliest run after
+    // it that has not yet been evicted. Play a served scenario twenty-one more times and the
+    // run that actually resolved it is gone: a first-try COLLECT silently becomes a miss (a
+    // later run is now the earliest), and once every run in the window is evicted the row
+    // stops being resolved at all. Outcomes that change months after the fact cannot back a
+    // calibration curve, and they certainly cannot back the arm.
+    //
+    // So the first run after serving is written back into the ledger row the moment it is
+    // observed (`firstT`/`firstS`, sealed by the app) and read from there forever after. The
+    // any-time reading and `k` still come from the buffer, and still degrade with it -- they
+    // are a count over a window, not a single event, and there is nothing to pin.
+    const sealT = Number(it.firstT), sealS = Number(it.firstS);
+    if(Number.isFinite(sealT) && Number.isFinite(sealS)){
+      out.src = 'sealed'; out.resolved = true;
+      out.firstT = sealT; out.firstS = sealS;
+      out.hit = sealS > pbAt ? 1 : 0;
+      out.k = Math.max(after.length, 1);
+      out.hitAny = (out.hit || after.some(x=>x[1] > pbAt)) ? 1 : 0;
+      if(n!==null && Number.isFinite(n) && n >= 0) out.baseAny = out.k/(n + out.k);
+      return out;
+    }
     out.src = 'runs'; out.k = after.length;
     if(!after.length) return out;                       // never attempted -- not a miss, no answer
     out.resolved = true;
+    out.firstT = after[0][0]; out.firstS = after[0][1];   // what the app seals
     out.hit = after[0][1] > pbAt ? 1 : 0;
     out.hitAny = after.some(x=>x[1] > pbAt) ? 1 : 0;
     // k/(n+k): the chance that the maximum of the n prior and k new runs lands among the new
@@ -1951,17 +1984,28 @@ const MiniEvxlEngine = (function(){
           collectedAny: res.filter(r=>r.hitAny).length,
           servedResolved: servedOkW.length, servedHit: servedOkW.filter(r=>r.hit).length,
           rate: res.length ? res.filter(r=>r.hit).length/res.length : null,
-          predicted: meanOf(res.map(r=>r.p).filter(Number.isFinite)),
+          predicted: meanOf(res.filter(r=>r.pv===P_VERSION).map(r=>r.p).filter(Number.isFinite)),
           baseline: meanOf(res.map(r=>r.base).filter(Number.isFinite)), ratings });
       }
     }
+    const oldestLogDay = entries.length ? entries.reduce((a,e)=>Math.min(a, Number(e.day)), Infinity) : Infinity;
+    // every exposure, live ones included, so the app can seal today's resolutions too
+    const sealable = exposures.map(x=>{ const r = resolvedBy.get(x.key); if(r) r.key = x.key; return r; }).filter(Boolean);
     const allRows = expRows.filter(r=>r.why==='revisit');
     const servedRows = expRows;
     const resolved = allRows.filter(r=>r.resolved);
     const collected = resolved.filter(r=>r.hit).length;
     // The forecast is scored on RESOLVED revisits only, and against the strict outcome --
     // the same event 1/(n+1) describes. Matching those two is the whole point of COACH-2.
-    const scored = resolved.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
+    // ...and only rows whose `p` came from the CURRENT forecast. A row stamped with an older
+    // P_VERSION, or none at all, was predicted by a formula this build no longer runs.
+    const scored = resolved.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base) && r.pv === P_VERSION);
+    const staleP = resolved.filter(r=>Number.isFinite(r.p) && r.pv !== P_VERSION).length;
+    // The predicted MEAN is a different pool from the Brier pool: it is shown beside the
+    // observed collect rate, so it must cover the same rows the rate does. It drops a
+    // superseded `p` (a different quantity) but NOT a row whose attempt count is unknown --
+    // that row has no baseline and cannot be Brier-scored, yet the coach did predict it.
+    const predictable = resolved.filter(r=>Number.isFinite(r.p) && r.pv === P_VERSION);
     const brier = brierScore(scored, r=>[r.p, r.hit]);
     const brierBase = brierScore(scored, r=>[r.base, r.hit]);
     // Skill score: how much of the null model's error the coach removes. 0 = no better
@@ -2014,7 +2058,8 @@ const MiniEvxlEngine = (function(){
       collectedAny: resolved.filter(r=>r.hitAny).length,
       rate: resolved.length ? collected/resolved.length : null,
       rateAny: resolved.length ? resolved.filter(r=>r.hitAny).length/resolved.length : null,
-      predicted: meanOf(resolved.map(r=>r.p).filter(Number.isFinite)),
+      predicted: meanOf(predictable.map(r=>r.p)),
+      staleP, pVersion: P_VERSION,
       baseline: meanOf(resolved.map(r=>r.base).filter(Number.isFinite)),
       baselineAny: meanOf(resolved.map(r=>r.baseAny).filter(Number.isFinite)),
       scoredOn: scored.length, brier, brierBase, skill, scorable: scored.length >= SCORE_MIN_REVISITS, scoreMin: SCORE_MIN_REVISITS,
@@ -2022,10 +2067,13 @@ const MiniEvxlEngine = (function(){
       // provenance, so a number can never be read without knowing what produced it
       resolvedFrom: useLedger ? 'ledger' : (typeof runsOf==='function' ? 'runs' : 'pb'),
       windowed: true,
-      // exposures with no surviving log row -- compositions the reroll rule dropped. Before
-      // 3c these were lost outright; they are counted here and named so the loss is visible.
-      orphans: exposures.filter(x=>!logKeys.has(x.key)).length };
-    return { sessions, weeks, overall };
+      // Exposures with no surviving log row. Two very different causes, and only one of them
+      // is the reroll this counter exists to expose: a row older than the oldest the log still
+      // holds was dropped by SESSION_LOG_CAP, which is ordinary ageing, not a lost composition.
+      // Counting those as REROLLED would make the number grow forever on any long-lived store.
+      orphans: exposures.filter(x=>!logKeys.has(x.key) && x.day >= oldestLogDay).length,
+      aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
+    return { sessions, weeks, overall, exposures: sealable };
   }
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
   // One pass over the rows that gives every played scenario a number on ONE scale, so
@@ -2625,15 +2673,29 @@ const MiniEvxlEngine = (function(){
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
     // NEXT-4: walk the ordered candidates and, for each slot, decide arm. B withholds the
     // head (it is simply not served today) and serves the next one instead -- see the note
-    // at ARM_B_SHARE for why a swap would measure nothing. With one candidate left there is
-    // no runner-up, so the slot stays A: the experiment never costs a revisit it could have
-    // served. `_arm` rides on the row like `_forecast` and is deleted with it.
+    // at ARM_B_SHARE for why a swap would measure nothing. `_arm` rides on the row like
+    // `_forecast` and is deleted with it.
+    //
+    // AFFORDABILITY, and it has to be checked against the WHOLE remaining template, not this
+    // slot. The first version asked only `pool.length > 1` -- "is there a runner-up for this
+    // slot" -- and claimed the experiment never costs a revisit it could have served. That
+    // claim was FALSE: a B slot consumes two candidates, and charging the extra one to a later
+    // slot empties the pool early, so the loop exits and the shortfall is silently topped up
+    // from the weakest list. Simulated over 200,000 sessions: a collect day (5 revisit slots)
+    // on a pool of 5 served 4.16 revisits and came up short 68.5% of the time.
+    //
+    // So a B roll is allowed only when withholding still leaves enough candidates for this
+    // slot AND every slot after it. Measured with the same simulation: shortfall 0 at every
+    // pool depth, and the realised share is unchanged at 0.25 from a pool of 8 up. It costs
+    // power on a thin pool -- exactly where the session can least afford to lose a revisit --
+    // which is the right way round.
     let revServe = revOrdered;
     if(opts.arm){
       const pool = revOrdered.slice();
       revServe = [];
       for(let slot=0; slot<template.revisit && pool.length; slot++){
-        const goB = pool.length > 1 && rnd() < ARM_B_SHARE;
+        const affordable = (pool.length - 1) >= (template.revisit - slot);
+        const goB = affordable && rnd() < ARM_B_SHARE;
         if(goB) pool.shift();                       // the top pick is WITHHELD, not reordered
         const pick = pool.shift();
         pick._arm = goB ? 'B' : 'A';
@@ -3406,6 +3468,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    ARM_B_SHARE, ARM_MIN_PER_ARM, windowEnds, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_MIN_PER_ARM, P_VERSION, windowEnds, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

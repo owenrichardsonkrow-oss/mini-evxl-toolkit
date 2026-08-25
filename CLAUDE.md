@@ -259,6 +259,34 @@ EMPTY ledger is byte-identical to the pre-3c path, a row whose scenario has no r
 unresolved rather than resolved off the PB, and the legacy duplicate-name session keeps both
 slots while one run resolves exactly one of them).
 
+**Pre-release audit before release #2 (2026-08-25).** Eight review lenses over `master..dev`,
+every finding adversarially verified by a separate reader told to refute it: 24 raised, 17
+survived, six distinct defects after triage. All fixed. The two that mattered most:
+
+*The B arm cost the session a revisit.* The affordability check was per-slot (`pool.length > 1`),
+but a B slot consumes TWO candidates and the second was charged to a later slot, emptying the
+pool early -- the loop exits and the shortfall is topped up from the weakest list. Simulated
+over 200,000 sessions: a 5-revisit collect day on a pool of 5 served 4.16 and came up short
+68.5% of the time, while the comment above it claimed the experiment never costs a revisit it
+could have served. A B roll is now allowed only when withholding still leaves enough for this
+slot AND every slot after it. Shortfall 0 at every depth; realised share unchanged at 0.25
+from a pool of 8 up. `features.arm` pins it over 200 seeds.
+
+*Resolutions were not durable.* The run record is a 20-run rolling buffer, so `after[0]` was
+the earliest surviving run after serving, not the first one. Twenty-one more plays and a
+first-try collect silently reads as a miss, then as unresolved. The first run is now SEALED
+into the ledger row (`firstT`/`firstS`) when observed and read from there forever; `hitAny`
+and `k` still come from the buffer, because a count over a window has nothing to pin.
+
+Also: a reset did not clear the served ledger (review C3's bug, reinstated one commit later);
+the one-time migration flag could be stamped for a backfill a swallowed quota error had
+discarded, and gated the import so a v3 backup was invisible to every statistic -- the flag is
+gone and the reconcile is idempotent and unconditional; `p` values from before COACH-1 were
+pooled with post-COACH-1 ones in one Brier score, so items now carry `pv: P_VERSION` and only
+the current stamp is scored (`overall.staleP` counts the rest); `overall.orphans` no longer
+blames the log's own 200-entry cap (`overall.aged`); and the Settings copy stated the raw-rate
+comparison the engine deliberately rejects.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
