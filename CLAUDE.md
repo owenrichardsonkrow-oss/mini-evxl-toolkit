@@ -92,6 +92,20 @@ against it plus `skill = 1 - brier/brierBase` and reliability bins, and the verd
 gated at `SCORE_MIN_REVISITS` (20) because a skill score is unbounded below and reads as
 a catastrophe on a handful of samples.
 
+**Soft block membership (2026-08-25, A4).** A scenario that is not a stable member of any
+community can still be PLACED by measurement: `scenarioAffinity` scores its mean r against
+each community's members, cross-playlist, from the shipped pairs, and
+`affinityAssignment` places it only when that affinity survives its own standard error AND
+is separated from the runner-up by more than the standard error of the difference. Two
+communities within a standard error is a HYBRID and stays unplaced -- naming a winner
+there would fabricate structure. `why` is decisive | tie | no-affinity | unmapped. The
+label fallbacks are renamed `(other)` -> `· unplaced`. NOTE the freeze's varimax loadings
+were NOT used: they are factor loadings, and D13 ships the community lens because the
+factor lens reproduced the carrying playlists. On the current map this places 71 of 135
+eligible scenarios (32 are measured ties); the limit is coverage -- 82% of the candidates
+have no tested pair at n >= 100 at all -- and the fix is a lower shared-player floor on
+the map, not a different model.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's

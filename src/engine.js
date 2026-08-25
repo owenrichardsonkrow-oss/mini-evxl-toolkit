@@ -1724,6 +1724,60 @@ const MiniEvxlEngine = (function(){
     });
     return out.sort((x, y)=> y.lower - x.lower || y.pairs - x.pairs || (x.name<y.name?-1:x.name>y.name?1:0));
   }
+  // ---- Soft block membership (Review Ledger III A4, 2026-08-25) ------------------
+  // Owen, on the "(other)" buckets: he hoped that with enough information a scenario could
+  // find its way out of one and into a clarified bucket -- and his worked example (a
+  // pokeball scenario as a hybrid that leans static clicking) describes a MIXTURE, which
+  // a hard partition cannot represent at all.
+  //
+  // The freeze does hold a full 991 x 21 loadings matrix, but those are FACTOR loadings,
+  // and D13 ships the community lens precisely because the factor lens reproduced the
+  // carrying playlists (ARI 0.824). Shipping them as "skill mixture" would reintroduce
+  // the co-training artefact A2 just removed. So the affinity is measured instead, from
+  // the pairs the page already carries: a scenario's mean r against the members of each
+  // block, CROSS-PLAYLIST only, which is the same statistic blockRouteCandidates uses
+  // read in the other direction.
+  //
+  // What it does NOT do is invent an assignment. Measured on the shipped map, 32 of the
+  // 135 eligible scenarios have two communities within a standard error of each other --
+  // those are exactly the hybrids, and calling one of them the winner would be
+  // fabricating structure. `decisive` says which case a scenario is in.
+  const AFFINITY_MIN_PAIRS = 10;
+  // blockMembers: Map/object id -> Set of member names. plOf(name) -> iterable of playlist
+  // keys (a candidate sharing a playlist with a block is training it, not bridging into it).
+  // Returns [{id, meanR, pairs, sd, se, lower}] strongest lower bound first.
+  function scenarioAffinity(index, name, blockMembers, opts){
+    const o = Object.assign({ minN: index && index.minShared ? index.minShared : 100, minPairs: AFFINITY_MIN_PAIRS, plOf: null }, opts||{});
+    if(!index || typeof index.edges!=='function' || !blockMembers) return [];
+    const mine = new Set(o.plOf ? (o.plOf(name) || []) : []);
+    const edges = index.edges(name).filter(e=>e.n >= o.minN && !(o.plOf && (o.plOf(e.name)||[]).some(k=>mine.has(k))));
+    const entries = blockMembers instanceof Map ? [...blockMembers.entries()] : Object.keys(blockMembers).map(k=>[k, blockMembers[k]]);
+    const out = [];
+    entries.forEach(([id, members])=>{
+      if(!members || (members.has ? members.has(name) : false)) return;
+      const rs = edges.filter(e=>members.has ? members.has(e.name) : false).map(e=>e.r);
+      if(rs.length < o.minPairs) return;
+      const mean = rs.reduce((a,b)=>a+b, 0)/rs.length;
+      const varr = rs.length>1 ? rs.reduce((a,b)=>a+(b-mean)*(b-mean), 0)/(rs.length-1) : 0;
+      const se = Math.sqrt(varr/rs.length);
+      out.push({ id: String(id), meanR: mean, pairs: rs.length, sd: Math.sqrt(varr), se, lower: mean - se });
+    });
+    return out.sort((a, b)=> b.lower - a.lower || b.pairs - a.pairs || (a.id<b.id?-1:a.id>b.id?1:0));
+  }
+  // The assignment rule. A scenario joins a block only when its best affinity survives its
+  // own standard error AND is separated from the runner-up by more than the standard error
+  // of the DIFFERENCE. Otherwise it is a measured hybrid (`tie`) or has no affinity at all
+  // -- both of which are answers, not failures, and the page says which.
+  function affinityAssignment(affs){
+    const list = Array.isArray(affs) ? affs : [];
+    if(!list.length) return { id: null, decisive: false, why: 'unmapped', top: null, second: null };
+    const best = list[0], second = list.length>1 ? list[1] : null;
+    if(!(best.lower > 0)) return { id: null, decisive: false, why: 'no-affinity', top: best, second };
+    if(second && !((best.meanR - second.meanR) > Math.sqrt(best.se*best.se + second.se*second.se))){
+      return { id: null, decisive: false, why: 'tie', top: best, second };
+    }
+    return { id: best.id, decisive: true, why: 'decisive', top: best, second };
+  }
   // Weakness by label. Default: the scenario's skill labels (facets when it has
   // any, else raw curator labels) -- the session's profile. opts.keyBy 'labels':
   // rows keyed by NORMALISED raw curator label (kind 'label'), the overlap
@@ -2780,6 +2834,7 @@ const MiniEvxlEngine = (function(){
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
+    scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };

@@ -307,6 +307,47 @@
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
     R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
 
+    // ---- A4 SOFT MEMBERSHIP (2026-08-25) --------------------------------------------
+    // A scenario that is not a stable member of any community can still be PLACED by
+    // measurement: its mean r against each community's members, cross-playlist. But only
+    // when the measurement is decisive. On the shipped map 32 of 135 eligible scenarios
+    // have two communities within a standard error of each other -- those are hybrids
+    // (Owen's pokeball case), and naming a winner would be fabricating structure.
+    const AF_A = ['ma1','ma2','ma3','ma4','ma5','ma6','ma7','ma8','ma9','ma10','ma11','ma12'];
+    const AF_B = ['mb1','mb2','mb3','mb4','mb5','mb6','mb7','mb8','mb9','mb10','mb11','mb12'];
+    const afNames = AF_A.concat(AF_B, ['clear', 'tied', 'thin', 'negative', 'mate']);
+    const afE = [];
+    const push = (x, y, r100, n)=>{ const ai = afNames.indexOf(x), bi = afNames.indexOf(y); afE.push(Math.min(ai,bi), Math.max(ai,bi), r100, n); };
+    // `clear` leans A hard and B barely -- decisive
+    AF_A.forEach((m, i)=>push('clear', m, 30 + (i % 3), 200));
+    AF_B.forEach((m, i)=>push('clear', m, 2 + (i % 3), 200));
+    // `tied` sits the same distance from both -- a measured hybrid, and it must stay unplaced
+    AF_A.forEach((m, i)=>push('tied', m, 15 + (i % 3), 200));
+    AF_B.forEach((m, i)=>push('tied', m, 15 + ((i+1) % 3), 200));
+    // `thin` has only a handful of measured pairs into A -- no claim to make
+    AF_A.slice(0, 4).forEach((m, i)=>push('thin', m, 40, 200));
+    // `negative` moves AGAINST both
+    AF_A.forEach((m, i)=>push('negative', m, -20, 200));
+    AF_B.forEach((m, i)=>push('negative', m, -18, 200));
+    // `mate` leans A hard, but shares a playlist with every A member: co-training, not affinity
+    AF_A.forEach((m, i)=>push('mate', m, 45, 200));
+    const afIndex = E.buildOverlapIndex({ pairs: { minShared: 100, names: afNames, e: afE } });
+    const afSets = new Map([['A', new Set(AF_A)], ['B', new Set(AF_B)]]);
+    const afPl = name => (name==='mate' || AF_A.includes(name)) ? ['["Shared","Easy"]'] : ['["Own","Easy"]'];
+    const affOf = (name, opts)=>E.scenarioAffinity(afIndex, name, afSets, opts||{});
+    const assignOf = (name, opts)=>E.affinityAssignment(affOf(name, opts));
+    R.affinity = {
+      clear:    (()=>{ const a = assignOf('clear');    return { id: a.id, decisive: a.decisive, why: a.why, top: a.top ? [a.top.id, Math.round(a.top.meanR*100)/100, a.top.pairs] : null }; })(),
+      tied:     (()=>{ const a = assignOf('tied');     return { id: a.id, decisive: a.decisive, why: a.why }; })(),
+      thin:     (()=>{ const a = assignOf('thin');     return { id: a.id, decisive: a.decisive, why: a.why }; })(),
+      negative: (()=>{ const a = assignOf('negative'); return { id: a.id, decisive: a.decisive, why: a.why }; })(),
+      // with the playlist filter on, `mate` has nothing left to measure; without it, it
+      // would be placed in A on pure co-training -- the whole point of A2 restated here
+      mateFiltered:   assignOf('mate', { plOf: afPl }).why,
+      mateUnfiltered: assignOf('mate').id,
+      unknown:  E.affinityAssignment(affOf('nobody-here')).why,
+      minPairs: E.AFFINITY_MIN_PAIRS
+    };
     // ---- A3 ROTATION (2026-08-25) --------------------------------------------------
     // Owen: "I don't like that every session has the same structure." The day now has a
     // PURPOSE, chosen by a trigger, and the trigger is asserted here rather than trusted.
@@ -424,6 +465,19 @@
       const br = B2.routes.filter(r=>r.block);
       if(!br.length) problems.push('blockRoutes: no route carried a block -- the block-level path never fired: '+J(B2.routes));
       else if(br[0].name!=='Cl Dynamic Large') problems.push('blockRoutes: the block route must be the aggregated candidate, got '+J(br));
+    }
+    // A4 soft membership
+    const AF = R.affinity;
+    if(!AF) problems.push('affinity: missing');
+    else {
+      if(AF.clear.id!=='A' || !AF.clear.decisive || AF.clear.why!=='decisive') problems.push('affinity: a scenario leaning one community hard must be placed in it, got '+J(AF.clear));
+      if(!AF.clear.top || AF.clear.top[2]!==12) problems.push('affinity: the placement must rest on every measured pair into the block, got '+J(AF.clear.top));
+      if(AF.tied.id!==null || AF.tied.why!=='tie') problems.push('affinity: two communities within a standard error is a HYBRID and must stay unplaced -- naming a winner there is fabricated structure, got '+J(AF.tied));
+      if(AF.thin.id!==null || AF.thin.why!=='unmapped') problems.push('affinity: under AFFINITY_MIN_PAIRS ('+AF.minPairs+') there is no claim to make, got '+J(AF.thin));
+      if(AF.negative.id!==null || AF.negative.why!=='no-affinity') problems.push('affinity: a scenario that moves against every community has no affinity, got '+J(AF.negative));
+      if(AF.mateFiltered!=='unmapped') problems.push('affinity: a candidate sharing a playlist with the whole block must be filtered out before measuring -- that is co-training, not affinity (got '+AF.mateFiltered+')');
+      if(AF.mateUnfiltered!=='A') problems.push('affinity: without the playlist filter that same candidate WOULD be placed, which is what makes the filter load-bearing -- got '+J(AF.mateUnfiltered));
+      if(AF.unknown!=='unmapped') problems.push('affinity: a scenario absent from the map is unmapped, got '+AF.unknown);
     }
     // A3 rotation: each trigger, asserted rather than trusted
     const TY = R.types;

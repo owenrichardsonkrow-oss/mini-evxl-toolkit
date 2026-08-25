@@ -390,6 +390,21 @@ about skill structure.
   not exchangeable and the attempt count under-counts, both of which raise it — so beating
   it means something.
 
+- **"Other" stopped being a bucket (2026-08-25, A4).** Owen hoped a scenario could find its
+  way out of an "(other)" bucket into a clarified one given enough information, and his
+  worked example — a pokeball scenario as a hybrid leaning static clicking — describes a
+  MIXTURE, which a hard partition cannot express. The first plan was to ship the freeze's
+  varimax loadings; that was wrong, because they are factor loadings and D13 rejected that
+  lens for reproducing the carrying playlists. The affinity is measured instead: mean r
+  against each community's members, cross-playlist, with a placement only where it survives
+  its own standard error and separates from the runner-up. **The rule's refusals are the
+  interesting part** — 32 of 135 eligible scenarios sit within a standard error of two
+  communities, and those are exactly the hybrids the design wanted to be able to name.
+  The ceiling is not the model: 82% of the candidates have no tested pair at all, and the
+  operation that lifts it is a lower shared-player floor on the map (median best-pair n is
+  41 against a shipped floor of 100), which is local compute and leaves the D12 freeze
+  untouched.
+
 ## Staging
 
 Remote-session-doable now: this document; the taxonomy proposal and
@@ -485,3 +500,10 @@ run-history import; both transfer analyses.
   negative is not a report card; a KPI reported on five samples is noise. Both caveats on
   the baseline — attempts are not exchangeable, and the attempt count under-counts — push
   it upward, against the coach, and are printed rather than buried.
+- **D20** — a scenario is placed in an emergent block only by a decisive MEASURED affinity
+  (mean r against that block's members, cross-playlist, surviving its own standard error
+  and separated from the runner-up). A tie between two blocks is recorded as a hybrid and
+  left unplaced; "unplaced" and "unmapped" are distinguished, because one is a statement
+  about the scenario and the other is a statement about our coverage. The freeze's factor
+  loadings are NOT used for this: D13's reason for rejecting that lens applies with equal
+  force to using it as a mixture.
