@@ -472,6 +472,55 @@
       noN: E.sessionHistoryStats(logOf([{ p: 0.5 }]), () => 200, FIXED_MS, null).overall.scoredOn
     };
 
+    // ---- calibrateScenarios: the boundary every ranking now passes through --------------
+    // Review Ledger IV BUG-4. This function applies the board offsets AND quantile-maps a
+    // curve-less scenario's To 2nd onto the same scale, and the suite that gates the deploy
+    // never executed either branch: OPTS carries no `offsets`, so only the identity path ran.
+    // Steps 5, 6 and 7b all touch the metric again, so it gets pinned first.
+    const calRow = (name, pct, to2nd, played) => ({ name, played: played !== false, pct, to2nd,
+      toMax: 0.5, toNext: 0.5, maxed: false, rung: 3, labels: [], facets: [], playlists: 1,
+      plKeys: [], att: null, raises14d: 0, neighbours: [] });
+    // 25 curved played rows, percentile and To 2nd both rising -- enough to clear
+    // METRIC_MIN_CURVED (20) so the quantile map is allowed to run.
+    const curved = Array.from({ length: 25 }, (u, i) => calRow('C' + i, (i + 1) / 26, (i + 1) / 26));
+    const noCurveLow  = Object.assign(calRow('NoCurveLow',  null, 0.10));
+    const noCurveHigh = Object.assign(calRow('NoCurveHigh', null, 0.90));
+    const unplayed    = calRow('Unplayed', null, 0, false);
+    const base = curved.concat([noCurveLow, noCurveHigh, unplayed]);
+    const find = (rows, n) => rows.find(r => r.name === n);
+
+    // (a) no offsets: curved rows keep their percentile, and `calibrated` must be FALSE.
+    const calNone = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: null });
+    // (b) offsets that name NONE of these rows -- the Number(null) trap: deltaOf must answer
+    //     null, not 0, or every uncalibrated build reports itself calibrated.
+    const calMiss = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: { 'Nobody': [1.5, 40] } });
+    // (c) real offsets on two rows: a POSITIVE delta lowers a percentile, a negative one raises it.
+    const calSome = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: { 'C4': [1.2, 90], 'C20': [-1.2, 90] } });
+    // (d) idempotent: a row set that already carries `m` comes back untouched.
+    const calTwice = E.calibrateScenarios(calSome, { offsets: { 'C4': [1.2, 90], 'C20': [-1.2, 90] } });
+    // (e) under METRIC_MIN_CURVED there is nothing to map onto, so To 2nd stays raw.
+    const thin = curved.slice(0, 5).concat([Object.assign({}, noCurveLow)]);
+    const calThin = E.calibrateScenarios(thin.map(r => Object.assign({}, r)), { offsets: null });
+
+    R.calibrate = {
+      none: { calibrated: !!calNone.calibrated, offsetsUsed: calNone.offsetsUsed || 0,
+        c4m: find(calNone, 'C4').m, c4pct: find(calNone, 'C4').pct, c4scale: find(calNone, 'C4').mScale,
+        curved: calNone.curved, mapped: calNone.mapped },
+      missOffsets: { calibrated: !!calMiss.calibrated, offsetsUsed: calMiss.offsetsUsed || 0, c4m: find(calMiss, 'C4').m },
+      some: { calibrated: !!calSome.calibrated, offsetsUsed: calSome.offsetsUsed || 0,
+        c4m: find(calSome, 'C4').m, c4raw: find(calSome, 'C4').pctRaw, c4pctBefore: (4 + 1) / 26,
+        c20m: find(calSome, 'C20').m, c20raw: find(calSome, 'C20').pctRaw, c20pctBefore: (20 + 1) / 26,
+        c9m: find(calSome, 'C9').m, c9raw: find(calSome, 'C9').pctRaw === undefined ? null : find(calSome, 'C9').pctRaw },
+      mapped: { lowM: find(calNone, 'NoCurveLow').m, lowMapped: !!find(calNone, 'NoCurveLow').mMapped,
+        lowScale: find(calNone, 'NoCurveLow').mScale,
+        highM: find(calNone, 'NoCurveHigh').m, highMapped: !!find(calNone, 'NoCurveHigh').mMapped },
+      unplayed: { m: find(calNone, 'Unplayed').m, scale: find(calNone, 'Unplayed').mScale, mapped: !!find(calNone, 'Unplayed').mMapped },
+      thin: { m: find(calThin, 'NoCurveLow').m, scale: find(calThin, 'NoCurveLow').mScale, mapped: !!find(calThin, 'NoCurveLow').mMapped },
+      idempotent: calTwice === calSome,
+      adjust: { zero: E.adjustPercentile(0.5, 0), up: E.adjustPercentile(0.5, -1), down: E.adjustPercentile(0.5, 1),
+        atZero: E.adjustPercentile(0, 2), atOne: E.adjustPercentile(1, -2), nullIn: E.adjustPercentile(null, 1) }
+    };
+
     return R;
   }
   const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
@@ -598,6 +647,42 @@
       if(!near(SC.perfect.brier, 0, 1e-12) || !near(SC.perfect.skill, 1, 1e-12)) problems.push('scoring: a perfect forecast is Brier 0, skill 1, got '+J(SC.perfect));
       if(SC.noN!==0) problems.push('scoring: a revisit with no attempt count cannot be scored (no baseline), got '+SC.noN);
     }
+    const CAL = R.calibrate;
+    if(!CAL) problems.push('calibrate: missing');
+    else {
+      // (a) identity without offsets
+      if(CAL.none.calibrated !== false || CAL.none.offsetsUsed !== 0) problems.push('calibrate: no offsets must report calibrated=false, got '+J(CAL.none));
+      if(!near(CAL.none.c4m, 5/26, 1e-12) || CAL.none.c4scale !== 'pct') problems.push('calibrate: without offsets a curved row keeps its percentile as m, got '+J(CAL.none));
+      if(CAL.none.curved !== 25) problems.push('calibrate: the reference distribution is the PLAYED curved rows (25 here), got '+CAL.none.curved);
+      // (b) THE TRAP: offsets that name none of these rows is NOT a calibration
+      if(CAL.missOffsets.calibrated !== false || CAL.missOffsets.offsetsUsed !== 0) problems.push('calibrate: an offsets table naming no row must leave calibrated=false -- Number(null) is 0 and would report a calibration on every uncalibrated build, got '+J(CAL.missOffsets));
+      if(!near(CAL.missOffsets.c4m, 5/26, 1e-12)) problems.push('calibrate: a row with no offset entry must keep its percentile, got '+J(CAL.missOffsets));
+      // (c) sign: a POSITIVE delta means a generous board, so it must LOWER the percentile
+      const S = CAL.some;
+      if(S.calibrated !== true || S.offsetsUsed !== 2) problems.push('calibrate: two offsets applied should report calibrated=true and offsetsUsed=2, got '+J(S));
+      if(!(S.c4m < S.c4pctBefore)) problems.push('calibrate: a positive delta must LOWER the percentile (generous board), got '+J(S));
+      if(!(S.c20m > S.c20pctBefore)) problems.push('calibrate: a negative delta must RAISE the percentile (harsh board), got '+J(S));
+      if(!near(S.c4raw, S.c4pctBefore, 1e-12) || !near(S.c20raw, S.c20pctBefore, 1e-12)) problems.push('calibrate: pctRaw must keep the number you can check on the leaderboard, got '+J(S));
+      if(S.c9raw !== null) problems.push('calibrate: an unadjusted row must not claim a pctRaw, got '+J(S.c9raw));
+      // (d) the S3 quantile map, and that it is monotone
+      const M = CAL.mapped;
+      if(!M.lowMapped || !M.highMapped || M.lowScale !== 'pct') problems.push('calibrate: a played curve-less row must be quantile-mapped onto the percentile scale, got '+J(M));
+      if(!(M.lowM < M.highM)) problems.push('calibrate: the quantile map must be monotone -- a higher To 2nd cannot rank lower, got '+J(M));
+      if(!(M.lowM >= 0 && M.highM <= 1)) problems.push('calibrate: a mapped value must stay inside [0,1], got '+J(M));
+      // (e) an unplayed row contributes nothing and is not mapped
+      if(CAL.unplayed.mapped || CAL.unplayed.scale !== 'to2nd') problems.push('calibrate: an unplayed row has no standing to map, got '+J(CAL.unplayed));
+      // (f) under the floor, raw To 2nd
+      if(CAL.thin.mapped || CAL.thin.scale !== 'to2nd' || !near(CAL.thin.m, 0.10, 1e-12)) problems.push('calibrate: under METRIC_MIN_CURVED the fallback is raw To 2nd, got '+J(CAL.thin));
+      // (g) idempotence -- the app calibrates once and hands the same list to two callers
+      if(CAL.idempotent !== true) problems.push('calibrate: a row set that already carries m must be returned untouched');
+      // (h) adjustPercentile algebra
+      const A = CAL.adjust;
+      if(!near(A.zero, 0.5, 1e-12)) problems.push('calibrate: a zero delta is the identity, got '+J(A.zero));
+      if(!(A.down < 0.5 && A.up > 0.5)) problems.push('calibrate: adjustPercentile sign is wrong, got '+J(A));
+      if(!(A.atZero > 0 && A.atOne < 1)) problems.push('calibrate: the eps clamp must keep a 0 or 1 percentile finite, got '+J(A));
+      if(A.nullIn !== null) problems.push('calibrate: adjustPercentile(null) must be null, got '+J(A.nullIn));
+    }
+
     // revisit forecast
     const f = R.forecast && R.forecast.forecast;
     if(!R.forecast || R.forecast.name!=='Sw Old Switch' || !f) problems.push('forecast: Sw Old Switch must carry a forecast, got '+J(R.forecast));

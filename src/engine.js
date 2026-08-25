@@ -905,7 +905,7 @@ const MiniEvxlEngine = (function(){
   // The dataset keeps the whole pool (so it matches the KovaaK's playlist and
   // survives a structure refresh); the selection is a per-browser preference
   // (`mini-evxl-scenario-selection`, benchKey → [names]) with evxl's default
-  // when unset. Owen's call (2026-08-17): the playlist's FULL SCOPE is the
+  // when unset. The owner's call (2026-08-17): the playlist's FULL SCOPE is the
   // pool — every pool scenario is a member of the playlist for Shared/Unique,
   // completion, counts, Quick wins and sync — while the RANK and VOLTS keep
   // evxl's selection-based calculation. So parsedItemsFor() returns the whole
@@ -1206,6 +1206,12 @@ const MiniEvxlEngine = (function(){
   // leaves -0.008 and cannot leave [0,1] at all. Applying it is one line:
   const PCT_EPS = 0.005;   // a percentile of exactly 0 or 1 is the curve's end, not infinite ability
   function adjustPercentile(p, delta){
+    // THE FIFTH TIME (Review Ledger IV BUG-4). Number(null) is 0 and Number.isFinite(0) is
+    // true, so a null percentile fell straight through this guard, got clamped to PCT_EPS and
+    // came back as a real-looking 0.2nd percentile. No caller passes null today -- both guard
+    // first -- which is exactly why it survived being written in the same review that
+    // documented the trap four times. The explicit check is the rule this file keeps re-learning.
+    if(p === null || p === undefined) return null;
     const v = Number(p);
     if(!Number.isFinite(v)) return null;
     const d = Number(delta);
@@ -1219,7 +1225,7 @@ const MiniEvxlEngine = (function(){
 
   // ---- Session engine v0.3 (2026-08-22: percentile metric + transfer routes) ------
   // Composes today's session: `size` items, each with a WHY, from a plain list
-  // of scenarios the app prepares. Built around the loop Owen ran by hand --
+  // of scenarios the app prepares. Built around the loop the owner ran by hand --
   // "sort played scenarios by weakness, high-score the weakest ten, refresh" --
   // with his two fixes (cap difficulty at his level; let the dataset fill out)
   // and, since 2026-08-22, the two things the population data makes possible:
@@ -1292,7 +1298,7 @@ const MiniEvxlEngine = (function(){
   // while the attempts store is empty).
   const CONF_LOW = 0.30, CONF_HIGH = 0.65;
   // ---- Session TYPES (A3, 2026-08-25) ------------------------------------------------
-  // Owen, on using the coach: "I don't like that every session has the same structure.
+  // The owner, on using the coach: "I don't like that every session has the same structure.
   // First I work on my weakest percentile group, 1 scenario spot has me play something
   // I've never played, 1 has me play something I haven't played in 1+ years." That is an
   // accurate description of a fixed 5/2/1/1/1 template filled from the head of a list
@@ -1482,11 +1488,17 @@ const MiniEvxlEngine = (function(){
       if(best===null || total < best.total) best = { i, total, left, right };
     }
     if(!best) return out;
-    // BIC-style penalty for the two extra parameters, on the SSE scale. Without it a
-    // search always returns the least-bad split of pure noise; with it, a straight series
-    // reports null, which is the answer that makes the detector usable.
+    // BIC-style penalty on the SSE scale. Without it a search always returns the least-bad
+    // split of pure noise; with it, a straight series reports null, which is the answer that
+    // makes the detector usable.
+    //
+    // THREE extra parameters, not two (Review Ledger IV COACH-6). Two lines cost four
+    // parameters against one line's two -- and the split POINT is a third, chosen by
+    // searching every interior position for the best one. A location parameter selected by
+    // maximisation is the one that most inflates a fit, so leaving it uncharged made the
+    // detector slightly too eager to date a plateau.
     const variance = whole.sse/Math.max(n-2, 1);
-    const penalty = 2*Math.log(n)*variance;
+    const penalty = 3*Math.log(n)*variance;
     out.penalty = penalty;
     // A series one line already explains exactly has nothing to improve on -- and with a
     // zero residual the penalty is zero too, so without this a float epsilon is enough to
@@ -1916,7 +1928,7 @@ const MiniEvxlEngine = (function(){
     return out.sort((x, y)=> y.lower - x.lower || y.pairs - x.pairs || (x.name<y.name?-1:x.name>y.name?1:0));
   }
   // ---- Soft block membership (Review Ledger III A4, 2026-08-25) ------------------
-  // Owen, on the "(other)" buckets: he hoped that with enough information a scenario could
+  // The owner, on the "(other)" buckets: he hoped that with enough information a scenario could
   // find its way out of one and into a clarified bucket -- and his worked example (a
   // pokeball scenario as a hybrid that leans static clicking) describes a MIXTURE, which
   // a hard partition cannot represent at all.
@@ -2376,6 +2388,18 @@ const MiniEvxlEngine = (function(){
   // (exact only near r = 0, narrower at large |r|), used as a claim-strength
   // floor, never as a test. n = 100 -> ±0.20, 400 -> ±0.10, 1,800 -> ±0.046.
   function rBand(n){ return 1.96/Math.sqrt(Math.max((Number(n)||0)-3, 1)); }
+  // The EXACT interval, which is what overlapOf sorts on (Review Ledger IV COACH-6).
+  // rBand reads the Fisher-z half-width straight off as an r, which is only right near
+  // r = 0 -- and the two lists it feeds are sorted by an interval EDGE, so the
+  // approximation was worst exactly where it was doing the most work: a strong pair on a
+  // thin board. Transform, add, transform back; same inputs, no new assumption. At
+  // n = 100 the approximation puts r = 0.60's lower edge at 0.40 where it is really 0.45.
+  function rInterval(r, n){
+    const rv = Math.max(-0.999999, Math.min(0.999999, Number(r)||0));
+    const half = 1.96/Math.sqrt(Math.max((Number(n)||0)-3, 1));
+    const z = Math.atanh(rv);
+    return { lo: Math.tanh(z - half), hi: Math.tanh(z + half) };
+  }
   const TRANSFER_META_KEYS = ['meta', 'labels', 'pairs', 'clusters'];
   // The adjacency index over the shipped pairs. source 'pairs' when the pairs
   // block exists (every tested pair, both directions decoded once); 'legacy'
@@ -2438,7 +2462,12 @@ const MiniEvxlEngine = (function(){
   function overlapOf(name, index, opts){
     const o = Object.assign({ minN: 100, minR: 0.3, unrelatedR: 0.15 }, opts||{});
     const legacy = index.source!=='pairs';
-    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>({ name: e.name, r: e.r, n: e.n, band: rBand(e.n) }));
+    // `lo`/`hi` are the exact interval edges; `band` is its half-width, kept because the
+    // page prints a +/- and because a symmetric number is what a reader expects there.
+    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>{
+      const ci = rInterval(e.r, e.n);
+      return { name: e.name, r: e.r, n: e.n, lo: ci.lo, hi: ci.hi, band: (ci.hi - ci.lo)/2 };
+    });
     const withR = [], against = [], weak = [], unrelated = [];
     let inconclusive = 0;
     rows.forEach(row=>{
@@ -2446,11 +2475,13 @@ const MiniEvxlEngine = (function(){
       if(row.r >= o.minR) withR.push(row);
       else if(row.r <= -o.minR) against.push(row);
       else if(a >= o.unrelatedR) weak.push(row);
-      else if(a + row.band < o.minR) unrelated.push(row);
+      // "unrelated" needs the WHOLE interval inside the strong floor, which is what the
+      // approximate `|r| + band` was reaching for; with exact edges it is just both ends.
+      else if(Math.max(Math.abs(row.lo), Math.abs(row.hi)) < o.minR) unrelated.push(row);
       else inconclusive++;
     });
-    withR.sort((x,y)=> (y.r-y.band)-(x.r-x.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
-    against.sort((x,y)=> (x.r+x.band)-(y.r+y.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    withR.sort((x,y)=> y.lo-x.lo || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    against.sort((x,y)=> x.hi-y.hi || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     weak.sort((x,y)=> Math.abs(y.r)-Math.abs(x.r) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     unrelated.sort((x,y)=> y.n-x.n || Math.abs(x.r)-Math.abs(y.r) || (x.name<y.name?-1:x.name>y.name?1:0));
     return { tested: rows.length, with: withR, against, weak, unrelated: legacy ? null : unrelated, inconclusive: legacy ? 0 : inconclusive, complete: !legacy };
@@ -2502,11 +2533,18 @@ const MiniEvxlEngine = (function(){
       .sort((a,b)=> b.size-a.size || (a.id<b.id?-1:a.id>b.id?1:0));
     const cell = (a, b) => { const c = cells.get(key(a, b)); return c ? { meanR: c.sum/c.tested, tested: c.tested, strongPos: c.strongPos, strongNeg: c.strongNeg } : null; };
     const cohesion = id => { const c = cell(id, id); return c ? c.meanR : null; };
+    // The disattenuation ratio. It is UNBOUNDED, and a value above 1 is not a big number --
+    // it is the measurement saying the two groups share more than either shares with
+    // itself, i.e. they are one construct measured twice (or a cohesion denominator too
+    // small to divide by). Nothing flagged that, so it rendered as just another cell
+    // (Review Ledger IV COACH-6). `overlap` keeps returning the raw ratio so no caller
+    // changes; `overlapSaturated` is the flag the page reads.
     const overlap = (a, b) => {
       const c = cell(a, b), ca = cohesion(a), cb = cohesion(b);
       if(!c || ca===null || cb===null || ca < o.minCohesion || cb < o.minCohesion) return null;
       return c.meanR/Math.sqrt(ca*cb);
     };
+    const overlapSaturated = (a, b) => { const ov = overlap(a, b); return ov!==null && ov > 1; };
     const pairCache = new Map();
     const pairs = (a, b) => {
       const k = key(a, b); if(pairCache.has(k)) return pairCache.get(k);
@@ -2518,7 +2556,7 @@ const MiniEvxlEngine = (function(){
       });
       pairCache.set(k, out); return out;
     };
-    return { groups, cell, cohesion, overlap, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
+    return { groups, cell, cohesion, overlap, overlapSaturated, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
   }
   // The greedy "practise separately" set over a group matrix. Walk the groups
   // in `order` -- 'evidence' (size desc, id asc: a property of the map, the same
@@ -2626,7 +2664,7 @@ const MiniEvxlEngine = (function(){
     return fn;
   }
 
-  // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
+  // ---- Difficulty attribute (redefined 2026-08-17/18, the owner's design) ----
   // A NINE-rung scale, read as family × nudge:
   //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
   // plus -1 = unrated. Not a continuous index on purpose: the inputs are curators'
@@ -2644,7 +2682,7 @@ const MiniEvxlEngine = (function(){
   //      (most unknown ladders are tracks, not levels). Median across the playlists
   //      carrying the scenario (even count → rounded mean of the middle two).
   //   2. NAME TIER WORDS pull one rung TOWARD their level: "VT Ground Novice S5 Hard"
-  //      placed Easy (1) + "hard" (7) → Easy+ (2) — Owen: a bonus variant built to
+  //      placed Easy (1) + "hard" (7) → Easy+ (2) — the owner: a bonus variant built to
   //      be harder than its base, still an easy-family scenario. The last tier word
   //      in the name is the one that acts (family word first, modifier last).
   //   3. NAME MODIFIERS (size/speed/mechanic words) push by direction × magnitude
@@ -2808,7 +2846,7 @@ const MiniEvxlEngine = (function(){
   function difficultyFamily(label){ const i = DIFF_LABELS.indexOf(label); return i<0 ? '' : DIFF_FAMILY_OF[i]; }
   function difficultyRungOfText(label){ return DIFF_LABELS.indexOf(label); }   // 'Hard+' → 8, '' → -1
 
-  // ---- Skill facets (ratified 2026-08-18, Owen R1-R21) --------------------
+  // ---- Skill facets (ratified 2026-08-18, owner rulings R1-R21) -----------
   // The label-normalization vocabulary from docs/taxonomy-proposal-2026-08-18.md
   // (toolkit): every curator category / subcategory label maps to
   //   m   -> a mechanic: clicking | tracking | switching
@@ -3055,6 +3093,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

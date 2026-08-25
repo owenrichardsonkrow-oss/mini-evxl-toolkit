@@ -195,7 +195,13 @@ check(html.includes('.replace(/"/g,\'&quot;\')'), "esc() no longer escapes '\"'"
 
 // ---- personal strings: identity values must not survive the template build.
 // (First-person design comments are fine; identities are not.)
+// The tracker's build.ps1 carries the same list; this is the half that runs in CI against
+// the released file, and it did not look for the owner's name at all until 2026-08-25
+// (Review Ledger IV BUG-6) -- eleven source comments carried it into every build, because
+// comments are embedded verbatim. A name in a denylist is not a leak; it is what lets the
+// check fail. Write "the owner" in comments that ship.
 check(!/richardsonkrow|mayogobbler/i.test(html), 'personal identity string in template');
+check(!/\bOwen\b/.test(html), "the owner's name survives in the template -- source comments ship verbatim, say \"the owner\" instead");
 check(!/7656119\d{10}/.test(html), 'steam64 id in template');
 const noPlaceholder = html.replace('https://steamcommunity.com/id/yourname/', '');
 check(!/steamcommunity\.com\/(id|profiles)\//.test(noPlaceholder), 'non-placeholder steamcommunity URL in template');

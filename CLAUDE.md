@@ -127,6 +127,30 @@ POWERSHELL copies of the rule with each other, which cannot catch a JS/PS diverg
 and the new check found one immediately (`Get-PctRank 0` answered a percentile where
 `percentileRank` answered null). A checkout without the fixture skips rather than fails.
 
+**Ledger IV step 1 (2026-08-25).** `test/percentile.js` gained a sibling: `test/session.js`
+now pins **`calibrateScenarios`** under `features.calibrate` -- the boundary every ranking
+passes through, which the suite had only ever run on its identity path because the fixture's
+OPTS carries no `offsets`. It failed immediately: `adjustPercentile(null)` answered a
+plausible 0.2nd percentile instead of null, because `Number(null)` is 0 and 0 is finite. That
+is the fifth instance of the trap this project has documented four times; prefer an explicit
+`x === null || x === undefined` check whenever null is a legitimate input.
+
+`overlapOf` now sorts on the **exact** correlation interval (`rInterval`: transform, add,
+transform back) rather than reading a Fisher-z half-width off as an r. Rows carry `lo`/`hi`
+and `band` is the exact half-width. The hand fixture shows why it mattered: ordered by lower
+edge C1's neighbours are Click Three 0.5485, Click Two 0.4575, Mixed One 0.4376, where the
+approximation put Click Two LAST -- subtracting a z-width straight off r over-penalises
+exactly the thin pair it is meant to discount. `groupMatrix` also exposes `overlapSaturated`,
+because a disattenuation ratio above 1 is a statement (these are one construct measured
+twice), not a large number. 148 checks.
+
+**`template-integrity.js` now looks for the owner's name.** It scanned only
+`richardsonkrow|mayogobbler`, and the tracker's build guard derived its needle from
+`SITE.owner` (`'mini'`), so neither caught the bare first name -- which eleven source
+comments had been embedding into every built template, because comments ship verbatim. The
+comments say "the owner" now and both guards name the string literally. A name in a denylist
+is not a leak; it is what lets the check fail.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
