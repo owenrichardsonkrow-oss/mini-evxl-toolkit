@@ -2911,9 +2911,34 @@ const MiniEvxlEngine = (function(){
   //                 shares with B, and it cancels most of the sample-skew
   //                 shrinkage (which scales every r by about the same factor)
   //   pairs(a, b)   [{a, b, r, n}] behind the cell, lazily scanned, cached
+  // ---- CROSS-PLAYLIST MODE (Review Ledger IV step 5c, BLOCK-C3) -------------------------
+  // A2 and R3 measured the confound this exists to remove: pairs whose two scenarios share a
+  // KovaaK's playlist average r +0.254 while pairs that do not average -0.001, and
+  // playlist-mates are 7.6% of tested pairs but supply 54.5% of every edge at |r| >= 0.3.
+  // R3's control then showed 76% of that elevation survives among players who never trained
+  // the shared playlist -- so those edges are mostly real similarity, NOT an artefact. Both
+  // are true, and neither settles the question this mode asks, which is different: does a
+  // group hold together for a reason OTHER than being a playlist people train as a unit?
+  // A block is a claim about a SKILL, and a skill that only coheres inside its own playlist
+  // is not one you can practise separately.
+  //
+  // `plOf(name) -> [playlist keys]`; with `crossPlaylist` every pair sharing a key is skipped,
+  // in the cells AND in `pairs()`, so the inspector shows exactly what the cell was computed
+  // from. Off by default: every pre-5c caller is untouched.
   function groupMatrix(index, groupsOf, opts){
-    const o = Object.assign({ minN: 100, strongR: 0.3, minSize: 1, minCohesion: 0.05 }, opts||{});
+    const o = Object.assign({ minN: 100, strongR: 0.3, minSize: 1, minCohesion: 0.05, plOf: null, crossPlaylist: false }, opts||{});
     const gid = x => String(x);
+    // forEachPair runs over ~124k pairs, so the playlist keys are resolved once per NAME
+    const plCache = new Map();
+    const plKeys = name => { let v = plCache.get(name); if(v===undefined){ v = o.plOf ? (o.plOf(name) || []) : []; plCache.set(name, v); } return v; };
+    const sharesPlaylist = (x, y) => {
+      if(!o.plOf) return false;
+      const px = plKeys(x); if(!px.length) return false;
+      const py = plKeys(y); if(!py.length) return false;
+      for(let i=0; i<px.length; i++){ if(py.indexOf(px[i]) >= 0) return true; }
+      return false;
+    };
+    const skipPair = (x, y) => o.crossPlaylist && sharesPlaylist(x, y);
     const memberOf = new Map();   // name -> [ids]
     const sizes = new Map();
     index.names.forEach(name=>{
@@ -2924,11 +2949,12 @@ const MiniEvxlEngine = (function(){
     const key = (a, b) => { a = gid(a); b = gid(b); return a<=b ? a+'\u0000'+b : b+'\u0000'+a; };
     const cells = new Map();
     const touch = (a, b, r) => {
-      const k = key(a, b); let c = cells.get(k); if(!c){ c = { sum: 0, tested: 0, strongPos: 0, strongNeg: 0 }; cells.set(k, c); }
-      c.sum += r; c.tested++; if(r >= o.strongR) c.strongPos++; else if(r <= -o.strongR) c.strongNeg++;
+      const k = key(a, b); let c = cells.get(k); if(!c){ c = { sum: 0, sumSq: 0, tested: 0, strongPos: 0, strongNeg: 0 }; cells.set(k, c); }
+      c.sum += r; c.sumSq += r*r; c.tested++; if(r >= o.strongR) c.strongPos++; else if(r <= -o.strongR) c.strongNeg++;
     };
     index.forEachPair((x, y, r, n)=>{
       if(n < o.minN) return;
+      if(skipPair(x, y)) return;
       const gx = memberOf.get(x) || [], gy = memberOf.get(y) || [];
       if(!gx.length || !gy.length) return;
       const hit = new Set();
@@ -2937,8 +2963,20 @@ const MiniEvxlEngine = (function(){
     });
     const groups = [...sizes.entries()].filter(([, size])=>size>=o.minSize).map(([id, size])=>({ id, size }))
       .sort((a,b)=> b.size-a.size || (a.id<b.id?-1:a.id>b.id?1:0));
-    const cell = (a, b) => { const c = cells.get(key(a, b)); return c ? { meanR: c.sum/c.tested, tested: c.tested, strongPos: c.strongPos, strongNeg: c.strongNeg } : null; };
+    // `se` is the standard error OF THE MEAN r in the cell. The block gate reads it: a mean
+    // that does not clear its own standard error is not evidence of anything, however many
+    // pairs went into it. Null at one tested pair, where there is no spread to estimate.
+    const cell = (a, b) => {
+      const c = cells.get(key(a, b)); if(!c) return null;
+      const mean = c.sum/c.tested;
+      const varr = c.tested > 1 ? Math.max(0, (c.sumSq - c.sum*c.sum/c.tested)/(c.tested-1)) : null;
+      return { meanR: mean, tested: c.tested, strongPos: c.strongPos, strongNeg: c.strongNeg,
+        sd: varr===null ? null : Math.sqrt(varr), se: varr===null ? null : Math.sqrt(varr/c.tested) };
+    };
     const cohesion = id => { const c = cell(id, id); return c ? c.meanR : null; };
+    const cohesionSe = id => { const c = cell(id, id); return c ? c.se : null; };
+    // Does the group's own cohesion clear its own standard error? Null when it cannot be asked.
+    const cohesionSurvives = id => { const c = cell(id, id); return (!c || c.se===null) ? null : (c.meanR - c.se > 0); };
     // The disattenuation ratio. It is UNBOUNDED, and a value above 1 is not a big number --
     // it is the measurement saying the two groups share more than either shares with
     // itself, i.e. they are one construct measured twice (or a cohesion denominator too
@@ -2957,12 +2995,13 @@ const MiniEvxlEngine = (function(){
       const A = gid(a), B = gid(b); const out = [];
       index.forEachPair((x, y, r, n)=>{
         if(n < o.minN) return;
+        if(skipPair(x, y)) return;
         const gx = memberOf.get(x) || [], gy = memberOf.get(y) || [];
         if((gx.includes(A) && gy.includes(B)) || (gx.includes(B) && gy.includes(A))) out.push({ a: x, b: y, r, n });
       });
       pairCache.set(k, out); return out;
     };
-    return { groups, cell, cohesion, overlap, overlapSaturated, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
+    return { groups, cell, cohesion, cohesionSe, cohesionSurvives, overlap, overlapSaturated, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
   }
   // The greedy "practise separately" set over a group matrix. Walk the groups
   // in `order` -- 'evidence' (size desc, id asc: a property of the map, the same
@@ -2977,7 +3016,13 @@ const MiniEvxlEngine = (function(){
   //   { kept: [{id, size, cohesion, tested, coveredBy: [{id, overlap}]}],
   //     incoherent: [{id, cohesion}], thin: [{id, tested, vs}], skipped: [{id, by, overlap}] }
   function independentGroups(matrix, opts){
-    const o = Object.assign({ maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence', standing: null, eligible: null }, opts||{});
+    // `requireSe` (step 5c): a group's cohesion must clear its OWN standard error to be kept.
+    // A floor alone accepts a mean of 0.11 over pairs scattered from -0.4 to +0.6 as readily
+    // as one over pairs all near 0.11, and only the second is a skill holding together. This
+    // is the same instinct as blockRouteCandidates requiring `mean - se > 0` and overlapOf
+    // sorting on the lower edge of an interval -- no invented threshold, the measurement's
+    // own spread decides. Off by default so every pre-5c caller is unchanged.
+    const o = Object.assign({ maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence', standing: null, eligible: null, requireSe: false }, opts||{});
     let cands = matrix.groups.filter(g=>!o.eligible || o.eligible(g.id));
     if(o.order==='weakness'){
       const st = id => { const s = o.standing && (o.standing instanceof Map ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
@@ -2991,7 +3036,11 @@ const MiniEvxlEngine = (function(){
       const own = matrix.cell(g.id, g.id);
       if(!own || own.tested < o.minTested){ thin.push({ id: g.id, tested: own ? own.tested : 0, vs: null }); continue; }
       const coh = matrix.cohesion(g.id);
-      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh }); continue; }
+      if(coh===null || coh < o.minCohesion){ incoherent.push({ id: g.id, cohesion: coh, why: 'floor' }); continue; }
+      if(o.requireSe){
+        const se = matrix.cohesionSe ? matrix.cohesionSe(g.id) : null;
+        if(se===null || !(coh - se > 0)){ incoherent.push({ id: g.id, cohesion: coh, se, why: 'se' }); continue; }
+      }
       let verdict = null;
       for(const k of kept){
         const c = matrix.cell(g.id, k.id);
