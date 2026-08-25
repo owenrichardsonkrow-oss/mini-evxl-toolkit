@@ -1252,6 +1252,33 @@ const MiniEvxlEngine = (function(){
     const c = Math.min(Math.max(v, PCT_EPS), 1-PCT_EPS);
     return 1/(1+Math.exp(-(Math.log(c/(1-c)) - d)));
   }
+  // ---- The uncertainty of that number (Review Ledger IV step 7, Q7) ---------------
+  // Every percentile this coach ranks on is an estimate, and until now it was carried as
+  // though it were exact. Two of its errors are MEASURED rather than guessed:
+  //   * the board offset's own standard error -- the fit computed it for the shrinkage and
+  //     threw it away; it now ships as the third element of each offsets.json row. Where the
+  //     offset was fitted this is small (a posterior sd over hundreds of sampled players);
+  //     where it was PREDICTED from board size it is the regression's residual sd, several
+  //     times wider, which is the honest statement that we do not know that board.
+  //   * the block standing's standard error, since step 6's pooling mixes the two.
+  // The ranked value is pooled = icc*block + (1-icc)*own, so its variance is the weighted
+  // sum -- the two are independent to the accuracy that matters (the standing is a median
+  // over dozens of members, so one member's contribution to it is negligible).
+  // The offset error lives in LOGIT space and the standing in PERCENTILE space, so the
+  // first is carried across by the delta method: d(pct)/d(logit) = p(1-p).
+  // NOT included, and worth saying out loud: the run-to-run variation in your own score,
+  // which is real and unmeasured here. This is the uncertainty of the SCALE, not of you.
+  function metricSpread(value, seLogit, icc, seBlock){
+    const v = Number(value), s = Number(seLogit);
+    if(value===null || value===undefined || !Number.isFinite(v)) return null;
+    const w = (icc===null || icc===undefined || !Number.isFinite(Number(icc))) ? 0 : Math.min(1, Math.max(0, Number(icc)));
+    const c = Math.min(Math.max(v, PCT_EPS), 1-PCT_EPS);
+    const own = (seLogit===null || seLogit===undefined || !Number.isFinite(s) || s<0) ? null : (1-w)*s*c*(1-c);
+    const b = Number(seBlock);
+    const blk = (seBlock===null || seBlock===undefined || !Number.isFinite(b) || b<0) ? 0 : w*b;
+    if(own===null) return blk>0 ? blk : null;
+    return Math.sqrt(own*own + blk*blk);
+  }
   // "38th percentile" / "top 12%" wording for a 0..1 rank.
   function ordinal(n){ const m100 = n % 100, m10 = n % 10; return n + ((m100>=11 && m100<=13) ? 'th' : m10===1 ? 'st' : m10===2 ? 'nd' : m10===3 ? 'rd' : 'th'); }
   function percentileLabel(p){ if(p===null || p===undefined) return ''; const top = Math.round((1-p)*100); return top<=50 ? 'top '+Math.max(1,top)+'%' : ordinal(Math.max(1, Math.round(p*100)))+' percentile'; }
@@ -1353,8 +1380,51 @@ const MiniEvxlEngine = (function(){
     collect:  { weakest: 3, route: 1, fillout: 0, quickwin: 1, revisit: 5 },
     breadth:  { weakest: 3, route: 1, fillout: 4, quickwin: 1, revisit: 1 }
   };
-  const SAMPLE_TEMP = 0.05;           // A3: weakness-weighted sampling temperature, in percentile points
-  const SAMPLE_RECENT_DAMP = 0.25;    // ...and how hard a scenario served in the last few sessions is damped
+  // A3's sampling width, in percentile points. NEXT-2 proposed replacing it outright with
+  // the measured spread; that was tried and MEASURED, and it does not survive. The measured
+  // spread of a well-fitted scenario is about +-1.4 points, a third of this, and simulating
+  // 300 days of rotation on the owner's data the pure-Thompson coach served 20 distinct
+  // scenarios in the weakest slice against the softmax's 76 (effective count 9.6 against
+  // 22.6, top ten taking 95% of the slots against 71%, median repeat gap 2 days against 4).
+  // That is the failure A3 exists to prevent, arriving through the front door.
+  //
+  // The reason is that the measured spread is a LOWER BOUND on what we do not know: it is
+  // the error of the board CALIBRATION and of the block standing, and it omits the run-to-run
+  // variation in the player's own score and the curve's own sampling error, neither of which
+  // this project measures yet. Thompson sampling from a lower bound systematically
+  // under-explores, and the direction of that error is knowable in advance.
+  //
+  // So the two are SEPARATED rather than conflated, which is the honest form of both:
+  //   EXPLORE_SD   a policy choice -- D1's "floor-biased, never 100% to the argmin", and the
+  //                A3 finding that a slow-moving list served head-first makes every session
+  //                look the same. It is not a claim about knowledge and never was, and it
+  //                keeps its old Gumbel form so the rotation it was tuned for is unchanged.
+  //   metricSpread what is actually measured, ADDED to it. Near zero where the board is well
+  //                sampled, where it correctly does nothing; 8x larger where the offset was
+  //                estimated from board size, which is where the coach should be unsure.
+  //
+  // The shipped form was simulated over the same 300 days and it is strictly more varied
+  // than what it replaces: 83 distinct scenarios in the weakest slice against 76, effective
+  // count 26.9 against 22.6, top ten taking 65% of the slots against 71%, and the modal
+  // first pick down from 32% of days to 25%. About 11% of weakest slots now go to rows whose
+  // measured interval is at least a full 5 points wide -- 13 distinct scenarios the old
+  // sampler had no reason to prefer. That is the whole of NEXT-2's intent, and it arrives
+  // through the term that is measured rather than through the one that was chosen.
+  const EXPLORE_SD = 0.05;
+  const SAMPLE_TEMP = EXPLORE_SD;   // the old name, kept for the note threshold below
+  // How hard a scenario served in the last few sessions is damped. It was a weight
+  // multiplier under the softmax; Thompson sampling has no weights, so it is the exact
+  // equivalent expressed as a penalty on the key: a factor f under temperature T is a shift
+  // of -T*ln(f), and -0.05*ln(0.25) = 0.0693. Same behaviour, different algebra -- the value
+  // is carried over rather than re-chosen, so step 7 changes the SPREAD and nothing else.
+  const SAMPLE_RECENT_DAMP = 0.25;
+  const SAMPLE_RECENT_PENALTY = -EXPLORE_SD*Math.log(SAMPLE_RECENT_DAMP);
+  // Which SELECTION POLICY produced a day's list. P_VERSION says which forecast produced `p`;
+  // this says which sampler produced the ORDER, so the randomised arm's record can be split
+  // at the point the draw changed instead of pooling two different policies.
+  //   1 = softmax over an invented temperature (release #2, the arm experiment's first days)
+  //   2 = Thompson sampling from the measured spread (step 7)
+  const SELECT_VERSION = 2;
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
@@ -2157,6 +2227,31 @@ const MiniEvxlEngine = (function(){
       const d = Array.isArray(row) ? Number(row[0]) : Number(row);
       return Number.isFinite(d) ? d : null;
     };
+    // step 7 (Q7): the THIRD element of an offsets row is that offset's standard error, in
+    // logit space. A scenario with no offset row at all is at least as badly measured as one
+    // whose offset was PREDICTED, so it takes the estimated rows' se -- read off the table
+    // rather than invented. An older two-element file simply yields null everywhere and the
+    // spread falls back to what it was before this step.
+    let fallbackSe = null;
+    if(o.offsets){
+      const est = [], all = [];
+      Object.keys(o.offsets).forEach(k=>{
+        const row = o.offsets[k];
+        if(!Array.isArray(row) || row.length<3) return;
+        const se = Number(row[2]);
+        if(!Number.isFinite(se) || se<0) return;
+        all.push(se);
+        if(Number(row[1])===0) est.push(se);
+      });
+      const pick = est.length ? est : all;
+      if(pick.length){ pick.sort((a,b)=>a-b); fallbackSe = pick[Math.floor(pick.length/2)]; }
+    }
+    const seOf = name => {
+      if(!o.offsets || !Object.prototype.hasOwnProperty.call(o.offsets, name)) return fallbackSe;
+      const row = o.offsets[name];
+      const se = (Array.isArray(row) && row.length>=3) ? Number(row[2]) : NaN;
+      return (Number.isFinite(se) && se>=0) ? se : fallbackSe;
+    };
     const hasP = sc => sc && sc.pct!==null && sc.pct!==undefined && Number.isFinite(Number(sc.pct));
     const adjOf = new Map();
     let offsetsUsed = 0;
@@ -2177,11 +2272,15 @@ const MiniEvxlEngine = (function(){
       if(!sc) return sc;
       if(adjOf.has(sc.name)){
         const m = adjOf.get(sc.name);
-        return (m===Number(sc.pct)) ? Object.assign({}, sc, { m, mScale: 'pct' })
-                                    : Object.assign({}, sc, { m, mScale: 'pct', pct: m, pctRaw: Number(sc.pct) });
+        const mSe = seOf(sc.name);
+        return (m===Number(sc.pct)) ? Object.assign({}, sc, { m, mScale: 'pct', mSe })
+                                    : Object.assign({}, sc, { m, mScale: 'pct', pct: m, pctRaw: Number(sc.pct), mSe });
       }
-      if(canMap && sc.played){ mapped++; return Object.assign({}, sc, { m: valueAtQuantile(refAdj, quantileOfValue(refT2, Number(sc.to2nd)||0)), mScale: 'pct', mMapped: true }); }
-      return Object.assign({}, sc, { m: Number(sc.to2nd)||0, mScale: 'to2nd' });
+      // a quantile-mapped row has no curve and therefore no offset: it is a badly measured
+      // standing by construction, and it takes the estimated-offset se to say so
+      if(canMap && sc.played){ mapped++; return Object.assign({}, sc, { m: valueAtQuantile(refAdj, quantileOfValue(refT2, Number(sc.to2nd)||0)), mScale: 'pct', mMapped: true, mSe: fallbackSe }); }
+      // a To-2nd row is not on the percentile scale at all, so a logit se would be nonsense
+      return Object.assign({}, sc, { m: Number(sc.to2nd)||0, mScale: 'to2nd', mSe: null });
     });
     out.calibrated = offsetsUsed > 0;
     out.offsetsUsed = offsetsUsed;
@@ -2385,27 +2484,47 @@ const MiniEvxlEngine = (function(){
     const calibrated = !!scenarios.calibrated;
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
-    // Sampling instead of argmin (A3). D1 ratifies floor-BIASED, explicitly not strict
-    // maximin, and taking the head of a slow-moving list every day is what made every
-    // session look the same. This draws without replacement with weight exp(-(key - best)
-    // / SAMPLE_TEMP): a scenario a temperature-width weaker is e times less likely, so the
-    // bias is unchanged in expectation while the particular scenarios move day to day.
-    // Anything served in the last few sessions is damped, so repetition has to be earned.
-    // Deterministic: the same seeded rnd as everything else, so a day's list is stable.
-    const weightedOrder = (list, keyFn, damp) => {
+    // Box-Muller on the same seeded rnd, so a day's draw is as reproducible as its shuffle.
+    const gauss = () => { const u = Math.max(rnd(), 1e-12), v = rnd(); return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v); };
+    // Standard Gumbel. This is not decoration: sampling without replacement with weights
+    // exp(-k/T) -- what A3 did -- is EXACTLY sorting by k - T*Gumbel (the Gumbel-max trick,
+    // Plackett-Luce). Keeping the policy term in this family is what makes step 7 strictly
+    // additive: with no measured spread the draw has the same distribution it always had,
+    // so any change in behaviour is attributable to the measured term and nothing else.
+    // A Gaussian of the same sd is NOT the same thing and the difference is not subtle --
+    // the Gumbel's long tail is what occasionally lifts a far-down scenario to the front,
+    // and swapping families cost 35 of the 76 distinct scenarios in the 300-day simulation.
+    const gumbel = () => { const u = Math.max(rnd(), 1e-12); const l = Math.max(-Math.log(u), 1e-12); return -Math.log(l); };
+    // ---- THOMPSON SAMPLING (Review Ledger IV NEXT-2, step 7) -----------------------
+    // Sampling instead of argmin was already settled (A3): D1 ratifies floor-BIASED,
+    // explicitly not strict maximin, and taking the head of a slow-moving list every day is
+    // what made every session look the same. What was NOT settled was how wide to sample.
+    // It was a softmax over SAMPLE_TEMP -- one invented temperature, the same for every
+    // scenario, so a standing measured over 600 sampled players was jittered exactly as far
+    // as one predicted from a board size.
+    //
+    // Now each candidate draws its key from its own interval -- key + width*N(0,1), ranked by
+    // the draw -- instead of every candidate being jittered by the same invented amount. The
+    // width is the policy exploration sd and the MEASURED spread added in quadrature (see
+    // EXPLORE_SD for why the measured part cannot stand alone). Three consequences:
+    //   * a well-measured weak scenario is jittered by the policy term alone, so the rotation
+    //     behaves as it did before this step -- verified, not assumed;
+    //   * two scenarios whose intervals overlap swap order at the rate the overlap says;
+    //   * a BADLY MEASURED scenario has a much wider interval -- an estimated offset carries
+    //     +-11 points against a fitted one's +-1.4 -- so it draws to the top far more often
+    //     and gets served. That is what "badly-measured skills should get placement
+    //     recommendations" means, and it falls out of the same draw rather than needing a
+    //     rule of its own.
+    // The recent-serve damp survives as the exact penalty its old multiplier was worth.
+    const thompsonOrder = (list, keyFn, spreadFn, damp) => {
       const pool = list.slice();
       if(pool.length < 2) return pool;
-      const keys = new Map(pool.map(sc=>[sc.name, keyFn(sc)]));
-      const best = Math.min(...keys.values());
-      const out = [];
-      while(pool.length){
-        let total = 0;
-        const ws = pool.map(sc=>{ const w = Math.exp(-(keys.get(sc.name) - best)/SAMPLE_TEMP) * (damp && damp(sc) ? SAMPLE_RECENT_DAMP : 1); total += w; return w; });
-        let pick = pool.length - 1, roll = rnd()*total;
-        for(let i=0;i<ws.length;i++){ roll -= ws[i]; if(roll <= 0){ pick = i; break; } }
-        out.push(pool[pick]); pool.splice(pick, 1);
-      }
-      return out;
+      const draw = new Map(pool.map(sc=>{
+        const sd = Number(spreadFn ? spreadFn(sc) : NaN);
+        const known = (Number.isFinite(sd) && sd>0) ? sd : 0;
+        return [sc.name, keyFn(sc) - EXPLORE_SD*gumbel() + known*gauss() + ((damp && damp(sc)) ? SAMPLE_RECENT_PENALTY : 0)];
+      }));
+      return pool.sort((a,b)=> draw.get(a.name)-draw.get(b.name));
     };
     const byName = new Map(scenarios.map(sc=>[sc.name, sc]));
     const rated = scenarios.filter(sc=>sc.rung>=0);
@@ -2469,6 +2588,14 @@ const MiniEvxlEngine = (function(){
     const blockNameOf = sc => { const id = blockOf(sc); if(!id) return null; const b = blockList.find(x=>x.id===id); return b ? b.name : id; };
     const hubDegree = sc => (sc.neighbours||[]).filter(nb=>nb && nb[1]>0 && nb[2]>=100).length;
     const hubBonus = sc => blocks ? HUB_BONUS*Math.min(1, hubDegree(sc)/HUB_FULL) : 0;
+    // BOTH assigned once the block standings exist, and BOTH null until then. `take` runs in
+    // the THIN regime long before that -- a profile with too little played history composes
+    // placement items and returns -- so a `const` defined further down is in its temporal
+    // dead zone at that point and reading it THROWS. Step 6 did exactly that with pooledOf
+    // and the crash reached the dev branch, because Microsoft Edge broke the same afternoon
+    // and dev/run-tests.ps1 (which catches it in the toolkit's empty-profile golden test)
+    // could not be run. The declaration order is the fix; the guard in `take` is the belt.
+    let pooledOf = null, spreadOf = null;
     const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name);
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
@@ -2476,7 +2603,11 @@ const MiniEvxlEngine = (function(){
         forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         // MET-6: what the RANKING used. `m` above is the number you can check; this is the
         // one the order was decided on, carried rather than hidden.
-        mPooled: (()=>{ const v = pooledOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
+        mPooled: (()=>{ if(!pooledOf) return null; const v = pooledOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
+        // step 7: the standard deviation the ORDER was drawn from, in percentile points,
+        // and the board-calibration error it is mostly made of
+        mSpread: (()=>{ if(!spreadOf) return null; const v = spreadOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
+        mSe: Number.isFinite(Number(sc.mSe)) ? Number(sc.mSe) : null,
         pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
@@ -2519,7 +2650,7 @@ const MiniEvxlEngine = (function(){
     // `icc` rides on the block (its cross-playlist cohesion) and `reliability` is that same
     // number through Spearman-Brown over the scenarios the standing is actually made of.
     let blockStats = [];
-    const blockStandingOf = new Map(), blockIccOf = new Map();
+    const blockStandingOf = new Map(), blockIccOf = new Map(), blockSeOf = new Map();
     if(blocks){
       const per = new Map();
       played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
@@ -2527,10 +2658,19 @@ const MiniEvxlEngine = (function(){
         const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 };
         const median = e.pcts.length ? medianOf(e.pcts) : null;
         const icc = (b.icc===null || b.icc===undefined || !Number.isFinite(Number(b.icc))) ? null : Number(b.icc);
+        // step 7: the standing's OWN standard error. It is a median, so 1.2533*sd/sqrt(k) --
+        // the same asymptotic the offset fitter uses, for the same reason.
+        let medianSe = null;
+        if(e.pcts.length > 1){
+          const mean = e.pcts.reduce((a,x)=>a+x, 0)/e.pcts.length;
+          const varr = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
+          medianSe = 1.2533*Math.sqrt(varr)/Math.sqrt(e.pcts.length);
+        }
         if(median!==null) blockStandingOf.set(b.id, median);
         if(icc!==null) blockIccOf.set(b.id, icc);
+        if(medianSe!==null) blockSeOf.set(b.id, medianSe);
         return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median, lastT: e.lastT||null,
-          icc, reliability: standingReliability(e.pcts.length, icc) };
+          icc, reliability: standingReliability(e.pcts.length, icc), medianSe };
       });
     }
     // MET-6: PARTIAL POOLING, and it moves the RANKING only. A scenario's percentile is
@@ -2542,11 +2682,20 @@ const MiniEvxlEngine = (function(){
     // RATIFIED: pool the ranking, DISPLAY the unpooled number. The percentile you see is the
     // one you can check against the KovaaK's leaderboard; the pooled value is what decided
     // the order, and it is carried on the item and named in the reason rather than hidden.
-    const pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
+    pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
       return poolToward(shrunk(sc), blockStandingOf.has(b) ? blockStandingOf.get(b) : null, blockIccOf.has(b) ? blockIccOf.get(b) : null); };
     // The v0.4 weakest key: v0.3's metric, shrunk, POOLED, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
     const weakKey = sc => pooledOf(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
+    // step 7 (Q7): how uncertain that key is. The subtracted terms are policy bonuses rather
+    // than estimates of the standing, so this is the spread of the pooled value itself.
+    spreadOf = sc => {
+      const b = blockOf(sc);
+      const s = metricSpread(shrunk(sc), sc.mSe,
+        (b && blockIccOf.has(b)) ? blockIccOf.get(b) : null,
+        (b && blockSeOf.has(b)) ? blockSeOf.get(b) : null);
+      return (s===null || !Number.isFinite(s) || s<=0) ? null : s;
+    };
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
       .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
     const respNote = sc => { const r = sc.resp; if(!r) return '';
@@ -2562,7 +2711,16 @@ const MiniEvxlEngine = (function(){
       const icc = blockIccOf.get(b);
       return ' — ranked as '+percentileLabel(pooled)+': only '+Math.round(icc*100)+'% of a single scenario standing is the block skill, so the order pulls it that far toward the block ('+percentileLabel(blockStandingOf.get(b))+')';
     };
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+gameNote(sc)+'.';
+    // step 7: named where the interval is at least as wide as the invented temperature it
+    // replaced -- i.e. where it is doing real work in the draw rather than rounding noise.
+    const spreadNote = sc => {
+      const s = spreadOf ? spreadOf(sc) : null;
+      if(s===null || !Number.isFinite(s) || s < SAMPLE_TEMP) return '';
+      const why = sc.mMapped ? 'no population curve here yet, so the scale is inferred from your other scenarios'
+                             : 'this board is too thinly sampled to calibrate directly, so its shift is estimated from board size';
+      return ' — ±'+(s*100).toFixed(1)+' points of measurement error on that standing ('+why+'), and the order is drawn from that interval rather than treating the number as exact';
+    };
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
     // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
     if(rotate){
       const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);
@@ -2593,7 +2751,7 @@ const MiniEvxlEngine = (function(){
     // Built AFTER the type is chosen, because the type sets template.weakest and the pool
     // is sized off it.
     const nonSinkPool = weakPool.filter(sc=>!sinks(sc)), sinkPool = weakPool.filter(sinks);
-    const weakOrdered = rotate ? weightedOrder(nonSinkPool, weakKey, sc=>recentItems.has(sc.name)).concat(sinkPool) : weakPool;
+    const weakOrdered = rotate ? thompsonOrder(nonSinkPool, weakKey, spreadOf, sc=>recentItems.has(sc.name)).concat(sinkPool) : weakPool;
     const perLabel = new Map(), perPl = new Set();
     const spread = [];
     for(const sc of weakOrdered){
@@ -3616,7 +3774,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
-    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    adjustPercentile, calibrateScenarios, metricSpread, SELECT_VERSION, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
