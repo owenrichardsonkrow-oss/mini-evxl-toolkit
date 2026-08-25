@@ -327,6 +327,28 @@ about skill structure.
   structure-with-confidence. ~68 % of tested pairs at n ≥ 100 sit under
   |r| 0.15: unrelated is the norm.
 
+- **The metric became comparable (2026-08-25, Review Ledger III A1 + S3).** D8 said the
+  competency metric is the percentile itself. It was — but a percentile is a rank inside
+  *one* leaderboard, and the leaderboards are not comparable populations. Measured:
+  across the owner's 1,267 curved scenarios `r(log10 board size, percentile) = +0.60`,
+  and inside each of 3,000 sampled players it averages **+0.37**, positive for 96.4% of
+  them. So "raise your floor across all skill types" was being computed on a number that
+  partly encoded how popular each scenario is, and the v0.5.1 block standings — cluster
+  membership needs measured pairs needs a big board — inherited it wholesale. Each
+  scenario now carries a fitted shift of its percentile's logit
+  (`logit(pct) ≈ level + offset`, alternating medians over 7,703 sampled players,
+  re-centred on the median board, empirical-Bayes shrunk by its own reliability), so an
+  adjusted percentile reads as "where you would rank on a typical board". The fitter
+  measures its own claim on every write and refuses to ship a fit that leaves a bias:
+  within-player r **+0.370 → −0.008**. Split-half reliability of the offsets is 0.972.
+  This retires `boardConfidence`'s invented `log10(n)/4` shrinkage — a guessed curve
+  standing in for exactly this bias. Separately, the To-2nd fallback for curve-less
+  scenarios is quantile-mapped onto the same scale (it correlated with the percentile at
+  only r 0.33, and every newly played scenario, having no curve until the next harvest,
+  reliably topped the weakest list). **Falsifiability held to:** the raw board rank is
+  shown beside the calibrated one wherever they differ, because it is the number a
+  player can check on the leaderboard themselves.
+
 ## Staging
 
 Remote-session-doable now: this document; the taxonomy proposal and
@@ -390,3 +412,23 @@ run-history import; both transfer analyses.
 - **D15** — the overlap page's thresholds (overlap cut 0.25, cohesion floor
   0.10, tested floor 30, unrelated ceiling 0.15) are knobs shown as controls,
   not findings, until Owen ratifies them.
+
+2026-08-25 (Review Ledger III):
+
+- **D16** (Owen delegated the call: "whichever you think will lead to me improving
+  most efficiently — your call as the statistics expert") — the competency metric is
+  the **board-calibrated** percentile, and its reference population is the **sampled
+  training population** (players reached at stratified ranks on 24 anchor boards),
+  not everyone who ever loaded the scenario. The coach never needs an absolute rank;
+  it needs "is this scenario weak *for me* relative to my others", which is a
+  residual — and that residual is already the transfer map's own definition of skill,
+  so one quantity now serves both. The caveat is written into the data file, and the
+  raw board rank stays on the page beside the calibrated one, because it is what a
+  player can check for themselves.
+- **D17** — a coach that ranks on a calibrated number must not *also* shrink by
+  `boardConfidence`. That shrinkage was an invented `log10(n)/4` proxying the very
+  bias the offsets measure; applying both puts a board-size term back into the
+  ranking the calibration just removed. Board size is displayed, never silently mixed
+  into the number. Where no offsets are stamped the old shrinkage still applies, so
+  an older build is unchanged — the same "identity without its evidence" rule the
+  v0.4 layers follow.

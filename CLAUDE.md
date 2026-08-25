@@ -43,6 +43,25 @@ personal string survives anywhere. It also copies the shared files (`lib/`,
 **`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
+**Board calibration (2026-08-25, Review Ledger III A1).** The population block now ships
+a fourth product, `offsets` (`data/offsets.json` in the tracker; `{meta, offsets: {name:
+[delta, m]}}`). A percentile is a rank inside ONE leaderboard and the leaderboards are
+not comparable populations — measured across 3,000 sampled players, board size predicts
+percentile at mean r **+0.37** and positively for 96.4% of them — so ranking on raw
+percentiles ranked board popularity. `delta` shifts a percentile's LOGIT so that one
+percentile means the same thing everywhere (`adjustPercentile`), fitted as
+`logit(pct) ~ playerLevel + delta` over 7,703 sampled players and re-centred on the
+median board; `m` is the players behind it, 0 when predicted from the board size. The
+engine's `calibrateScenarios(rows, {offsets})` applies it once at the boundary and also
+quantile-maps a played curve-less scenario's To 2nd onto the same scale (S3), so the
+coach's sort is one quantity rather than two. `boardConfidence` still exists and is
+still exported, but the session stops shrinking by it wherever offsets are present — it
+was an invented `log10(n)/4` standing in for exactly the bias the offsets measure.
+Every page reads the calibrated number and shows the raw board rank beside it wherever
+the two differ. The template ships the same offsets (population data is the same for
+every player); a build stamped before this date has `offsets: {}` and behaves exactly
+as before.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's

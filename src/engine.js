@@ -1074,6 +1074,30 @@ const MiniEvxlEngine = (function(){
     }
     return 0.5;
   }
+  // ---- Board calibration (Review Ledger III S1/A1, 2026-08-25) -------------------
+  // A percentile is a rank inside ONE scenario's leaderboard, and the leaderboards are
+  // not comparable populations: a million-player board is mostly people who played it
+  // once, a thousand-player board is people who sought it out. Measured on the owner's
+  // set, r(log10 board size, his percentile) = +0.60; inside each of 3,000 sampled
+  // players it averages +0.37 and is positive for 96.4% of them, so it is the metric,
+  // not the player. Ranking "weakest by percentile" was therefore ranking board
+  // popularity -- and the block standings built on those percentiles with it.
+  // data/offsets.json (dev/fit-board-offsets.ps1) carries a per-scenario `delta`: a
+  // shift of the percentile's LOGIT, fitted as logit(pct) ~ playerLevel + delta over
+  // 7,703 sampled players and re-centred so the median board's delta is 0. So an
+  // adjusted percentile reads as "where you would rank on a typical board" and stays a
+  // percentile. Logit, not percentile points: measured, the linear form leaves a mean
+  // within-player bias of +0.046 and pushes 2.7% of cells outside [0,1]; the logit form
+  // leaves -0.008 and cannot leave [0,1] at all. Applying it is one line:
+  const PCT_EPS = 0.005;   // a percentile of exactly 0 or 1 is the curve's end, not infinite ability
+  function adjustPercentile(p, delta){
+    const v = Number(p);
+    if(!Number.isFinite(v)) return null;
+    const d = Number(delta);
+    if(!Number.isFinite(d) || d===0) return v;
+    const c = Math.min(Math.max(v, PCT_EPS), 1-PCT_EPS);
+    return 1/(1+Math.exp(-(Math.log(c/(1-c)) - d)));
+  }
   // "38th percentile" / "top 12%" wording for a 0..1 rank.
   function ordinal(n){ const m100 = n % 100, m10 = n % 10; return n + ((m100>=11 && m100<=13) ? 'th' : m10===1 ? 'st' : m10===2 ? 'nd' : m10===3 ? 'rd' : 'th'); }
   function percentileLabel(p){ if(p===null || p===undefined) return ''; const top = Math.round((1-p)*100); return top<=50 ? 'top '+Math.max(1,top)+'%' : ordinal(Math.max(1, Math.round(p*100)))+' percentile'; }
@@ -1386,10 +1410,96 @@ const MiniEvxlEngine = (function(){
       predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null };
     return { sessions, weeks, overall };
   }
+  // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
+  // One pass over the rows that gives every played scenario a number on ONE scale, so
+  // that "weakest" means weakest skill rather than weakest board or weakest metric:
+  //   curved            m = adjustPercentile(pct, delta)   -- the board calibration above
+  //   played, no curve  m = the QUANTILE MAP of its To 2nd onto the distribution of the
+  //                     calibrated percentiles, over the player's own played curved set
+  //   neither           m = To 2nd, exactly as before
+  // Why the quantile map (S3): sessionMetric used to return the percentile where a curve
+  // existed and To 2nd otherwise, and sort ascending on the result -- but the two are not
+  // the same scale and barely the same quantity (r = 0.33 across the owner's played set;
+  // medians 0.730 vs 0.606). A curve-less scenario at the MEDIAN of the To-2nd
+  // distribution entered the sort as if it were in his bottom 32%. Every scenario played
+  // for the first time has no curve until the next harvest, so the newest thing you
+  // played reliably topped your own weakest list -- a self-reinforcing loop, observed
+  // live on 2026-08-24 (a PB set 44 minutes earlier ranked above an 11th-percentile
+  // scenario). The map is monotone, uses only the player's own two distributions, and
+  // needs METRIC_MIN_CURVED of them; under that it falls back to raw To 2nd.
+  // `mScale` says which quantity `m` is, so a reason can name what it compared.
+  const METRIC_MIN_CURVED = 20;
+  // share of `sorted` at or below t, mid-rank so a run of ties maps to its middle
+  function quantileOfValue(sorted, t){
+    let lo = 0, hi = sorted.length;
+    while(lo<hi){ const mid = (lo+hi)>>1; if(sorted[mid] < t) lo = mid+1; else hi = mid; }
+    let end = lo; while(end<sorted.length && sorted[end]<=t) end++;
+    return sorted.length ? (lo+end)/(2*sorted.length) : 0;
+  }
+  // the value at quantile q, linear between order statistics (R type 7)
+  function valueAtQuantile(sorted, q){
+    if(!sorted.length) return null;
+    const pos = Math.min(sorted.length-1, Math.max(0, q*(sorted.length-1)));
+    const lo = Math.floor(pos), hi = Math.min(sorted.length-1, lo+1);
+    return sorted[lo] + (pos-lo)*(sorted[hi]-sorted[lo]);
+  }
+  // Rows in, rows out. Idempotent (a row that already carries `m` is returned untouched),
+  // so the app may calibrate once and hand the same list to composeSession and
+  // skillProfile. opts.offsets = data/offsets.json's `offsets` block, or null: with no
+  // offsets the curved rows keep their raw percentile and only the S3 map applies; with
+  // neither, every row's `m` is exactly what sessionMetric returned before.
+  function calibrateScenarios(scenarios, opts){
+    const list = scenarios || [];
+    if(list.length && list.every(sc=>sc && Number.isFinite(sc.m))) return list;
+    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED }, opts||{});
+    // No offsets table, or no row for this scenario, is NULL -- not 0. Number(null) is 0 and
+    // Number.isFinite(0) is true, so the shorter spelling reported a calibration on every
+    // uncalibrated build and silently switched off the board shrinkage it replaces.
+    const deltaOf = name => {
+      if(!o.offsets || !Object.prototype.hasOwnProperty.call(o.offsets, name)) return null;
+      const row = o.offsets[name];
+      const d = Array.isArray(row) ? Number(row[0]) : Number(row);
+      return Number.isFinite(d) ? d : null;
+    };
+    const hasP = sc => sc && sc.pct!==null && sc.pct!==undefined && Number.isFinite(Number(sc.pct));
+    const adjOf = new Map();
+    let offsetsUsed = 0;
+    list.forEach(sc=>{
+      if(!hasP(sc)) return;
+      const d = deltaOf(sc.name);
+      if(d===null){ adjOf.set(sc.name, Number(sc.pct)); return; }
+      offsetsUsed++; adjOf.set(sc.name, adjustPercentile(sc.pct, d));
+    });
+    // the reference distributions come from the PLAYED curved rows only -- an unplayed
+    // scenario has no standing to contribute and its To 2nd is 0 by construction
+    const refAdj = [], refT2 = [];
+    list.forEach(sc=>{ if(sc && sc.played && adjOf.has(sc.name)){ refAdj.push(adjOf.get(sc.name)); refT2.push(Number(sc.to2nd)||0); } });
+    refAdj.sort((a,b)=>a-b); refT2.sort((a,b)=>a-b);
+    const canMap = refAdj.length >= o.minCurved;
+    let mapped = 0;
+    const out = list.map(sc=>{
+      if(!sc) return sc;
+      if(adjOf.has(sc.name)){
+        const m = adjOf.get(sc.name);
+        return (m===Number(sc.pct)) ? Object.assign({}, sc, { m, mScale: 'pct' })
+                                    : Object.assign({}, sc, { m, mScale: 'pct', pct: m, pctRaw: Number(sc.pct) });
+      }
+      if(canMap && sc.played){ mapped++; return Object.assign({}, sc, { m: valueAtQuantile(refAdj, quantileOfValue(refT2, Number(sc.to2nd)||0)), mScale: 'pct', mMapped: true }); }
+      return Object.assign({}, sc, { m: Number(sc.to2nd)||0, mScale: 'to2nd' });
+    });
+    out.calibrated = offsetsUsed > 0;
+    out.offsetsUsed = offsetsUsed;
+    out.mapped = mapped;
+    out.curved = refAdj.length;
+    return out;
+  }
   function seededRandom(seed){ let s = (seed>>>0) || 1; return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   function medianOf(arr){ const s = arr.slice().sort((a,b)=>a-b); const n=s.length; if(!n) return null; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
-  // The competency number for one scenario: percentile where a curve exists, else To 2nd.
-  const sessionMetric = sc => (sc.pct!==null && sc.pct!==undefined) ? sc.pct : sc.to2nd;
+  // The competency number for one scenario. `m` is calibrateScenarios' comparable value
+  // (board-adjusted percentile, or a curve-less scenario's To 2nd mapped onto that
+  // scale); a row that never went through it falls back to the pre-2026-08-25 rule --
+  // percentile where a curve exists, else To 2nd -- so every caller still works.
+  const sessionMetric = sc => Number.isFinite(sc.m) ? sc.m : ((sc.pct!==null && sc.pct!==undefined) ? sc.pct : sc.to2nd);
   // Weakness by label over played scenarios: median metric, n. Labels = the
   // scenario's facets when it has any (curator labels normalised, minus pack /
   // section noise), else its raw curator labels.
@@ -1456,8 +1566,14 @@ const MiniEvxlEngine = (function(){
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
   function composeSession(scenarios, opts, playlistFill){
-    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null }, opts||{});
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null }, opts||{});
     playlistFill = playlistFill || {};
+    // Calibrate ONCE, at the boundary (Review Ledger III A1/S3): every comparison below --
+    // the weakest key, routeCheck's "you stand higher here", skillProfile's medians, the
+    // block standings -- then operates on one comparable scale without knowing about it.
+    // Idempotent, so an app that already calibrated for its own strip pays nothing.
+    scenarios = calibrateScenarios(scenarios, { offsets: opts.offsets });
+    const calibrated = !!scenarios.calibrated;
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
     const byName = new Map(scenarios.map(sc=>[sc.name, sc]));
@@ -1469,7 +1585,13 @@ const MiniEvxlEngine = (function(){
     const label = sc => (sc.rung>=0 ? DIFF_LABELS[sc.rung] : 'Unrated');
     const primary = sc => { const l = skillLabelsOf(sc); return l.length ? l[0] : ''; };
     const hasPct = sc => sc.pct!==null && sc.pct!==undefined;
-    const standing = sc => hasPct(sc) ? percentileLabel(sc.pct)+' of players' : 'To 2nd '+pct(Math.min(1, sc.to2nd))+' (no population curve yet)';
+    // What the ranking actually used, said out loud. A calibrated percentile names the raw
+    // one it came from (that is the number you can check on the leaderboard); a curve-less
+    // scenario names the quantile map rather than pretending it has a percentile.
+    const adjNote = sc => (sc.pctRaw!==undefined && sc.pctRaw!==null && Math.abs(sc.pctRaw - sc.pct) >= 0.02) ? ' (adjusted for this board, '+percentileLabel(sc.pctRaw)+' on its own leaderboard)' : '';
+    const standing = sc => hasPct(sc) ? percentileLabel(sc.pct)+' of players'+adjNote(sc)
+      : (sc.mMapped ? 'To 2nd '+pct(Math.min(1, sc.to2nd))+' — no population curve yet, so it ranks where that sits among your curved scenarios ('+percentileLabel(sc.m)+')'
+                    : 'To 2nd '+pct(Math.min(1, sc.to2nd))+' (no population curve yet)');
     // Routes compare on ONE scale: percentile vs percentile when both sides have a
     // curve, To 2nd vs To 2nd otherwise; the route carries which (routeCheck's
     // `cmp`), so its reason reports the quantity that was actually compared.
@@ -1511,7 +1633,8 @@ const MiniEvxlEngine = (function(){
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
         forecast: sc._forecast || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
-        pctShrunk: (hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
+        pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
+        pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
         block: blockOf(sc), blockName: blockNameOf(sc) }); n--; } };
     let popLevel = null;
@@ -1537,7 +1660,12 @@ const MiniEvxlEngine = (function(){
     const sinks = sc => stuck(sc) || plateaued(sc);
     // Small-board shrinkage toward the user's overall level: identity at conf 1
     // (no board size, or >= 10,000 players) and without a popLevel.
-    const shrunk = sc => { const m = sessionMetric(sc); if(!hasPct(sc) || popLevel===null) return m; const cf = conf(sc); return cf>=1 ? m : cf*m + (1-cf)*popLevel; };
+    // RETIRED where the board calibration applies (2026-08-25, Review Ledger III A1).
+    // boardConfidence's log10(n)/4 was an invented curve standing in for exactly the bias
+    // the offsets now measure and remove; applying both would double-count it and put a
+    // board-size term back into the ranking the calibration just took out. Board size is
+    // still shown on every item -- displayed, not silently mixed into the number.
+    const shrunk = sc => { const m = sessionMetric(sc); if(calibrated || !hasPct(sc) || popLevel===null) return m; const cf = conf(sc); return cf>=1 ? m : cf*m + (1-cf)*popLevel; };
     // The v0.4 weakest key: v0.3's metric, shrunk, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
     const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
@@ -1556,7 +1684,7 @@ const MiniEvxlEngine = (function(){
       if(r.state==='responsive' && r.gain>0) return ' — responsive: +'+(r.gain*100).toFixed(1)+' pts/run over '+r.n+' runs'+(r.src==='history' ? ' (from PB raises)' : '');
       if(r.state==='plateaued') return ' — plateaued: '+r.n+' runs, no gain, best recent '+(r.nearPct!==null ? Math.round(r.nearPct*100)+' pts' : 'well')+' under PB';
       return ''; };
-    const shrinkNote = sc => { const cf = conf(sc); return (hasPct(sc) && cf<1 && popLevel!==null) ? ' — board of '+Number(sc.boardN).toLocaleString()+' players (confidence '+cf.toFixed(2)+'), ranked as '+percentileLabel(shrunk(sc)) : ''; };
+    const shrinkNote = sc => { if(calibrated) return ''; const cf = conf(sc); return (hasPct(sc) && cf<1 && popLevel!==null) ? ' — board of '+Number(sc.boardN).toLocaleString()+' players (confidence '+cf.toFixed(2)+'), ranked as '+percentileLabel(shrunk(sc)) : ''; };
     const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+gameNote(sc)+'.';
     // Block standings: median percentile over the played, curved scenarios of each
     // block (the same number the Overlap page shows as 'you N%'); lastT = the newest
@@ -1727,7 +1855,8 @@ const MiniEvxlEngine = (function(){
     take(weakPool, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; });
-    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null };
+    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null,
+      calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0 };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
@@ -2414,6 +2543,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
+    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };

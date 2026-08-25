@@ -99,7 +99,7 @@
     ['Cl Static Micro',     true,  0.30, 0.46, 0.25, 0.35, false, 2, ['static clicking'],                  ['clicking','static'],            [PG],         0, []],
     ['Tr Bounce Ball',      true,  0.31, 0.47, 0.26, 0.30, false, 3, ['bouncesphere'],                     ['tracking','bounce'],            [PH],         0, []],
     ['Sw Evasive Dash',     true,  0.33, 0.48, 0.28, 0.40, false, 3, ['evasive switching'],                ['switching','evasive'],          [PC],         0, []],
-    ['Cl NoCurve Tap',      true,  null, 0.35, 0.30, 0.50, false, 3, ['tap'],                              ['clicking'],                     [PA, PB],     0, []],   // no population curve: To 2nd is its metric
+    ['Cl NoCurve Tap',      true,  null, 0.35, 0.30, 0.50, false, 3, ['tap'],                              ['clicking'],                     [PA, PB],     0, []],   // no population curve: since 2026-08-25 its To 2nd is QUANTILE-MAPPED onto the curved rows' percentile distribution (S3) -- 0.35 sits near the 10th percentile of the fixture's To-2nd values, so it ranks around 0.20 and lands just inside the size-12 top-up, where reading 0.35 as if it were a percentile put it outside
     // the stuck sink: lowest percentile of all, five recent tries at ~80% of the PB
     ['Cl Stuck Flicks',     true,  0.08, 0.25, 0.05, 0.10, false, 3, ['flick'],                            ['clicking','flick'],             [PB],         0, []],
     // route material
@@ -393,8 +393,8 @@
         {"name":"Sw Gap Switch","why":"fillout","via":null},
         {"name":"Cl Easy Flick","why":"quickwin","via":null},
         {"name":"Sw Old Switch","why":"revisit","via":null},
-        {"name":"Sw Switch Basic","why":"weakest","via":null},
-        {"name":"Cl Static Micro","why":"weakest","via":null}
+        {"name":"Cl NoCurve Tap","why":"weakest","via":null},
+        {"name":"Sw Switch Basic","why":"weakest","via":null}
       ] },
     "thin": { "regime": "thin", "level": null, "items": [
         ["Cl Easy Flick","placement","clicking"],
