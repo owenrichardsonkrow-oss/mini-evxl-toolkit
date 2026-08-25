@@ -62,6 +62,21 @@ the two differ. The template ships the same offsets (population data is the same
 every player); a build stamped before this date has `offsets: {}` and behaves exactly
 as before.
 
+**Routes cross playlists, and are scored on a block (2026-08-25, A2).** Measured on the
+shipped map, pairs whose two scenarios share a KovaaK's playlist average r +0.254 and
+pairs that do not average −0.001; playlist-mates are 7.6% of tested pairs but supply
+54.5% of every edge at r >= 0.3, because people train playlists as units. 66.7% of the
+shipped positive neighbour edges were playlist-mates, and for 256 of 632 scenarios every
+one was. So a route may no longer be a playlist-mate, and its evidence is now the whole
+block: `blockRouteCandidates` scores a candidate by its mean r across every member of
+the weak item's block (>= `ROUTE_MIN_PAIRS` measured pairs, and the mean must survive
+its own standard error). The engine takes the pair index through `opts.pairsIndex`;
+without one the behaviour is unchanged. `transfer.labels` no longer feeds the coach at
+all — it is a mean over pairs ALREADY filtered to |r| >= 0.3 at n >= 12, biased upward
+by construction — and the revisit forecast reads the measured neighbourhood from the
+index instead. `bridgeRows` and the Overlap page's bridge table stay, labelled as the
+different statistic they are.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's

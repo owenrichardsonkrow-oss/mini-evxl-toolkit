@@ -11,12 +11,14 @@
 //             spread rules (2 per primary label, 1 per playlist) and the stuck
 //             sink (lowest percentile of all, several recent tries well under
 //             the PB -> not in the five);
-//   route     one scenario-level neighbour route (the others refused: rung over
-//             level+1, already chosen, stuck) and one label bridge (the stronger
-//             bridge by r*log(pairs) wins; among its scenarios the highest
-//             standing), with the same-skill bridge ("static|static clicking")
-//             and the non-skill bridge ("bonus|...") in the table and never
-//             routed;
+//   route     two CROSS-PLAYLIST scenario-level routes (since 2026-08-25 a route may
+//             not be a playlist-mate of the weak item: measured on the shipped map,
+//             playlist-mates are 7.6% of tested pairs but supply 54.5% of every edge
+//             at r >= 0.3, so "practise the other scenario in this benchmark" was
+//             two thirds of what the coach called transfer). The others are refused
+//             for rung over level+1, being already chosen, being a sink -- and now
+//             for sharing a playlist, which is what takes the strongest neighbour of
+//             all (Fx Static Small, r 0.62) out of the running;
 //   fill out  a gap in a mostly-played playlist; quick win (most playlists
 //             first); revisit (longest away, after the quick win took the
 //             15-day one); a size-12 run for the top-up order;
@@ -25,9 +27,13 @@
 //             left, the fallback pick still carries that mechanic as its label --
 //             "Cl Ground Static" labelled switching -- a display wrinkle, kept so
 //             a fix is a deliberate re-bless and not a silent drift);
-//   guards    each refused bridge kind alone in the table, so the refusal is
-//             reached (not vacuous) -- and the r = 0.2 bridge alone, which the
-//             CURRENT engine accepts (see WEAK_BRIDGE_REFUSED below).
+//   guards    the playlist-mate refusal, reached rather than vacuous: the strongest
+//             neighbour in the fixture shares a playlist with its weak item, so a
+//             passing run proves the rule fired rather than never being tested;
+//   blockRoutes  the BLOCK-level route (features.blockRoutes): a candidate scored by
+//             its mean r across every member of the weak item's block, over a
+//             synthetic pairs index, with the block playlist-isolated so the
+//             cross-playlist rule can be satisfied at all.
 // EXPECTED is the engine's own output, pasted, so the test is a snapshot: the
 // closure lift that follows (normalizeLabel / labelFacetSet / sameSkillLabels /
 // noSkillLabel / sessionLevel / isStuck / routeCheck out of composeSession)
@@ -62,15 +68,13 @@
     'dynamic clicking|reactive tracking': [0.55, 30], // real bridge; loses to the next one on r*log(pairs+1)
     'smoothness|reactive tracking': [0.62, 25],       // real bridge; the one the main run takes
     'bonus|target switching': [0.80, 50],             // "bonus" carries no skill (vocabulary: nofacet) -- never a route
-    'speedts|static clicking': [0.20, 120],           // the WEAK bridge (r 0.2) -- see WEAK_BRIDGE_REFUSED
+    'speedts|static clicking': [0.20, 120],           // a weak bridge (r 0.2)
     'target switching|dynamic clicking': [0.45, 18]   // real bridge; no weak item reaches it in the main run
   };
-  // The r = 0.2 bridge: the engine as of 2026-08-22 (v0.3) accepted any r > 0,
-  // so alone in the table it DID become a route (pinned under guards.weakR).
-  // Since v0.4 (2026-08-22 late) the bridge loop refuses r < 0.3 -- the map's
-  // own pair threshold -- so the assertion is inverted: no route may ever come
-  // through it (flag flipped with the guard; EXPECTED.guards.weakR re-blessed).
-  const WEAK_BRIDGE_REFUSED = true;
+  // LABEL_BRIDGES is kept only as a shape reference: since 2026-08-25 nothing in the
+  // coach reads it (Review Ledger III A2/S5 -- it is a mean over pairs already filtered
+  // to |r| >= 0.3 at n >= 12, biased upward by construction). The Overlap page still
+  // renders it through bridgeRows, labelled as the different statistic it is.
   // Run records per scenario (the ATTEMPTS store shape, `{n, last:[[t, s], ...]}`
   // newest first) and the PB they sit against; the row's `att` is
   // attemptSummary(rec, pb, FIXED_MS, 5) exactly as sessionScenarios() builds it.
@@ -89,8 +93,8 @@
   // Level = median rung of the played rows = 4 (Intermediate).
   const ROWS = [
     // the five weakest (percentile ascending), each with a different primary label / playlist story
-    ['Fx Static Wide',      true,  0.12, 0.30, 0.10, 0.35, false, 3, ['static clicking'],                  ['clicking','static'],            [PA],         1, [['Fx Static Small', 0.62, 300], ['Cl Stuck Flicks', 0.55, 220]]],
-    ['Tr Reactive Slow',    true,  0.15, 0.32, 0.12, 0.20, false, 4, ['reactive tracking'],                ['tracking','reactive'],          [PB],         0, []],
+    ['Fx Static Wide',      true,  0.12, 0.30, 0.10, 0.35, false, 3, ['static clicking'],                  ['clicking','static'],            [PA],         1, [['Fx Static Small', 0.62, 300], ['Cl Stuck Flicks', 0.55, 220], ['Cl Dynamic Large', 0.51, 260]]],   // Fx Static Small is the STRONGEST neighbour and shares PA -- a playlist-mate, refused since 2026-08-25; Cl Stuck Flicks is a sink; Cl Dynamic Large [PF] is the cross-playlist route that survives
+    ['Tr Reactive Slow',    true,  0.15, 0.32, 0.12, 0.20, false, 4, ['reactive tracking'],                ['tracking','reactive'],          [PB],         0, [['Tr Smooth Cube', 0.48, 180]]],   // [PD]: cross-playlist, the second route
     ['Sw Speed Small',      true,  0.18, 0.35, 0.15, 0.40, false, 2, ['speedts'],                          ['switching','speed'],            [PC],         0, [['Sw Speed Large', 0.50, 150]]],
     ['Cl Dynamic Mid',      true,  0.22, 0.40, 0.18, 0.25, false, 4, ['dynamic clicking','static'],        ['clicking','dynamic','static'],  [PD],         2, [['Cl Dynamic Mid Hard', 0.70, 400], ['Tr Reactive Slow', 0.40, 200]]],
     ['Tr Smooth Thin',      true,  0.25, 0.42, 0.20, 0.30, false, 3, ['smoothness','bonus'],               ['tracking','smooth'],            [PE],         0, [['Tr Smooth Thin Hard', 0.30, 120]]],
@@ -153,7 +157,12 @@
     return fixture(E).map((sc, i)=> i < 12 ? sc : Object.assign({}, sc, { played: false, pct: null, to2nd: 0, toMax: 0, toNext: 0, maxed: false, att: null }));
   }
   // historySince: the score history covers the last 90 days, so a touched scenario with no raise after T is UNMOVED (counts 0); without it such a scenario is not evidence at all (its runs are only a lower bound on the PB)
-  const OPTS = { size: 10, seed: 1, now: FIXED_MS, labelBridges: LABEL_BRIDGES, historySince: FIXED_MS - 90*86400000 };
+  // No labelBridges: since 2026-08-25 (Review Ledger III A2/S5) nothing in the coach reads
+  // that table. It is the mean r of the pairs that ALREADY passed |r| >= 0.3 at n >= 12 with
+  // no minimum n per pair -- a mean of a truncated tail, biased upward by construction, and
+  // the bridge loop then tested it against the same 0.3 the construction guarantees. The
+  // Overlap page still displays it, labelled as the different statistic it is.
+  const OPTS = { size: 10, seed: 1, now: FIXED_MS, historySince: FIXED_MS - 90*86400000 };
   const item = it => ({ name: it.name, why: it.why, via: it.via ? { target: it.via.target, viaLabel: it.via.viaLabel, r: it.via.r, n: it.via.n } : null });
   const routeOf = it => ({ name: it.name, target: it.via ? it.via.target : null, viaLabel: it.via ? it.via.viaLabel : null });
   function compute(E){
@@ -161,14 +170,19 @@
     const main = E.composeSession(fx, OPTS, FILL);
     const topup = E.composeSession(fixture(E), Object.assign({}, OPTS, { size: 12 }), FILL);
     const thin = E.composeSession(thinFixture(E), OPTS, FILL);
-    const guard = key => { const s = E.composeSession(fixture(E), Object.assign({}, OPTS, { labelBridges: { [key]: LABEL_BRIDGES[key] } }), FILL); return s.items.filter(it=>it.why==='route').map(routeOf); };
+    // A route must CROSS PLAYLISTS (A2/S4): measured on the shipped map, playlist-mates are
+    // 7.6% of tested pairs but supply 54.5% of every edge at r >= 0.3, because people train
+    // playlists as units. Fx Static Small is Fx Static Wide's STRONGEST neighbour (r 0.62 over
+    // 300 players) and shares Pack A with it, so it must never be the route; the weaker
+    // cross-playlist Cl Dynamic Large (r 0.51) is what the weak item gets instead.
+    const guardRoutes = E.composeSession(fixture(E), OPTS, FILL).items.filter(it=>it.why==='route');
     return {
       main: { regime: main.regime, level: main.level, popLevel: main.popLevel,
         weakLabels: main.weakLabels.map(p=>[p.label, p.kind, p.median, p.n]),
         items: main.items.map(item) },
       topup: { items: topup.items.map(item) },
       thin: { regime: thin.regime, level: thin.level, items: thin.items.map(it=>[it.name, it.why, it.label]) },
-      guards: { sameSkill: guard('static|static clicking'), noSkill: guard('bonus|target switching'), weakR: guard('speedts|static clicking') },
+      guards: { routes: guardRoutes.map(routeOf), playlistMateUsed: guardRoutes.some(it=>it.name==='Fx Static Small'), crossPlaylistUsed: guardRoutes.some(it=>it.name==='Cl Dynamic Large') },
       playedRated: { main: fx.filter(sc=>sc.played && sc.rung>=0).length, thin: thinFixture(E).filter(sc=>sc.played && sc.rung>=0).length },
       features: features(E)
     };
@@ -248,6 +262,29 @@
       coverage: sBl.items.filter(it=>it.why==='coverage').map(it=>[it.name, it.block]),
       itemsWithBlock: sBl.items.filter(it=>it.block).length, size: sBl.items.length,
       sameAsV04: JSON.stringify(sBl.items.map(it=>it.name))===JSON.stringify(E.composeSession(fixture(E), OPTS, FILL).items.map(it=>it.name)) };
+    // ---- BLOCK ROUTES (A2/S4, 2026-08-25): the evidence for a route is the whole block.
+    // A candidate outside the weak item's block is scored by its MEAN r across every member
+    // of that block it was tested against, and must survive its own standard error. It also
+    // has to share no playlist with ANY member -- so here the switching block is moved into
+    // a playlist of its own (PI), which is what makes a cross-playlist candidate possible at
+    // all in a fixture this densely shared. Cl Dynamic Large [PF] is given ten measured
+    // pairs into the ten switching scenarios; its single strongest pair is weaker than the
+    // playlist-mate it beats, which is the point -- aggregated evidence over the block wins.
+    const PI = '["Pack I","Intermediate"]';
+    const SWITCHERS = fixture(E).filter(sc=>(sc.facets||[]).includes('switching')).map(sc=>sc.name);
+    const fxBR = fixture(E).map(sc=>(sc.facets||[]).includes('switching') ? Object.assign({}, sc, { plKeys: [PI], playlists: 1 }) : sc);
+    const CAND = 'Cl Dynamic Large';
+    const brNames = SWITCHERS.concat([CAND]);
+    const brE = [];
+    SWITCHERS.forEach((nm, i)=>{ const ai = brNames.indexOf(nm), bi = brNames.indexOf(CAND);
+      brE.push(Math.min(ai, bi), Math.max(ai, bi), 38 + (i % 5), 200 + i*10); });   // r 0.38-0.42 over 200+ shared players
+    const brIndex = E.buildOverlapIndex({ pairs: { minShared: 100, names: brNames, e: brE } });
+    const sBR = E.composeSession(fxBR, Object.assign({}, OPTS, { blocks: BLOCKS, pairsIndex: brIndex }), FILL);
+    const brRoutes = sBR.items.filter(it=>it.why==='route');
+    R.blockRoutes = { routes: brRoutes.map(it=>({ name: it.name, target: it.via && it.via.target, block: it.via && it.via.block })),
+      members: SWITCHERS.length, minPairs: E.ROUTE_MIN_PAIRS,
+      cand: E.blockRouteCandidates(brIndex, new Set(SWITCHERS), {}).map(c=>[c.name, Math.round(c.meanR*1000)/1000, c.pairs, c.lower>0]),
+      thin: E.blockRouteCandidates(brIndex, new Set(SWITCHERS.slice(0, 4)), {}).length };
     R.confWithAtt = E.profileConfidence(fixture(E), FIXED_MS, 45);
     const sLow = E.composeSession(fixture(E), Object.assign({}, OPTS, { confidence: { c: 0.2 } }), FILL);
     const sHigh = E.composeSession(fixture(E), Object.assign({}, OPTS, { confidence: { c: 0.9 } }), FILL);
@@ -292,16 +329,30 @@
     if(!R.shrink.slow || R.shrink.slow.conf!==1 || R.shrink.slow.pctShrunk!==null) problems.push('shrink: a 20,000-player board is the identity (conf 1, no shrunk value), got '+J(R.shrink.slow));
     if(!R.shrink.wide || !near(R.shrink.wide.conf, Math.log10(300)/4, 1e-9) || !/board of 300 players \(confidence 0\.62\), ranked as/.test(R.shrink.wide.reason)) problems.push('shrink: conf = log10(300)/4 and the reason must name the board, its confidence and the shrunk rank: '+J(R.shrink.wide));
     if(R.shrink.weakestOrder[0]!=='Tr Reactive Slow' || R.shrink.weakestOrder.indexOf('Fx Static Wide')!==4) problems.push('shrink: Fx Static Wide (0.12 on 300 players -> ~0.25) must drop from first to fifth of the weakest: '+J(R.shrink.weakestOrder));
+    // block routes (A2)
+    const B2 = R.blockRoutes;
+    if(!B2) problems.push('blockRoutes: missing');
+    else {
+      if(!(B2.minPairs > 0)) problems.push('blockRoutes: the engine exports no ROUTE_MIN_PAIRS');
+      else if(B2.members < B2.minPairs) problems.push('blockRoutes: the fixture must give the block at least ROUTE_MIN_PAIRS ('+B2.minPairs+') members or the candidate can never clear the floor, got '+B2.members);
+      if(!B2.cand.length || B2.cand[0][0]!=='Cl Dynamic Large') problems.push('blockRoutes: the candidate with ten measured pairs into the block must be found, got '+J(B2.cand));
+      else if(!(B2.cand[0][1] > 0.37 && B2.cand[0][1] < 0.43) || B2.cand[0][2]!==B2.members || !B2.cand[0][3]) problems.push('blockRoutes: mean r ~0.40 over '+B2.members+' pairs, surviving its standard error, got '+J(B2.cand[0]));
+      if(B2.thin!==0) problems.push('blockRoutes: under ROUTE_MIN_PAIRS measured pairs there is no claim to make, got '+B2.thin+' candidates');
+      const br = B2.routes.filter(r=>r.block);
+      if(!br.length) problems.push('blockRoutes: no route carried a block -- the block-level path never fired: '+J(B2.routes));
+      else if(br[0].name!=='Cl Dynamic Large') problems.push('blockRoutes: the block route must be the aggregated candidate, got '+J(br));
+    }
     // revisit forecast
     const f = R.forecast && R.forecast.forecast;
     if(!R.forecast || R.forecast.name!=='Sw Old Switch' || !f) problems.push('forecast: Sw Old Switch must carry a forecast, got '+J(R.forecast));
     else {
-      // three pieces of evidence: neighbour A (+0.12, sync-dated), the touched-but-unmoved
-      // neighbour B (0), and the label bridge target switching|dynamic clicking (r 0.45),
-      // whose only touched scenario in "dynamic clicking" is A again (+0.12)
-      const want = [['Cl Wide Pasu', 0.5, 0.12, null, true], ['Tr Control Pill', 0.4, 0, null, false], ['dynamic clicking', 0.45, 0.12, 'dynamic clicking', true]];
-      if(f.evidence.length!==3 || !f.evidence.every((e, i)=> e[0]===want[i][0] && near(e[1], want[i][1], 1e-9) && near(e[2], want[i][2], 1e-9) && e[3]===want[i][3] && e[4]===want[i][4])) problems.push('forecast: evidence must be A (+0.12), the touched-but-unmoved B (0) and the dynamic-clicking bridge (+0.12): '+J(f.evidence));
-      const gain = (0.5*0.12 + 0.4*0 + 0.45*0.12)/(0.5+0.4+0.45);
+      // two pieces of evidence: neighbour A (+0.12, sync-dated) and the touched-but-unmoved
+      // neighbour B (0). The third used to be a LABEL BRIDGE whose only touched scenario was
+      // A counted a second time -- removed 2026-08-25 with the rest of that table (A2/S5);
+      // where a pairs index ships, the forecast reads the measured neighbourhood instead.
+      const want = [['Cl Wide Pasu', 0.5, 0.12, null, true], ['Tr Control Pill', 0.4, 0, null, false]];
+      if(f.evidence.length!==want.length || !f.evidence.every((e, i)=> e[0]===want[i][0] && near(e[1], want[i][1], 1e-9) && near(e[2], want[i][2], 1e-9) && e[3]===want[i][3] && e[4]===want[i][4])) problems.push('forecast: evidence must be A (+0.12) and the touched-but-unmoved B (0), and nothing else -- the third row used to be a label bridge whose only touched scenario was A counted twice: '+J(f.evidence));
+      const gain = (0.5*0.12 + 0.4*0)/(0.5+0.4);
       if(!near(f.gain, gain, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gain-0.02, 1e-9)) problems.push('forecast: gain = r-weighted mean over touched evidence (unmoved counts as 0), margin = nearPct, got '+J(f));
       if(!near(f.p, 1/(1+Math.exp(-(gain-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
       // the BUCKET and the uncalibrated note, never a percentage: p is an invented
@@ -312,7 +363,11 @@
     // Tr Old Smooth: neighbour Tr Recent Sphere +0.10 (r 0.6) and the smoothness|reactive tracking
     // bridge (r 0.62) over its two touched scenarios (+0.10 and 0 -> +0.05): gain 0.075, prior
     // margin 0.05 (no recent-runs reading), odds 0.025 -> p 0.65 -- ahead of the 40-day candidate
-    if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.65]])) problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d, p 0.65) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    // Tr Old Smooth (20 days away) has one neighbour that moved +0.10 at r 0.6; the
+    // 40-day candidate has none, so the forecast reorders the revisit pool past pure
+    // recency. p rose from 0.65 to 0.78 on 2026-08-25 only because the label-bridge row
+    // that used to dilute the r-weighted mean is gone (A2/S5).
+    if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.78]])) problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
     // v0.5 blocks
     const B = R.blocks;
     if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
@@ -375,8 +430,8 @@
         {"name":"Sw Speed Small","why":"weakest","via":null},
         {"name":"Cl Dynamic Mid","why":"weakest","via":null},
         {"name":"Tr Smooth Thin","why":"weakest","via":null},
-        {"name":"Fx Static Small","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.62,"n":300}},
-        {"name":"Tr Smooth Sphere","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":"smoothness","r":0.62,"n":25}},
+        {"name":"Cl Dynamic Large","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.51,"n":260}},
+        {"name":"Tr Smooth Cube","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":null,"r":0.48,"n":180}},
         {"name":"Sw Gap Switch","why":"fillout","via":null},
         {"name":"Cl Easy Flick","why":"quickwin","via":null},
         {"name":"Sw Old Switch","why":"revisit","via":null}
@@ -388,8 +443,8 @@
         {"name":"Sw Speed Small","why":"weakest","via":null},
         {"name":"Cl Dynamic Mid","why":"weakest","via":null},
         {"name":"Tr Smooth Thin","why":"weakest","via":null},
-        {"name":"Fx Static Small","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.62,"n":300}},
-        {"name":"Tr Smooth Sphere","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":"smoothness","r":0.62,"n":25}},
+        {"name":"Cl Dynamic Large","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.51,"n":260}},
+        {"name":"Tr Smooth Cube","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":null,"r":0.48,"n":180}},
         {"name":"Sw Gap Switch","why":"fillout","via":null},
         {"name":"Cl Easy Flick","why":"quickwin","via":null},
         {"name":"Sw Old Switch","why":"revisit","via":null},
@@ -409,9 +464,11 @@
         ["Cl Maxed Easy","placement","clicking"]
       ] },
     "guards": {
-      "sameSkill": [{"name":"Fx Static Small","target":"Fx Static Wide","viaLabel":null}],
-      "noSkill": [{"name":"Fx Static Small","target":"Fx Static Wide","viaLabel":null}],
-      "weakR": [{"name":"Fx Static Small","target":"Fx Static Wide","viaLabel":null}]
+      "routes": [
+        {"name":"Cl Dynamic Large","target":"Fx Static Wide","viaLabel":null},
+        {"name":"Tr Smooth Cube","target":"Tr Reactive Slow","viaLabel":null}
+      ],
+      "playlistMateUsed": false, "crossPlaylistUsed": true
     },
     "playedRated": {"main":32,"thin":12}
   };
@@ -429,7 +486,8 @@
       for(let i=0;i<n;i++) same(path+'['+i+']', e[i], a[i]);
     });
     ['regime','level'].forEach(k=>same('thin.'+k, expected.thin[k], actual.thin[k]));
-    ['sameSkill','noSkill','weakR'].forEach(k=>same('guards.'+k, expected.guards[k], actual.guards[k]));
+    same('guards.routes', expected.guards.routes, actual.guards.routes);
+    ['playlistMateUsed','crossPlaylistUsed'].forEach(k=>same('guards.'+k, expected.guards[k], actual.guards[k]));
     same('playedRated', expected.playedRated, actual.playedRated);
     // the named probes: the intent, executable, with a message that says which rule moved
     const m = actual.main;
@@ -441,19 +499,16 @@
     if(m.items.filter(it=>it.why==='weakest').some(it=>it.name==='Cl Stuck Flicks')) problems.push('probe: the stuck scenario (lowest percentile, recent tries well under the PB) must sink out of the weakest five');
     const routes = m.items.filter(it=>it.why==='route');
     if(routes.length!==2) problems.push('probe: the main run must carry two routes, got '+routes.length);
-    if(!routes.some(it=>it.via && it.via.viaLabel===null && it.via.target==='Fx Static Wide')) problems.push('probe: the scenario-level neighbour route (Fx Static Small -> Fx Static Wide) is missing');
-    if(!routes.some(it=>it.via && it.via.viaLabel==='smoothness' && it.via.target==='Tr Reactive Slow')) problems.push('probe: the label-bridge route (smoothness -> reactive tracking, for Tr Reactive Slow) is missing');
-    m.items.forEach(it=>{ if(it.via && ['static','static clicking','bonus','target switching'].includes(it.via.viaLabel)) problems.push('probe: a refused bridge kind routed in the main run: '+J(it)); });
+    if(!routes.some(it=>it.name==='Cl Dynamic Large' && it.via && it.via.target==='Fx Static Wide')) problems.push('probe: the cross-playlist route into Fx Static Wide is missing (Cl Dynamic Large, r 0.51 -- the r 0.62 neighbour shares its playlist)');
+    if(!routes.some(it=>it.name==='Tr Smooth Cube' && it.via && it.via.target==='Tr Reactive Slow')) problems.push('probe: the second cross-playlist route (Tr Smooth Cube -> Tr Reactive Slow) is missing');
+    if(routes.some(it=>it.name==='Fx Static Small')) problems.push('probe: a playlist-mate was routed in the main run');
+    m.items.forEach(it=>{ if(it.via && it.via.viaLabel) problems.push('probe: a label-bridge route survived -- that table no longer feeds the coach: '+J(it)); });
     if(actual.thin.regime!=='thin') problems.push('probe: the 12-played fixture must compose in the thin regime, got '+actual.thin.regime);
     if(actual.thin.level!==null) problems.push('probe: thin regime has no level, got '+actual.thin.level);
     if(actual.thin.items.length!==10 || actual.thin.items.some(x=>x[1]!=='placement')) problems.push('probe: thin regime must be 10 placement items, got '+J(actual.thin.items.map(x=>x[1])));
     const g = actual.guards;
-    const onlyNeighbour = (name, rs) => { if(rs.length!==1 || rs[0].viaLabel!==null) problems.push('probe: with only the '+name+' bridge in the table the neighbour route must be the only route, got '+J(rs)); };
-    onlyNeighbour('same-skill (static|static clicking)', g.sameSkill);
-    onlyNeighbour('non-skill (bonus|target switching)', g.noSkill);
-    const weakUsed = g.weakR.some(r=>r.viaLabel==='static clicking' && r.target==='Sw Speed Small');
-    if(WEAK_BRIDGE_REFUSED && weakUsed) problems.push('probe: the r = 0.2 bridge became a route (WEAK_BRIDGE_REFUSED is true): '+J(g.weakR));
-    if(!WEAK_BRIDGE_REFUSED && !weakUsed) problems.push('probe: the r = 0.2 bridge is now refused -- if the r >= 0.3 guard landed on purpose, set WEAK_BRIDGE_REFUSED = true in test/session.js and regenerate EXPECTED (node test/session.js --print); got '+J(g.weakR));
+    if(!g || g.playlistMateUsed) problems.push('probe: Fx Static Small shares Pack A with Fx Static Wide and is its strongest neighbour (r 0.62) -- a playlist-mate must never be a route: '+J(g && g.routes));
+    if(!g || !g.crossPlaylistUsed) problems.push('probe: the cross-playlist route (Cl Dynamic Large, r 0.51) must be taken once the playlist-mate is refused -- if it is missing the refusal is swallowing the slot: '+J(g && g.routes));
     // v0.4 feature cases, by property
     compareFeatures(actual.features, problems);
     return problems;
@@ -470,12 +525,11 @@
       '  "topup": { "items": '+list(actual.topup.items)+' },\n' +
       '  "thin": { "regime": '+line(actual.thin.regime)+', "level": '+line(actual.thin.level)+', "items": '+list(actual.thin.items)+' },\n' +
       '  "guards": {\n' +
-      '    "sameSkill": '+line(actual.guards.sameSkill)+',\n' +
-      '    "noSkill": '+line(actual.guards.noSkill)+',\n' +
-      '    "weakR": '+line(actual.guards.weakR)+'\n  },\n' +
+      '    "routes": '+list(actual.guards.routes)+',\n' +
+      '    "playlistMateUsed": '+line(actual.guards.playlistMateUsed)+', "crossPlaylistUsed": '+line(actual.guards.crossPlaylistUsed)+'\n  },\n' +
       '  "playedRated": '+line(actual.playedRated)+'\n}';
   }
-  const api = { compute, compare, serialize, fixture, thinFixture, FIXED_MS, LABEL_BRIDGES, RUNS, FILL, EXPECTED, WEAK_BRIDGE_REFUSED };
+  const api = { compute, compare, serialize, fixture, thinFixture, FIXED_MS, LABEL_BRIDGES, RUNS, FILL, EXPECTED };
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = api;
     if (require.main === module) {

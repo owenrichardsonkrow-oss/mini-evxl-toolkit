@@ -1125,7 +1125,7 @@ const MiniEvxlEngine = (function(){
   //                 resp: responsiveness() | null, raises:[[t, pctFrom, pctTo], ...] oldest-first,
   //                 runPcts:[[t, pct], ...] newest-first, boardN:int|null, gameHit:bool }]
   //   playlistFill: { benchKey: { name, played, total } }
-  //   opts: { size:10, seed:int (a day number), now:ms, labelBridges,
+  //   opts: { size:10, seed:int (a day number), now:ms, pairsIndex (buildOverlapIndex),
   //           gameWeight:0..1 (0), gameFacets:[...], confidence:{c}|null, template:{...}|null }
   // Returns { regime:'thin'|'normal', level:rung, popLevel:0..1|null, weakLabels:[{label, kind, median, n}],
   //           confidence, template, items:[{ name, why, reason, label, rung, pct, to2nd, toMax, via,
@@ -1189,7 +1189,6 @@ const MiniEvxlEngine = (function(){
   const GAME_FACETS_DEFAULT = ['game:cs/val', 'game:tacfps'];
   const FORECAST_SLOPE = 0.04;                       // logistic slope of the revisit forecast (a stated prior, uncalibrated)
   const FORECAST_PRIOR_MARGIN = 0.05;                // gap to PB assumed when the candidate's recent runs are unknown
-  const FORECAST_MAX_BRIDGES = 3;                    // label bridges that may contribute forecast evidence (strongest by r)
   // The revisit forecast's p is reported as a BUCKET, never a percentage (2026-08-24):
   // it comes from an invented slope over an invented prior margin, so "83%" reads as a
   // measured probability sitting next to real percentiles. ONE rule, at module scope,
@@ -1317,7 +1316,7 @@ const MiniEvxlEngine = (function(){
   // then keep the longest-unplayed order). p = logistic((gain - margin)/
   // FORECAST_SLOPE): a stated prior, logged per item so the return-collect
   // record can say whether 70% means 70%.
-  function revisitForecast(sc, byName, bridges, byLabel, helpers){
+  function revisitForecast(sc, byName, helpers){
     if(!(sc.att && sc.att.lastT>0)) return null;
     const T = sc.att.lastT;
     const hasP = row => row && row.played && row.pct!==null && row.pct!==undefined;
@@ -1330,32 +1329,33 @@ const MiniEvxlEngine = (function(){
       if(historySince!==null && T >= historySince) return { pct: row.pct, synced: false };   // history covers (T, now] and holds no raise: unmoved
       return null;
     };
+    // Evidence = every scenario whose strength co-varies with this one and that you
+    // TOUCHED since the visit. Where the pairs index ships, it is read directly: it holds
+    // every tested pair at n >= its floor, so the evidence is the measured neighbourhood
+    // rather than the shipped top-8 (which is a max-selection over noisy estimates, and
+    // two-thirds playlist-mates). Without an index the shipped list is the fallback.
+    //
+    // The LABEL BRIDGES that used to supply the rest are gone (A2/S5, 2026-08-25). That
+    // table is the mean r of the pairs that ALREADY PASSED |r| >= 0.3 at n >= 12, with no
+    // minimum n per pair -- a mean of a truncated tail, biased upward by construction, and
+    // the code then tested it against the same 0.3 the construction guarantees. The
+    // Overlap page keeps showing it, labelled as the different statistic it is; nothing
+    // decides anything on it any more.
     const evidence = [];
-    (sc.neighbours||[]).forEach(nb=>{
-      if(!(nb[1]>0) || !(nb[2]>=100)) return;
-      const row = byName.get(nb[0]); if(!hasP(row) || !touched(row)) return;
+    const seenEv = new Set();
+    const addEv = (name, r, n) => {
+      if(seenEv.has(name) || name===sc.name) return;
+      const row = byName.get(name); if(!hasP(row) || !touched(row)) return;
       const at = pctAt(row); if(!at) return;
-      evidence.push({ name: row.name, r: nb[1], n: nb[2], delta: row.pct - at.pct, via: null, synced: at.synced });
-    });
-    if(bridges && byLabel && helpers){
-      // A label-rich scenario (nine curator labels is common) would re-count the
-      // same moved scenarios through every bridge, so only the strongest
-      // FORECAST_MAX_BRIDGES bridges by r contribute.
-      const seen = new Set(); const labelEv = [];
-      helpers.labelsOf(sc).forEach(L=>{
-        if(helpers.noSkillLabel(L)) return;
-        Object.keys(bridges).forEach(key=>{
-          const [a,b] = key.split('|'); if(a===b || helpers.sameSkill(a,b)) return;
-          const M = a===L ? b : (b===L ? a : null); if(!M || helpers.noSkillLabel(M) || seen.has(M)) return;
-          const r = bridges[key][0]; if(!(r>0)) return;
-          const rows = (byLabel.get(M)||[]).filter(row=>row.name!==sc.name && hasP(row) && touched(row) && !helpers.labelsOf(row).includes(L));
-          const ds = rows.map(row=>{ const at = pctAt(row); return at ? { d: row.pct - at.pct, synced: at.synced } : null; }).filter(Boolean);
-          if(!ds.length) return;
-          seen.add(M);
-          labelEv.push({ name: M, r, n: ds.length, delta: ds.reduce((s,x)=>s+x.d, 0)/ds.length, via: M, synced: ds.some(x=>x.synced) });
-        });
-      });
-      labelEv.sort((a,b)=> b.r - a.r).slice(0, FORECAST_MAX_BRIDGES).forEach(e=>evidence.push(e));
+      seenEv.add(name);
+      evidence.push({ name: row.name, r, n, delta: row.pct - at.pct, via: null, synced: at.synced });
+    };
+    const idx = helpers && helpers.pairsIndex && typeof helpers.pairsIndex.edges==='function' ? helpers.pairsIndex : null;
+    if(idx){
+      const floor = Number(idx.minShared) > 0 ? Number(idx.minShared) : 100;
+      idx.edges(sc.name).forEach(e=>{ if(e.r>0 && e.n>=floor) addEv(e.name, e.r, e.n); });
+    } else {
+      (sc.neighbours||[]).forEach(nb=>{ if(nb[1]>0 && nb[2]>=100) addEv(nb[0], nb[1], nb[2]); });
     }
     if(!evidence.some(e=>e.delta>0)) return null;
     const wsum = evidence.reduce((s,e)=>s+e.r, 0);
@@ -1546,6 +1546,60 @@ const MiniEvxlEngine = (function(){
       if(!higher) return { ok: false, cmp, why: 'not higher' };
     }
     return { ok: true, cmp, why: null };
+  }
+  // ---- Block-level routes (Review Ledger III A2/S4, 2026-08-25) ------------------
+  // A route is meant to be an INDIRECT path: you are weak at X, so practise Y, because
+  // strength in the two moves together. Measured on the shipped map, that is not what
+  // the scenario-level lists were offering. Of 101,949 tested pairs, the 7,709 whose two
+  // scenarios share a KovaaK's playlist average r +0.254; the other 94,240 average
+  // -0.001. Playlist-mates are 7.6% of tested pairs and supply 54.5% of every edge at
+  // r >= 0.3 -- people train playlists as units, so their scores move together whether
+  // or not the skill transfers. In the shipped per-scenario lists, 3,015 of the 4,520
+  // positive edges (66.7%) are playlist-mates, and for 256 of 632 scenarios EVERY
+  // positive neighbour is one. "Play another scenario from the same benchmark" is not a
+  // discovery; it is more of the same, presented as one.
+  //
+  // Two changes follow. A route must cross playlists. And the evidence moves from ONE
+  // pair to the whole block: for a weak scenario's block B, a candidate y outside B is
+  // scored by its MEAN r across every member of B it was tested against. That is both
+  // better estimated (13-21 measured pairs rather than 1) and far more available --
+  // 4 of the owner's 8 weakest scenarios have no positive neighbour at all, while his
+  // weakest block has 181 cross-playlist candidates at >= 10 pairs.
+  //
+  // The bar is that the link must survive its own uncertainty: mean minus the standard
+  // error of that mean above zero. No invented threshold -- the same instinct as
+  // overlapOf's "sort `with` by the lower edge of the interval", applied to a mean.
+  const ROUTE_MIN_PAIRS = 10;    // fewer measured pairs into the block than this: not a claim
+  // index: buildOverlapIndex's adjacency. memberNames: the block's scenarios (a Set).
+  // opts.exclude: names that cannot be candidates (already chosen, or in the block).
+  // opts.minN: the shared-player floor per pair (the index's own, by default).
+  // Returns [{name, meanR, pairs, sd, lower}] with lower > 0, strongest lower bound first.
+  function blockRouteCandidates(index, memberNames, opts){
+    const o = Object.assign({ exclude: null, minN: index && index.minShared ? index.minShared : 100, minPairs: ROUTE_MIN_PAIRS }, opts||{});
+    if(!index || typeof index.edges!=='function') return [];
+    const acc = new Map();   // candidate -> {sum, sumSq, n}
+    memberNames.forEach(member=>{
+      index.edges(member).forEach(e=>{
+        if(!(e.n >= o.minN)) return;
+        if(memberNames.has(e.name)) return;                        // inside the block is not a route out of it
+        if(o.exclude && o.exclude.has(e.name)) return;
+        let a = acc.get(e.name); if(!a){ a = { sum: 0, sumSq: 0, n: 0 }; acc.set(e.name, a); }
+        a.sum += e.r; a.sumSq += e.r*e.r; a.n++;
+      });
+    });
+    const out = [];
+    acc.forEach((a, name)=>{
+      if(a.n < o.minPairs) return;
+      const mean = a.sum/a.n;
+      if(!(mean > 0)) return;
+      // sample sd of the r's, then the sd of their mean
+      const varr = Math.max(0, (a.sumSq - a.n*mean*mean)/Math.max(a.n-1, 1));
+      const se = Math.sqrt(varr/a.n);
+      const lower = mean - se;
+      if(!(lower > 0)) return;   // the block link does not survive its own uncertainty
+      out.push({ name, meanR: mean, pairs: a.n, sd: Math.sqrt(varr), lower });
+    });
+    return out.sort((x, y)=> y.lower - x.lower || y.pairs - x.pairs || (x.name<y.name?-1:x.name>y.name?1:0));
   }
   // Weakness by label. Default: the scenario's skill labels (facets when it has
   // any, else raw curator labels) -- the session's profile. opts.keyBy 'labels':
@@ -1745,81 +1799,80 @@ const MiniEvxlEngine = (function(){
     } else {
       take(spread, 'weakest', weakReasonB, template.weakest);
     }
-    // ---- ROUTE: for the weakest items, a strong neighbour to train instead/as well.
-    // Neighbour must exist in the pool, sit at or under level+1, not be maxed,
-    // not be stuck, and either be unplayed or stand higher than the weak one --
-    // volume there is productive where volume on the weak one may not be.
-    // (routeCheck, module scope, is that rule; the overlap page marks routes with it.)
-    const weakItems = items.filter(it=>it.why==='weakest').map(it=>byName.get(it.name)).filter(Boolean);
-    const routes = [];
-    weakItems.forEach(w=>{
-      (w.neighbours||[]).forEach(nb=>{
-        const y = byName.get(nb[0]); if(!y || chosen.has(y.name)) return;
-        if(!(nb[1]>0)) return;   // positive co-variation only
-        const rc = routeCheck(y, w, level); if(!rc.ok) return;
-        routes.push({ y, w, r: nb[1], n: nb[2], cmp: rc.cmp });
-      });
-    });
-    routes.sort((a,b)=> b.r*Math.log(b.n) - a.r*Math.log(a.n));
-    const routeSeen = new Set(); const routeList = [];
-    for(const rt of routes){ if(routeSeen.has(rt.w.name) || chosen.has(rt.y.name) || routeList.some(x=>x.y.name===rt.y.name)) continue; routeSeen.add(rt.w.name); routeList.push(rt); }
-    // Label-level fallback (opts.labelBridges: { "a|b": [meanR, scenarioPairs] }, raw
-    // curator labels lower-cased, from the map's comparison block): the weakest
-    // scenarios tend to be the unpopular ones with no scenario-level neighbour, so
-    // bridge through a label the weak one carries -- "strength in M moves with
-    // strength in L across the population" -- and pick a scenario in M at your
-    // level that you stand higher on or haven't played.
-    const bridges = opts.labelBridges || {};
-    // A bridge's two labels must name different skills (sameSkillLabels, module
-    // scope, through the facet vocabulary: "static" / "static clicking" is one
-    // skill spelled twice and is skipped; "tracking" vs "dodge" or "reactive
-    // tracking" vs "smoothness" are real bridges), and neither end may be a label
-    // the vocabulary marks as carrying no skill (noSkillLabel).
-    const sameSkill = sameSkillLabels;
-    const labelsOf = sc => [...new Set((sc.labels||[]).map(normalizeLabel).filter(Boolean))];
-    // scenarios per raw label (built once; the bridge loop and the revisit forecast both read it)
-    let _byLabel = null;
-    const byLabelMap = () => { if(_byLabel) return _byLabel; _byLabel = new Map(); rated.forEach(sc=>{ labelsOf(sc).forEach(l=>{ if(!_byLabel.has(l)) _byLabel.set(l, []); _byLabel.get(l).push(sc); }); }); return _byLabel; };
-    // A bridge weaker than the map's own pair threshold (|r| >= 0.3) is noise, not
-    // a route (overlap review, 2026-08-22; v0.3 accepted any r > 0).
-    const BRIDGE_MIN_R = 0.3;
-    if(routeList.length < template.route && Object.keys(bridges).length){
-      const byLabel = byLabelMap();
+    // ---- ROUTE: the indirect path out of a weak block (A2/S4, 2026-08-25).
+    // A route must CROSS PLAYLISTS -- see blockRouteCandidates for the measurement that
+    // forced that, and for why the evidence is the whole block rather than one pair.
+    // Two kinds, better evidence first:
+    //   block   a scenario outside the weak item's block whose mean r ACROSS THE BLOCK
+    //           survives its own standard error (>= ROUTE_MIN_PAIRS measured pairs)
+    //   pair    the older per-scenario neighbour, now also required to cross playlists
+    // Both must pass routeCheck against the weak item: rated, at or under level+1, not
+    // maxed, not a sink, and either unplayed or standing higher -- volume there is
+    // productive where volume on the weak one may not be.
+    const weakItems = items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>byName.get(it.name)).filter(Boolean);
+    const pairsIndex = opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null;
+    const plOf = sc => new Set(sc && sc.plKeys ? sc.plKeys : []);
+    const sharesPlaylist = (a, b) => { const pa = plOf(a); return (b && b.plKeys || []).some(k=>pa.has(k)); };
+    const routeList = [];
+    const routeSeen = new Set();       // weak items that already have a route
+    const routeTaken = new Set();      // candidates already used as a route
+    // members of a block, and every playlist those members sit in: a candidate sharing
+    // ANY of them is training the same playlist as the block, not bridging into it
+    const blockMembers = new Map();
+    const blockPlaylists = new Map();
+    if(blocks){
+      scenarios.forEach(sc=>{ const b = blockOf(sc); if(!b) return;
+        if(!blockMembers.has(b)){ blockMembers.set(b, new Set()); blockPlaylists.set(b, new Set()); }
+        blockMembers.get(b).add(sc.name); (sc.plKeys||[]).forEach(k=>blockPlaylists.get(b).add(k)); });
+    }
+    if(pairsIndex && blocks){
       for(const w of weakItems){
         if(routeList.length >= template.route) break;
         if(routeSeen.has(w.name)) continue;
-        const cands = [];
-        labelsOf(w).forEach(L=>{
-          if(noSkillLabel(L)) return;
-          Object.keys(bridges).forEach(key=>{
-            const [a,b] = key.split('|'); if(a===b || sameSkill(a,b)) return;
-            const M = a===L ? b : (b===L ? a : null); if(!M || noSkillLabel(M)) return;
-            const [r, pairs] = bridges[key]; if(!(r>=BRIDGE_MIN_R)) return;
-            (byLabel.get(M)||[]).forEach(y=>{
-              if(y.name===w.name || chosen.has(y.name) || routeList.some(x=>x.y.name===y.name)) return;
-              const rc = routeCheck(y, w, level); if(!rc.ok) return;   // level, maxed, stuck/plateaued, standing
-              if(labelsOf(y).includes(L)) return;   // must be a genuinely different label
-              // ...and a genuinely different skill: "static" -> "static clicking" is one
-              // skill spelled twice (identical facet sets), while "reactive tracking" ->
-              // "smooth tracking" shares the mechanic and differs in modifier -- exactly the
-              // indirect route the design wants. So the facet SETS must differ; scenarios
-              // with no facets fall back to the raw-label test above.
-              const fy = skillLabelsOf(y).slice().sort().join('|'), fw = skillLabelsOf(w).slice().sort().join('|');
-              if(fy && fw && fy===fw) return;
-              cands.push({ y, w, r, n: pairs, viaLabel: M, fromLabel: L, labelRoute: true, cmp: rc.cmp });
-            });
-          });
+        const bid = blockOf(w); if(!bid) continue;
+        const members = blockMembers.get(bid); if(!members || !members.size) continue;
+        const plKeys = blockPlaylists.get(bid) || new Set();
+        const exclude = new Set([...chosen, ...routeTaken]);
+        const cands = blockRouteCandidates(pairsIndex, members, { exclude });
+        for(const cand of cands){
+          const y = byName.get(cand.name);
+          if(!y || chosen.has(y.name) || routeTaken.has(y.name)) continue;
+          if((y.plKeys||[]).some(k=>plKeys.has(k))) continue;      // shares a playlist with the block
+          const rc = routeCheck(y, w, level); if(!rc.ok) continue;
+          routeSeen.add(w.name); routeTaken.add(y.name);
+          routeList.push({ y, w, r: cand.meanR, n: cand.pairs, cmp: rc.cmp, blockRoute: true, blockId: bid, blockName: blockNameOf(w), lower: cand.lower });
+          break;
+        }
+      }
+    }
+    // Per-scenario neighbours fill any slot the block routes left, on the same
+    // cross-playlist rule. Before 2026-08-25 this was the only kind and had no such
+    // rule, so two routes in three pointed at the weak scenario's own benchmark.
+    if(routeList.length < template.route){
+      const pairRoutes = [];
+      weakItems.forEach(w=>{
+        if(routeSeen.has(w.name)) return;
+        (w.neighbours||[]).forEach(nb=>{
+          const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || routeTaken.has(y.name)) return;
+          if(!(nb[1]>0)) return;                 // positive co-variation only
+          if(sharesPlaylist(w, y)) return;       // a playlist-mate is not an indirect route
+          const rc = routeCheck(y, w, level); if(!rc.ok) return;
+          pairRoutes.push({ y, w, r: nb[1], n: nb[2], cmp: rc.cmp, blockRoute: false });
         });
-        if(!cands.length) continue;
-        cands.sort((a,b)=> b.r*Math.log(b.n+1) - a.r*Math.log(a.n+1) || (sessionMetric(b.y) - sessionMetric(a.y)));
-        routeSeen.add(w.name); routeList.push(cands[0]);
+      });
+      pairRoutes.sort((a,b)=> b.r*Math.log(b.n) - a.r*Math.log(a.n) || (a.y.name<b.y.name?-1:1));
+      for(const rt of pairRoutes){
+        if(routeList.length >= template.route) break;
+        if(routeSeen.has(rt.w.name) || chosen.has(rt.y.name) || routeTaken.has(rt.y.name)) continue;
+        routeSeen.add(rt.w.name); routeTaken.add(rt.y.name); routeList.push(rt);
       }
     }
     take(routeList.map(rt=>Object.assign({}, rt.y, { _label: primary(rt.y), _route: rt })), 'route',
-      sc=>{ const rt = sc._route; return rt.labelRoute
-        ? 'Route — across the sampled players, strength in "'+rt.viaLabel+'" moves with strength in "'+rt.fromLabel+'" (mean r '+rt.r.toFixed(2)+' over '+rt.n+' scenario pairs), and '+rt.w.name+' is one of your weakest in "'+rt.fromLabel+'"; you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise it. '+label(sc)+'.'
-        : 'Route — strength here moves with '+rt.w.name+' across '+rt.n.toLocaleString()+' players (r '+rt.r.toFixed(2)+'); you '+(sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it')+', so volume here is the indirect way to raise '+rt.w.name+'. '+label(sc)+'.'; },
-      template.route, sc=>({ target: sc._route.w.name, r: sc._route.r, n: sc._route.n, viaLabel: sc._route.viaLabel||null }));
+      sc=>{ const rt = sc._route; const stood = sc.played ? 'stand higher here ('+standingAs(sc, rt.cmp)+' vs '+standingAs(rt.w, rt.cmp)+')' : 'haven\'t played it';
+        return rt.blockRoute
+          ? 'Route — strength here moves with your '+(rt.blockName||'weakest')+' block as a whole (mean r '+rt.r.toFixed(2)+' over '+rt.n+' measured scenario pairs, and it shares no playlist with the block, so this is transfer rather than more of the same benchmark); '+rt.w.name+' is one of your weakest in it, you '+stood+'. '+label(sc)+'.'
+          : 'Route — strength here moves with '+rt.w.name+' across '+rt.n.toLocaleString()+' players (r '+rt.r.toFixed(2)+'), in a different playlist; you '+stood+', so volume here is the indirect way to raise it. '+label(sc)+'.'; },
+      template.route, sc=>({ target: sc._route.w.name, r: sc._route.r, n: sc._route.n, viaLabel: null, block: sc._route.blockRoute ? (sc._route.blockName || sc._route.blockId) : null }));
     // ---- FILL OUT: gaps in the playlists you have mostly played
     const fillPl = Object.keys(playlistFill).map(k=>Object.assign({key:k}, playlistFill[k])).filter(p=>p.total>0 && p.played<p.total && p.played/p.total>=0.6).sort((a,b)=> (b.played/b.total)-(a.played/a.total) || b.total-a.total);
     const fillTargets = new Set(fillPl.map(p=>p.key));
@@ -1832,9 +1885,9 @@ const MiniEvxlEngine = (function(){
     // Candidates with a forecast (a neighbour or bridged label actually moved
     // since the visit) come first by first-try PB odds; the rest keep v0.3's
     // longest-unplayed order -- with no movement anywhere the two are the same list.
-    const helpers = { labelsOf, sameSkill, noSkillLabel, historySince: opts.historySince };
+    const helpers = { historySince: opts.historySince, pairsIndex };
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
-    rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, Object.keys(bridges).length ? bridges : null, Object.keys(bridges).length ? byLabelMap() : null, helpers); });
+    rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
     // The bucket, never the percentage. p comes from a logistic with an INVENTED
     // slope (FORECAST_SLOPE) over an invented prior margin, so "83%" reads as a
@@ -2543,7 +2596,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
-    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED,
+    adjustPercentile, calibrateScenarios, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };

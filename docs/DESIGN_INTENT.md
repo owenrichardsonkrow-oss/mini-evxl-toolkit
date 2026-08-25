@@ -349,6 +349,26 @@ about skill structure.
   shown beside the calibrated one wherever they differ, because it is the number a
   player can check on the leaderboard themselves.
 
+- **Routes became transfer rather than more of the same (2026-08-25, A2).** The founding
+  observation of this project is cross-category: a static-clicking grind that moved speed
+  switching. The map exists to find that, and the coach's "routes" were supposed to be it.
+  Measured, they were not: pairs sharing a KovaaK's playlist average r **+0.254**, pairs
+  that do not average **−0.001**, and playlist-mates supply 54.5% of every strong edge
+  while being 7.6% of tested pairs. Two thirds of the shipped route material was a
+  playlist-mate — "practise the other scenario in this benchmark", which is not an
+  indirect path at all. A route must now cross playlists, and because that alone would
+  have starved a slot the weakest scenarios can rarely fill (4 of the owner's 8 weakest
+  have no positive neighbour whatsoever), the evidence moved up a level: a candidate is
+  scored by its **mean r across every member of the weak item's block**, over 10+ measured
+  pairs, and must survive its own standard error. His weakest block has 181 such
+  candidates where scenario-level had 0–2. **The confound check the protocol asked for
+  and nobody had run** also says what survives it: the within/across-label gap holds at
+  +0.106 among cross-playlist pairs, so D12's weak confirmation stands — but `dynamic
+  clicking` stops cohering (0.120 → 0.063) and was a co-training artefact.
+  Separately, the label-bridge table is out of every decision path: it is the mean of
+  pairs that already passed |r| >= 0.3, so it was a truncated tail tested against the
+  threshold that produced it. The Overlap page still shows it, labelled as such.
+
 ## Staging
 
 Remote-session-doable now: this document; the taxonomy proposal and
