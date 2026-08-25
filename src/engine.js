@@ -1268,12 +1268,79 @@ const MiniEvxlEngine = (function(){
   // first is carried across by the delta method: d(pct)/d(logit) = p(1-p).
   // NOT included, and worth saying out loud: the run-to-run variation in your own score,
   // which is real and unmeasured here. This is the uncertainty of the SCALE, not of you.
-  function metricSpread(value, seLogit, icc, seBlock){
+  // ---- Your best day, priced (Review Ledger IV step 7b, MET-7) --------------------
+  // The system ranks on the PB, and a PB is the MAX of however many times you played. That
+  // inflation was measured on the owner's own runs, by taking each scenario's logged runs as
+  // its own distribution and asking what the expected best-of-j would rank: the percentile
+  // rises from 0.649 at one run to 0.804 at twenty, about +3.4 points per DOUBLING of the
+  // play count over 220 scenarios. It is real, mechanical, and large.
+  //
+  // It is NOT, however, a reason to change the estimator, and that was measured too -- see
+  // CLAUDE.md's step 7b section for the full table. The short version: the population curves
+  // are built from other players' PBs, which are max-of-their-many, so swapping the numerator
+  // for a typical run compares your average against their best. Scored out of sample
+  // (estimator on half your runs, target on the other half) the PB is beaten only where the
+  // run count is tiny, by about one point of sd, and at eight-plus runs a side it wins again.
+  // The confound is matched by the same confound on the other side of the comparison.
+  //
+  // What the measurement DOES produce is the term step 7 had to leave out. Given the runs on
+  // record, the sampling sd of the PB's own percentile has a closed form -- for k draws with
+  // replacement from k observed runs, P(max = the i-th smallest) = (i/k)^k - ((i-1)/k)^k --
+  // so it costs O(k) and no simulation. Measured: median +-4.3 percentile points, and it
+  // falls with the run count exactly as it should (+-5.8 at two runs, +-2.1 at twelve to
+  // twenty). Step 7's calibration spread is +-1.4. THE TERM THAT WAS MISSING IS THREE TIMES
+  // THE ONE THAT WAS SHIPPED, and the page was printing "+-0.3" on scenarios played once.
+  //
+  // With fewer than two runs there is no scatter to observe, so the fallback is the profile's
+  // OWN median coefficient of variation across the scenarios that do have runs (0.069 on the
+  // owner's data) -- a measured constant, recomputed per profile, never a chosen one.
+  //
+  // Both numbers are LOWER BOUNDS: an empirical distribution over k runs is narrower than the
+  // distribution those runs came from, and more so the smaller k is.
+  // Returns { sd, src } -- 'runs' when the scenario's own runs measured it, 'imputed' when
+  // there was only one run and the sd is the profile's median scatter borrowed. The two are
+  // kept apart on purpose: an imputed interval is the best estimate available and belongs on
+  // the page, but it is not evidence about THIS scenario, and the day's order is not steered
+  // by a number borrowed from elsewhere. See CLAUDE.md step 7b for what steering by it does.
+  function runSampleSpread(runs, pctOf, cv){
+    if(typeof pctOf !== 'function') return null;
+    const xs = (runs||[]).map(Number).filter(x=>Number.isFinite(x) && x>0).sort((a,b)=>a-b);
+    if(!xs.length) return null;
+    if(xs.length < 2){
+      const c = Number(cv);
+      if(!Number.isFinite(c) || c<=0) return null;
+      const hi = pctOf(xs[0]*(1+c)), lo = pctOf(Math.max(xs[0]*(1-c), Number.MIN_VALUE));
+      if(hi===null || lo===null || !Number.isFinite(Number(hi)) || !Number.isFinite(Number(lo))) return null;
+      return { sd: Math.abs(Number(hi)-Number(lo))/2, src: 'imputed' };
+    }
+    const k = xs.length;
+    let m = 0, m2 = 0;
+    for(let i=1;i<=k;i++){
+      const w = Math.pow(i/k, k) - Math.pow((i-1)/k, k);
+      const p = pctOf(xs[i-1]);
+      if(p===null || !Number.isFinite(Number(p))) return null;
+      const v = Number(p);
+      m += w*v; m2 += w*v*v;
+    }
+    return { sd: Math.sqrt(Math.max(m2 - m*m, 0)), src: 'runs' };
+  }
+  // `runSe` (step 7b) is an error in the SCENARIO's own reading, exactly like the calibration
+  // error, so the two combine before the pooling weight is applied rather than after.
+  // BUG-4's family, seventh sighting: `Number.isFinite(Number(x)) ? Number(x) : null` turns
+  // a null into 0, because Number(null) is 0 and 0 is finite. On an item field that means
+  // "no calibration error measured" ships as "an error of exactly zero", and the two are not
+  // the same claim. Every optional number on an item goes through this.
+  const numOrNull = v => (v===null || v===undefined || !Number.isFinite(Number(v))) ? null : Number(v);
+  function metricSpread(value, seLogit, icc, seBlock, runSe){
     const v = Number(value), s = Number(seLogit);
     if(value===null || value===undefined || !Number.isFinite(v)) return null;
     const w = (icc===null || icc===undefined || !Number.isFinite(Number(icc))) ? 0 : Math.min(1, Math.max(0, Number(icc)));
     const c = Math.min(Math.max(v, PCT_EPS), 1-PCT_EPS);
-    const own = (seLogit===null || seLogit===undefined || !Number.isFinite(s) || s<0) ? null : (1-w)*s*c*(1-c);
+    const calib = (seLogit===null || seLogit===undefined || !Number.isFinite(s) || s<0) ? null : s*c*(1-c);
+    const rs = Number(runSe);
+    const run = (runSe===null || runSe===undefined || !Number.isFinite(rs) || rs<0) ? null : rs;
+    const ownVar = (calib===null ? 0 : calib*calib) + (run===null ? 0 : run*run);
+    const own = (calib===null && run===null) ? null : (1-w)*Math.sqrt(ownVar);
     const b = Number(seBlock);
     const blk = (seBlock===null || seBlock===undefined || !Number.isFinite(b) || b<0) ? 0 : w*b;
     if(own===null) return blk>0 ? blk : null;
@@ -2217,7 +2284,7 @@ const MiniEvxlEngine = (function(){
   function calibrateScenarios(scenarios, opts){
     const list = scenarios || [];
     if(list.length && list.every(sc=>sc && Number.isFinite(sc.m))) return list;
-    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED }, opts||{});
+    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED, runsOf: null, pctOf: null }, opts||{});
     // No offsets table, or no row for this scenario, is NULL -- not 0. Number(null) is 0 and
     // Number.isFinite(0) is true, so the shorter spelling reported a calibration on every
     // uncalibrated build and silently switched off the board shrinkage it replaces.
@@ -2252,6 +2319,28 @@ const MiniEvxlEngine = (function(){
       const se = (Array.isArray(row) && row.length>=3) ? Number(row[2]) : NaN;
       return (Number.isFinite(se) && se>=0) ? se : fallbackSe;
     };
+    // step 7b: the profile's own median coefficient of variation over the scenarios that have
+    // enough runs to show one. It is what a scenario with a single logged run borrows, because
+    // one run reveals no scatter -- measured from this profile, not chosen.
+    let runCv = null;
+    if(typeof o.runsOf === 'function'){
+      const cvs = [];
+      (scenarios||[]).forEach(sc=>{
+        if(!sc) return;
+        const xs = (o.runsOf(sc.name)||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
+        if(xs.length < 3) return;
+        const mu = xs.reduce((a,b)=>a+b,0)/xs.length;
+        if(!(mu>0)) return;
+        const varr = xs.reduce((a,b)=>a+(b-mu)*(b-mu),0)/(xs.length-1);
+        cvs.push(Math.sqrt(varr)/mu);
+      });
+      if(cvs.length){ cvs.sort((a,b)=>a-b); runCv = cvs[Math.floor(cvs.length/2)]; }
+    }
+    const runSeOf = name => {
+      if(typeof o.runsOf !== 'function' || typeof o.pctOf !== 'function') return null;
+      const v = runSampleSpread(o.runsOf(name), score=>o.pctOf(name, score), runCv);
+      return (v && Number.isFinite(v.sd) && v.sd>=0) ? v : null;
+    };
     const hasP = sc => sc && sc.pct!==null && sc.pct!==undefined && Number.isFinite(Number(sc.pct));
     const adjOf = new Map();
     let offsetsUsed = 0;
@@ -2272,9 +2361,13 @@ const MiniEvxlEngine = (function(){
       if(!sc) return sc;
       if(adjOf.has(sc.name)){
         const m = adjOf.get(sc.name);
-        const mSe = seOf(sc.name);
-        return (m===Number(sc.pct)) ? Object.assign({}, sc, { m, mScale: 'pct', mSe })
-                                    : Object.assign({}, sc, { m, mScale: 'pct', pct: m, pctRaw: Number(sc.pct), mSe });
+        const mSe = seOf(sc.name), rs = runSeOf(sc.name);
+        // mRunSe steers (measured only); mRunSeShown is what the page prints (either)
+        const mRunSe = (rs && rs.src==='runs') ? rs.sd : null;
+        const mRunSeShown = rs ? rs.sd : null, mRunSeSrc = rs ? rs.src : null;
+        const extra = { m, mScale: 'pct', mSe, mRunSe, mRunSeShown, mRunSeSrc };
+        return (m===Number(sc.pct)) ? Object.assign({}, sc, extra)
+                                    : Object.assign({}, sc, extra, { pct: m, pctRaw: Number(sc.pct) });
       }
       // a quantile-mapped row has no curve and therefore no offset: it is a badly measured
       // standing by construction, and it takes the estimated-offset se to say so
@@ -2474,13 +2567,13 @@ const MiniEvxlEngine = (function(){
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
   function composeSession(scenarios, opts, playlistFill){
-    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null }, opts||{});
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null, runsOf: null, pctOf: null }, opts||{});
     playlistFill = playlistFill || {};
     // Calibrate ONCE, at the boundary (Review Ledger III A1/S3): every comparison below --
     // the weakest key, routeCheck's "you stand higher here", skillProfile's medians, the
     // block standings -- then operates on one comparable scale without knowing about it.
     // Idempotent, so an app that already calibrated for its own strip pays nothing.
-    scenarios = calibrateScenarios(scenarios, { offsets: opts.offsets });
+    scenarios = calibrateScenarios(scenarios, { offsets: opts.offsets, runsOf: opts.runsOf, pctOf: opts.pctOf });
     const calibrated = !!scenarios.calibrated;
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -2603,11 +2696,20 @@ const MiniEvxlEngine = (function(){
         forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         // MET-6: what the RANKING used. `m` above is the number you can check; this is the
         // one the order was decided on, carried rather than hidden.
-        mPooled: (()=>{ if(!pooledOf) return null; const v = pooledOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
+        mPooled: (()=>{ if(!pooledOf) return null; return numOrNull(pooledOf(sc)); })(),
         // step 7: the standard deviation the ORDER was drawn from, in percentile points,
         // and the board-calibration error it is mostly made of
-        mSpread: (()=>{ if(!spreadOf) return null; const v = spreadOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
-        mSe: Number.isFinite(Number(sc.mSe)) ? Number(sc.mSe) : null,
+        mSpread: (()=>{ if(!spreadOf) return null; return numOrNull(spreadOf(sc)); })(),
+        mSe: numOrNull(sc.mSe),
+        mRunSe: numOrNull(sc.mRunSe),
+        mRunSeSrc: sc.mRunSeSrc || null,
+        // what the page PRINTS: the same interval with the imputed run scatter folded in,
+        // so a scenario played once stops reading as if it were pinned down
+        mSpreadShown: (()=>{ if(!spreadOf) return null; return numOrNull(spreadOf(sc, true)); })(),
+        // THE SIXTH TIME (BUG-4's family). `Number(sc.att && sc.att.n)` is Number(null) = 0
+        // for a row with no attempt record, Number.isFinite(0) is true, and the next
+        // expression then reads .n off null and throws. Guard the OBJECT, then the number.
+        attN: sc.att ? numOrNull(sc.att.n) : null,
         pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
@@ -2649,11 +2751,21 @@ const MiniEvxlEngine = (function(){
     // own block's standing, so the standings have to exist before the key can be defined.
     // `icc` rides on the block (its cross-playlist cohesion) and `reliability` is that same
     // number through Spearman-Brown over the scenarios the standing is actually made of.
+    // step 7b: how badly THIS scenario's own reading is measured, in percentile points --
+    // its run-sample error and its board-calibration error, the two things step 7 and 7b
+    // measured. This is the `s` in the empirical-Bayes weight further down, and the block
+    // standings need it too, so it is declared ABOVE them (step 6's temporal-dead-zone bug).
+    const ownError = sc => {
+      const v = metricSpread(sessionMetric(sc), sc.mSe, null, null, sc.mRunSe);
+      return (v===null || !Number.isFinite(v) || v<0) ? null : v;
+    };
     let blockStats = [];
-    const blockStandingOf = new Map(), blockIccOf = new Map(), blockSeOf = new Map();
+    const blockStandingOf = new Map(), blockIccOf = new Map(), blockSeOf = new Map(), blockTau2Of = new Map();
     if(blocks){
       const per = new Map();
-      played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
+      played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], errs: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++;
+        if(hasPct(sc)){ e.pcts.push(sc.pct); const v = ownError(sc); if(v!==null) e.errs.push(v*v); }
+        if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
       blockStats = blockList.map(b=>{
         const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 };
         const median = e.pcts.length ? medianOf(e.pcts) : null;
@@ -2666,11 +2778,25 @@ const MiniEvxlEngine = (function(){
           const varr = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
           medianSe = 1.2533*Math.sqrt(varr)/Math.sqrt(e.pcts.length);
         }
+        // step 7b: tau^2, the spread of TRUE standings inside this block -- the observed
+        // spread of its members minus the mean measurement error among them. REPORTED ONLY.
+        // It is what a precision-aware pooling weight would shrink against (see CLAUDE.md's
+        // step 7b open question); nothing ranks on it, because that would revise the pooling
+        // weight step 6 ratified, and because with the imputed single-run errors in the mean
+        // it collapses to ~0 for c:4 and takes every member of that block with it.
+        let tau2 = null;
+        if(e.pcts.length > 1){
+          const mean = e.pcts.reduce((a,x)=>a+x, 0)/e.pcts.length;
+          const obs = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
+          const meanErr = e.errs.length ? e.errs.reduce((a,x)=>a+x, 0)/e.errs.length : 0;
+          tau2 = Math.max(obs - meanErr, 1e-6);
+        }
         if(median!==null) blockStandingOf.set(b.id, median);
         if(icc!==null) blockIccOf.set(b.id, icc);
         if(medianSe!==null) blockSeOf.set(b.id, medianSe);
+        if(tau2!==null) blockTau2Of.set(b.id, tau2);
         return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median, lastT: e.lastT||null,
-          icc, reliability: standingReliability(e.pcts.length, icc), medianSe };
+          icc, reliability: standingReliability(e.pcts.length, icc), medianSe, tau2 };
       });
     }
     // MET-6: PARTIAL POOLING, and it moves the RANKING only. A scenario's percentile is
@@ -2689,11 +2815,16 @@ const MiniEvxlEngine = (function(){
     const weakKey = sc => pooledOf(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
     // step 7 (Q7): how uncertain that key is. The subtracted terms are policy bonuses rather
     // than estimates of the standing, so this is the spread of the pooled value itself.
-    spreadOf = sc => {
+    // `shown` = the interval the page prints, which uses the imputed run scatter as well.
+    // Without the flag it is the interval the DAY'S ORDER is drawn from, which uses only the
+    // part this scenario's own runs measured.
+    spreadOf = (sc, shown) => {
       const b = blockOf(sc);
+      const run = shown ? (Number.isFinite(Number(sc.mRunSeShown)) ? Number(sc.mRunSeShown) : sc.mRunSe) : sc.mRunSe;
       const s = metricSpread(shrunk(sc), sc.mSe,
         (b && blockIccOf.has(b)) ? blockIccOf.get(b) : null,
-        (b && blockSeOf.has(b)) ? blockSeOf.get(b) : null);
+        (b && blockSeOf.has(b)) ? blockSeOf.get(b) : null,
+        run);
       return (s===null || !Number.isFinite(s) || s<=0) ? null : s;
     };
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
@@ -2716,8 +2847,15 @@ const MiniEvxlEngine = (function(){
     const spreadNote = sc => {
       const s = spreadOf ? spreadOf(sc) : null;
       if(s===null || !Number.isFinite(s) || s < SAMPLE_TEMP) return '';
-      const why = sc.mMapped ? 'no population curve here yet, so the scale is inferred from your other scenarios'
-                             : 'this board is too thinly sampled to calibrate directly, so its shift is estimated from board size';
+      // name whichever term is actually responsible, or the note explains the wrong thing
+      const calib = Number.isFinite(Number(sc.mSe)) ? Number(sc.mSe)*Number(sc.m||0.5)*(1-Number(sc.m||0.5)) : 0;
+      const run = Number.isFinite(Number(sc.mRunSe)) ? Number(sc.mRunSe) : 0;
+      const runs = Number((sc.att && sc.att.n) || 0);
+      const why = run > calib
+        ? (runs>=2 ? 'your own scores on it swing that far run to run over the '+runs+' on record'
+                   : 'only '+(runs||'a')+' run'+(runs===1?'':'s')+' on record, so where you stand here is barely measured')
+        : (sc.mMapped ? 'no population curve here yet, so the scale is inferred from your other scenarios'
+                      : 'this board is too thinly sampled to calibrate directly, so its shift is estimated from board size');
       return ' — ±'+(s*100).toFixed(1)+' points of measurement error on that standing ('+why+'), and the order is drawn from that interval rather than treating the number as exact';
     };
     const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
@@ -3774,7 +3912,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
-    adjustPercentile, calibrateScenarios, metricSpread, SELECT_VERSION, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
