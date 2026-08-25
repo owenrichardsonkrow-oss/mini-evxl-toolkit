@@ -1358,6 +1358,41 @@ const MiniEvxlEngine = (function(){
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
+  // ---- The randomised arm (Review Ledger IV NEXT-4, 2026-08-25) ---------------------
+  // Everything else in this tool is: the coach says play X, you play X, we measure what
+  // happened. That cannot separate a good recommendation from improvement you would have
+  // made anyway, because there is no counterfactual anywhere in the record. One exists
+  // only if the coach sometimes does something else, at random, and says nothing.
+  //
+  // A share of revisit slots serve the RUNNER-UP instead of the top pick. When enough have
+  // resolved, the two piles get compared: if the top picks produce more first-try PBs than
+  // the runners-up, the forecast's ORDERING carries information; if not, it is decoration.
+  //
+  // THE B ARM DISPLACES, IT DOES NOT REORDER. Swapping ranks 1 and 2 would serve both and
+  // measure nothing -- the top pick has to be WITHHELD for the contrast to exist. It is not
+  // lost: it stays in the pool and is a candidate again tomorrow.
+  //
+  // REVISITS ONLY, deliberately. A revisit's outcome is measurable in days and already has
+  // a null model (1/(n+1), COACH-2). A route's claim is that it moves a DIFFERENT scenario
+  // weeks later -- a different experiment with a different outcome measure, and running
+  // both at once would confound them.
+  //
+  // BLINDED: nothing on the session page says which arm an item is, because knowing would
+  // change how hard you try and the comparison would then measure your belief as much as
+  // the ranking. The history view reveals the arm only for items that have already
+  // RESOLVED, where it can no longer change the outcome.
+  //
+  // Opt-in (`opts.arm`) and drawn from the same seeded RNG as everything else, so a day's
+  // session is stable across re-renders and every pre-NEXT-4 path is untouched.
+  // THE REALISED SHARE IS AT MOST THIS, and falls below it on a thin candidate pool: a B
+  // slot consumes TWO candidates (the withheld one and the served one), so once the pool is
+  // down to a single candidate the slot is forced back to A. On the toolkit fixture, whose
+  // revisit pool is barely deeper than its slot count, 0.25 realises as about 0.15. On a real
+  // profile the pool is dozens deep and the two coincide. This costs power, not validity:
+  // under "the ordering carries no information" the expected excess over baseline is 0 for
+  // either arm whatever the assignment probability or the slot position happened to be.
+  const ARM_B_SHARE = 0.25;      // share of revisit slots that serve the runner-up
+  const ARM_MIN_PER_ARM = 10;    // resolved items per arm before the comparison gets a verdict
   // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
   // state: { confidence: {c}|null, collectReady: int, weakBlockTouchedDays: number|null,
   //          weakBlockSinks: bool, blocksWithoutStanding: int, recentTypes: [newest first] }
@@ -1860,7 +1895,35 @@ const MiniEvxlEngine = (function(){
       firstTryBase: meanOf(servedOk.map(r=>r.base).filter(Number.isFinite)),
       anyTimeBase: meanOf(servedBaseAny),
       runs: servedOk.reduce((a,r)=>a+r.k, 0) };
-    const overall = { sessions: sessions.length,
+    // ---- NEXT-4: the two piles ------------------------------------------------------
+    // A and B items differ in `n` by construction (a lower-ranked revisit is a different
+    // scenario with a different attempt count), so comparing raw collect rates would be
+    // confounded by the baseline. The comparison is therefore on EXCESS OVER BASELINE --
+    // hit minus 1/(n+1) -- whose expectation is 0 under "the ordering carries no
+    // information", whatever n each arm happens to draw.
+    //
+    // The interval is a normal approximation on a difference of means and is stated as
+    // such: it is here so the number cannot be read without its width, not because it is
+    // the right test. COACH-4's model is what replaces it, with the arm as a covariate.
+    const armStat = tag => {
+      const rows = resolved.filter(r=>r.arm===tag && Number.isFinite(r.base));
+      if(!rows.length) return { arm: tag, n: 0, hits: 0, rate: null, base: null, excess: null, se: null };
+      const ex = rows.map(r=>r.hit - r.base);
+      const mean = ex.reduce((a,b)=>a+b, 0)/ex.length;
+      const varr = ex.length>1 ? ex.reduce((a,b)=>a+(b-mean)*(b-mean), 0)/(ex.length-1) : 0;
+      return { arm: tag, n: ex.length, hits: rows.filter(r=>r.hit).length,
+        rate: rows.filter(r=>r.hit).length/rows.length,
+        base: rows.reduce((a,r)=>a+r.base, 0)/rows.length,
+        excess: mean, se: Math.sqrt(varr/ex.length) };
+    };
+    const armA = armStat('A'), armB = armStat('B');
+    const armDiff = (armA.n && armB.n) ? armA.excess - armB.excess : null;
+    const armDiffSe = (armA.n && armB.n) ? Math.sqrt(armA.se*armA.se + armB.se*armB.se) : null;
+    const arms = { a: armA, b: armB, diff: armDiff, diffSe: armDiffSe,
+      lo: armDiff===null ? null : armDiff - 1.96*armDiffSe, hi: armDiff===null ? null : armDiff + 1.96*armDiffSe,
+      minPerArm: ARM_MIN_PER_ARM, scorable: armA.n >= ARM_MIN_PER_ARM && armB.n >= ARM_MIN_PER_ARM,
+      share: ARM_B_SHARE, unassigned: resolved.filter(r=>!r.arm).length };
+    const overall = { sessions: sessions.length, arms,
       revisits: resolved.length, scheduled: allRows.length, collected,
       collectedAny: resolved.filter(r=>r.hitAny).length,
       rate: resolved.length ? collected/resolved.length : null,
@@ -2236,7 +2299,7 @@ const MiniEvxlEngine = (function(){
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
-        forecast: sc._forecast || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
+        forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
@@ -2469,6 +2532,23 @@ const MiniEvxlEngine = (function(){
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
+    // NEXT-4: walk the ordered candidates and, for each slot, decide arm. B withholds the
+    // head (it is simply not served today) and serves the next one instead -- see the note
+    // at ARM_B_SHARE for why a swap would measure nothing. With one candidate left there is
+    // no runner-up, so the slot stays A: the experiment never costs a revisit it could have
+    // served. `_arm` rides on the row like `_forecast` and is deleted with it.
+    let revServe = revOrdered;
+    if(opts.arm){
+      const pool = revOrdered.slice();
+      revServe = [];
+      for(let slot=0; slot<template.revisit && pool.length; slot++){
+        const goB = pool.length > 1 && rnd() < ARM_B_SHARE;
+        if(goB) pool.shift();                       // the top pick is WITHHELD, not reordered
+        const pick = pool.shift();
+        pick._arm = goB ? 'B' : 'A';
+        revServe.push(pick);
+      }
+    }
     // The bucket, never the percentage. p comes from a logistic with an INVENTED
     // slope (FORECAST_SLOPE) over an invented prior margin, so "83%" reads as a
     // measured probability sitting next to real percentiles when it is nothing of
@@ -2478,7 +2558,7 @@ const MiniEvxlEngine = (function(){
     // so the return-collect record can calibrate it, and the percentage comes back
     // the day predicted and collected can be compared (2026-08-24).
     const oddsWord = forecastBucket;
-    take(revOrdered, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
+    take(revServe, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
       if(!f) return 'Revisit — last played '+days+' days ago; go collect the PB (if it falls first try, the time away did the work).';
       const rs = f.evidence.map(e=>e.r); const rTxt = rs.length>1 ? Math.min(...rs).toFixed(1)+'–'+Math.max(...rs).toFixed(1) : rs[0].toFixed(2);
       const moved = f.evidence.filter(e=>e.delta>0).length, nbs = f.evidence.filter(e=>!e.via).length, lbs = f.evidence.length - nbs;
@@ -2487,7 +2567,7 @@ const MiniEvxlEngine = (function(){
     // ---- top up: more of the weakest list, then unplayed at/under level
     take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
-    rev.forEach(sc=>{ delete sc._forecast; });
+    rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
       type: sessionType, typeWhy: sessionTypeWhy };
@@ -3235,6 +3315,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_MIN_PER_ARM, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

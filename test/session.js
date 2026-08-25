@@ -579,6 +579,61 @@
       m1: (() => { const st = E.stuckness(mkRunsC3([90, 91, 89, 92, 90, 60]), 100, 5); return { older: st.older, se: st.se, seBinomial: st.seBinomial }; })()
     };
 
+    // ---- NEXT-4: the randomised arm -------------------------------------------------------
+    // Three things have to hold or the experiment measures nothing:
+    //   1. OFF is the identity -- every pre-NEXT-4 path is untouched.
+    //   2. The B arm DISPLACES: the withheld top pick must NOT also appear in the session.
+    //      A swap would serve both and there would be no contrast at all.
+    //   3. Roughly ARM_B_SHARE of slots go B over many seeds, and every served revisit
+    //      carries an arm.
+    const armOn = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true, arm: true }), FILL);
+    const armOff = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true }), FILL);
+    const revsOf = s2 => s2.items.filter(it=>it.why==='revisit');
+    let bSlots = 0, aSlots = 0, armless = 0, displaced = 0, dupes = 0;
+    for(let seed=1; seed<=200; seed++){
+      const on = armOn(seed);
+      const revs = revsOf(on);
+      revs.forEach(it=>{ if(it.arm==='B') bSlots++; else if(it.arm==='A') aSlots++; else armless++; });
+      // no scenario may be served twice in one session, arm or no arm
+      const names = on.items.map(it=>it.name);
+      if(new Set(names).size !== names.length) dupes++;
+      // when a slot went B, the candidate it displaced must be absent from the whole session
+      if(revs.some(it=>it.arm==='B')) displaced++;
+    }
+    // the identity check, on a seed whose ON run actually used the B arm
+    let sameSeed = null;
+    for(let seed=1; seed<=60 && sameSeed===null; seed++){ if(revsOf(armOn(seed)).some(it=>it.arm==='B')) sameSeed = seed; }
+    const onS = sameSeed===null ? null : armOn(sameSeed), offS = sameSeed===null ? null : armOff(sameSeed);
+    R.arm = {
+      share: E.ARM_B_SHARE, minPerArm: E.ARM_MIN_PER_ARM,
+      aSlots, bSlots, armless, dupes,
+      bShareObserved: (aSlots + bSlots) ? bSlots/(aSlots + bSlots) : null,
+      offHasNoArm: armOff(7).items.every(it=>!it.arm),
+      offIdentical: JSON.stringify(armOff(7).items.map(item)) === JSON.stringify(E.composeSession(fixture(E), Object.assign({}, OPTS, { seed: 7, rotate: true }), FILL).items.map(item)),
+      // the displacement: on a seed that used B, the withheld candidate is not in the session
+      displacedAbsent: (onS && offS) ? (()=>{
+        const onNames = new Set(onS.items.map(it=>it.name));
+        const bItem = revsOf(onS).find(it=>it.arm==='B');
+        // the A-arm run for the same seed serves the top pick for that slot; under B it is held back
+        const offRevs = revsOf(offS).map(it=>it.name);
+        const withheld = offRevs.find(n=>!onNames.has(n));
+        return { bItem: bItem ? bItem.name : null, withheld: withheld || null, stillServed: withheld ? onNames.has(withheld) : null };
+      })() : null,
+      // and the item must not leak its arm into anything the page renders
+      leaks: (()=>{ const on = onS || armOn(1); return on.items.filter(it=>/\barm\b|runner-?up|second pick/i.test(String(it.reason||''))).length; })()
+    };
+    // the comparison in sessionHistoryStats
+    const armLog = rows => rows.map((r, i)=>({ day: 400+i, seedBump: 0, startedAt: 500, rating: null, regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'A'+i, why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: r.arm }] }));
+    // six A (four collected) and six B (one collected), every one attempted once after serving
+    const armRuns = {};
+    const armRows = [];
+    [['A', 1], ['A', 1], ['A', 1], ['A', 1], ['A', 0], ['A', 0], ['B', 1], ['B', 0], ['B', 0], ['B', 0], ['B', 0], ['B', 0]]
+      .forEach((r, i)=>{ armRuns['A'+i] = [[600, r[1] ? 150 : 50]]; armRows.push({ arm: r[0] }); });
+    const armH = E.sessionHistoryStats(armLog(armRows), () => 150, FIXED_MS, null, n => armRuns[n] || null);
+    R.armStats = { a: armH.overall.arms.a, b: armH.overall.arms.b, diff: armH.overall.arms.diff,
+      scorable: armH.overall.arms.scorable, unassigned: armH.overall.arms.unassigned };
+
     return R;
   }
   const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
@@ -784,6 +839,41 @@
       // at m = 1 the two coincide exactly, which is why the short-record reading is unchanged
       if(!near(SN.m1.se, SN.m1.seBinomial, 1e-9)) problems.push('stuckNull: at one older run the exact and binomial SDs are equal, got '+J(SN.m1));
     }
+    const AM = R.arm;
+    if(!AM) problems.push('arm: missing');
+    else {
+      if(!(AM.share > 0 && AM.share < 1)) problems.push('arm: the engine exports no usable ARM_B_SHARE, got '+J(AM.share));
+      if(!AM.offHasNoArm || !AM.offIdentical) problems.push('arm: OFF must be the identity -- no arm on any item and the same list as before NEXT-4, got '+J([AM.offHasNoArm, AM.offIdentical]));
+      if(AM.armless) problems.push('arm: every served revisit must carry an arm when the experiment is on, got '+AM.armless+' without one');
+      if(AM.dupes) problems.push('arm: a scenario was served twice in one session -- the displacement must not reintroduce the withheld pick, got '+AM.dupes+' sessions');
+      if(!AM.bSlots) problems.push('arm: no slot ever took the runner-up over 200 seeds -- the experiment never runs');
+      // The realised share is at MOST ARM_B_SHARE and is below it here (about 0.15 against
+      // 0.25) because a B slot consumes two candidates and this fixture's revisit pool is
+      // barely deeper than its slot count, so a later slot is often forced back to A. That
+      // is the invariant worth pinning -- never above, never near zero -- rather than a
+      // number that only holds for one pool depth. On a real profile the pool is dozens
+      // deep and the two coincide.
+      if(!(AM.bShareObserved <= AM.share + 0.02)) problems.push('arm: the realised B share can never EXCEED ARM_B_SHARE ('+AM.share+'), got '+J(AM.bShareObserved));
+      if(!(AM.bShareObserved > AM.share*0.4)) problems.push('arm: the realised B share collapsed -- the experiment is barely running, got '+J(AM.bShareObserved)+' against '+AM.share);
+      if(AM.leaks) problems.push('arm: BLINDED -- no item reason may mention the arm, got '+AM.leaks+' that do');
+      // THE POINT: a B slot withholds the top pick rather than reordering it
+      const D = AM.displacedAbsent;
+      if(!D || !D.bItem) problems.push('arm: no seed produced a B slot to check displacement against, got '+J(D));
+      else if(D.withheld === null) problems.push('arm: turning the arm ON must remove some revisit the OFF run served -- if the same set is served, B reordered instead of displacing, got '+J(D));
+      else if(D.stillServed) problems.push('arm: the withheld top pick is still in the session -- that is a swap, and a swap measures nothing, got '+J(D));
+    }
+    const AS = R.armStats;
+    if(!AS) problems.push('armStats: missing');
+    else {
+      if(AS.a.n !== 6 || AS.b.n !== 6) problems.push('armStats: six resolved per arm, got '+J([AS.a.n, AS.b.n]));
+      if(AS.a.hits !== 4 || AS.b.hits !== 1) problems.push('armStats: four of six and one of six collected, got '+J([AS.a.hits, AS.b.hits]));
+      // excess over baseline, not raw rate: every item here has n = 9 so the baseline is 0.1
+      if(!near(AS.a.excess, 4/6 - 0.1, 1e-12) || !near(AS.b.excess, 1/6 - 0.1, 1e-12)) problems.push('armStats: the comparison is on excess over 1/(n+1), got '+J([AS.a.excess, AS.b.excess]));
+      if(!near(AS.diff, 3/6, 1e-12)) problems.push('armStats: the difference of excesses is what the experiment reports, got '+J(AS.diff));
+      if(AS.scorable !== false) problems.push('armStats: six per arm is under ARM_MIN_PER_ARM, so no verdict yet, got '+J(AS.scorable));
+      if(AS.unassigned !== 0) problems.push('armStats: every row here carries an arm, got '+J(AS.unassigned));
+    }
+
 
 
     // revisit forecast

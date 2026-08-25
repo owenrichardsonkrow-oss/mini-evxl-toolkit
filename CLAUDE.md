@@ -182,6 +182,39 @@ an attempted-never-beaten one, both baselines, the legacy contrast, and Q4's ser
 over a mixed session) and `features.stuckNull`. The forecast assertions now pin the
 RELATIONSHIP as well as the value, and derive the bucket from `forecastBucket(p)`.
 
+**Ledger IV step 3 -- the randomised arm, NEXT-4 (2026-08-25).** Everything else the coach
+measures is "it said play X, you played X, here is what happened", which can never separate a
+good recommendation from improvement you would have made anyway -- there is no counterfactual
+in the record. The calibration curve says whether the forecast's PROBABILITIES are honest; it
+cannot say whether the ORDERING beats serving something else.
+
+`ARM_B_SHARE = 0.25` of revisit slots serve the **runner-up**, from the same seeded RNG so a
+day's session is stable across re-renders; `ARM_MIN_PER_ARM = 10` resolved per arm before a
+verdict. **B DISPLACES, IT DOES NOT REORDER** -- swapping ranks 1 and 2 serves both and
+measures nothing, so the top pick is WITHHELD (and is a candidate again tomorrow). With one
+candidate left the slot stays A, so the experiment never costs a revisit it could have served;
+that makes the realised share at MOST `ARM_B_SHARE` -- 0.218 at a pool of 3, 0.249-0.251 at 4
+or more, about 0.15 on this fixture whose pool barely exceeds its slot count. `test/session.js`
+asserts that invariant (never above, never collapsed) rather than a band that holds at one pool
+depth. It costs power, not validity: under "the ordering carries no information" the expected
+excess over baseline is 0 for either arm whatever the assignment probability was.
+
+**Revisits only** -- a revisit resolves in days and already has a null (`1/(n+1)`); a route's
+claim is that it moves a different scenario weeks later, a different experiment. **Blinded** --
+nothing rendered names the arm, because knowing changes how hard you try and the comparison
+would then measure belief; the history view reveals it only for RESOLVED items.
+
+The comparison is on **excess over baseline**, not raw rate: A and B items differ in `n` by
+construction, so raw rates are confounded. `armStat` compares `hit - 1/(n+1)`, expectation 0
+under the null whatever `n` each arm drew. The interval is a normal approximation on a
+difference of means, labelled as such on the page so the number cannot be read without its
+width; COACH-4's model replaces it with the arm as a covariate.
+
+Tests: `features.arm` (OFF is the identity, every served revisit carries an arm, no duplicates,
+the realised-share invariant, no leak into any item reason, and -- the point -- that turning it
+ON REMOVES a revisit the OFF run served and does not re-serve it) and `features.armStats` (six
+per arm, excess over baseline not raw rate, the difference, and no verdict under the minimum).
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
