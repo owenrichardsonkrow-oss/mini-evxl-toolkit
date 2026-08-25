@@ -1350,6 +1350,115 @@ const MiniEvxlEngine = (function(){
   function ordinal(n){ const m100 = n % 100, m10 = n % 10; return n + ((m100>=11 && m100<=13) ? 'th' : m10===1 ? 'st' : m10===2 ? 'nd' : m10===3 ? 'rd' : 'th'); }
   function percentileLabel(p){ if(p===null || p===undefined) return ''; const top = Math.round((1-p)*100); return top<=50 ? 'top '+Math.max(1,top)+'%' : ordinal(Math.max(1, Math.round(p*100)))+' percentile'; }
 
+  // ---- Bouts, and stagnation inside one (Review Ledger IV step 8, 2026-08-25) --------
+  //
+  // A BOUT is a run of plays with no gap longer than BOUT_GAP_MS. The owner's number is
+  // fifteen minutes and the data supports it rather than merely tolerating it: across his
+  // 4,093 logged runs the gap between two consecutive plays of the SAME scenario has a median
+  // of 3.1 minutes, and 54% of all gaps are under fifteen while the 75th percentile is four
+  // DAYS. The distribution is strongly bimodal and fifteen minutes sits in the empty middle.
+  // "Session" survives only as this: a derived period, for attributing runs to a stretch of
+  // time. Nothing is composed per bout and nothing is scored per bout.
+  const BOUT_GAP_MS = 15*60*1000;
+  // runs: [[t, score], ...] in any order. Returns oldest-first bouts, each with the runs it
+  // holds and the history that preceded it.
+  function boutsOf(runs, gapMs){
+    const gap = Number.isFinite(Number(gapMs)) && Number(gapMs)>0 ? Number(gapMs) : BOUT_GAP_MS;
+    const r = (runs||[]).map(x=>[Number(Array.isArray(x)?x[0]:x&&x.t), Number(Array.isArray(x)?x[1]:x&&x.s)])
+      .filter(x=>Number.isFinite(x[0]) && x[0]>0 && Number.isFinite(x[1]) && x[1]>0)
+      .sort((a,b)=>a[0]-b[0]);
+    const out = [];
+    let cur = [], hist = [];
+    for(let i=0;i<r.length;i++){
+      if(cur.length && r[i][0]-r[i-1][0] > gap){
+        out.push({ from: cur[0][0], to: cur[cur.length-1][0], runs: cur, history: hist.slice() });
+        hist = hist.concat(cur.map(x=>x[1]));
+        cur = [];
+      }
+      cur.push(r[i]);
+    }
+    if(cur.length) out.push({ from: cur[0][0], to: cur[cur.length-1][0], runs: cur, history: hist.slice() });
+    return out;
+  }
+
+  // ---- The sequential test, which is the real work of step 8 ------------------------
+  //
+  // `responsiveness` fits a line over sixty days. This has to fire WHILE YOU ARE STILL
+  // SITTING THERE, after each run, with no fixed number of runs planned in advance -- so a
+  // fixed-sample p-value is the wrong object twice over: the sample size is chosen by looking
+  // at the data, and the question is asked again after every run. Both need anytime validity.
+  //
+  // TWO rules, each exactly valid on its own terms, and the item ends on whichever fires
+  // first. They are different claims and they deserve different thresholds.
+  //
+  // 1. EXHAUSTION -- "under your own history you would have beaten it by now".
+  //    If today's runs are exchangeable with the n runs the PB is the max of, the chance that
+  //    none of k runs beats it is exactly n/(n+k) -- the same negative-hypergeometric null
+  //    the served ledger already scores against. Stopping the first time n/(n+k) <= a is
+  //    ANYTIME-VALID with no correction at all, because the events are nested: {no PB by k}
+  //    shrinks as k grows, so P(ever stopping) = P(no PB by the first qualifying k), which is
+  //    that same n/(n+k) <= a. The nesting IS the multiplicity control.
+  //
+  // 2. FORM -- "today's runs are below the level that set this PB".
+  //    A conformal test martingale on the run ranks. Each new run gets its rank among the
+  //    history, u = (#history at or below it + 1)/(n+1), which is uniform under exchange-
+  //    ability. A calibrator e*u^(e-1) has mean 1 under uniform and pays off when u is small,
+  //    so the product over runs is a nonnegative martingale and Ville's inequality gives
+  //    P(it ever reaches 1/a) <= a. The free parameter e is removed by MIXING over a grid --
+  //    an average of martingales is a martingale -- so there is no exponent to choose.
+  //
+  // AGGRESSIVE, and what that cost when it was replayed over his 1,238 real bouts that had a
+  // PB to beat (median history 3 runs). At STAGNATE_AT 0.6 the coach closes 249 items on
+  // stagnation against 550 on a PB, at a median of ONE run before a stop, and 6.1% of all
+  // items are closed before a PB that his actual play went on to get. That cost is smaller
+  // than it looks, because of where his PBs land and how big they are:
+  //
+  //     PB arrived on run 1 of the bout   468 items (74.9%)   median +6.23% over the old PB
+  //                          run 2         99       (15.8%)          +4.17%
+  //                          run 3+        58        (9.3%)          +2.36%
+  //
+  // Three quarters of his PBs come on the FIRST run, and one that takes three or more runs is
+  // worth a third as much. His "grinding produces an outlier" turns out to be exactly right
+  // and slightly the other way round: a late PB is not a lucky spike, it is a marginal scrape
+  // over a bar that repeated sampling was always going to clear eventually. The PBs an
+  // aggressive rule gives up are the small ones.
+  //
+  // The form test almost never fires TODAY -- 7 of 249 stops -- because his median history is
+  // three runs and the exhaustion rule gets there first. It is not decoration: it is the rule
+  // that acts once a scenario has real history, which is exactly when exhaustion turns
+  // patient, and the step 7b seed fix is what lets those counts accumulate at last.
+  const STAGNATE_AT = 0.6;        // exhaustion: stop once P(no PB by now) has fallen to here
+  const FORM_ALPHA = 0.1;         // form: stop once the martingale reaches 1/FORM_ALPHA
+  const FORM_MIN_HISTORY = 3;     // fewer ranks than this and u is too coarse to bet on
+  const FORM_EPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+  // history: run scores before this bout. bout: run scores in it, in order. pbAt: the PB when
+  // the item was served (it can exceed the history's max -- a leaderboard PB whose run was
+  // never logged), which is what a run has to beat.
+  function stagnation(history, bout, pbAt, opts){
+    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY }, opts||{});
+    const hist = (history||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
+    const runs = (bout||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
+    const target = Number.isFinite(Number(pbAt)) ? Math.max(Number(pbAt), 0) : (hist.length ? Math.max(...hist) : 0);
+    // n is the number of runs the target is the max of. With no history at all the honest
+    // answer is that we know nothing, and 1 is the smallest claim that lets the rule act --
+    // one run that does not beat it is then exactly a coin flip's worth of evidence.
+    const n = Math.max(hist.length, 1);
+    const prods = FORM_EPS.map(()=>1);
+    let martingale = 1;
+    for(let i=0;i<runs.length;i++){
+      const k = i+1, score = runs[i];
+      if(score > target) return { done: true, why: 'pb', k, runs: runs.length, n, pExhaust: n/(n+k), martingale, gain: target>0 ? (score-target)/target : null };
+      if(hist.length >= o.minHistory){
+        const u = (hist.filter(h=>h<=score).length + 1)/(hist.length + 1);
+        for(let e=0;e<FORM_EPS.length;e++) prods[e] *= FORM_EPS[e]*Math.pow(u, FORM_EPS[e]-1);
+        martingale = prods.reduce((a,b)=>a+b, 0)/FORM_EPS.length;
+        if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+      }
+      if(n/(n+k) <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+    }
+    return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
+  }
+
   // ---- Session engine v0.3 (2026-08-22: percentile metric + transfer routes) ------
   // Composes today's session: `size` items, each with a WHY, from a plain list
   // of scenarios the app prepares. Built around the loop the owner ran by hand --
@@ -3912,7 +4021,8 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
-    adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
+    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
