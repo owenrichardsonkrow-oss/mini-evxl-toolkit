@@ -634,6 +634,91 @@
     R.armStats = { a: armH.overall.arms.a, b: armH.overall.arms.b, diff: armH.overall.arms.diff,
       scorable: armH.overall.arms.scorable, unassigned: armH.overall.arms.unassigned };
 
+    // ---- step 3c: the exposure window, and the served ledger -------------------------
+    // THE REGRESSION THIS PINS. Before 3c an exposure searched the whole future for its
+    // first run, independently of every other exposure, so ONE run resolved EVERY earlier
+    // serving of that scenario. Served day 100 as arm A, served day 104 as arm B, played
+    // ONCE on day 105: both bookings scored a first-try collect off the same run and the
+    // same run entered BOTH arms. That is a perfectly correlated pair inside the one
+    // comparison whose validity rests on the piles being independent draws, and it needs
+    // no reroll -- an ordinary re-serve is enough.
+    const DAYMS = 86400000, TB = 1787000000000;
+    const oneRunLog = [
+      { day: 100, seedBump: 0, startedAt: TB,           rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'W', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A' }] },
+      { day: 104, seedBump: 0, startedAt: TB + 4*DAYMS, rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'W', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B' }] }
+    ];
+    const oneRun = { W: [[TB + 5*DAYMS, 150]] };                  // exactly ONE run, and it is a PB
+    const W1 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => oneRun[n] || null);
+    // and the mirror: the run lands INSIDE the first window, so the FIRST serving owns it
+    const early = { W: [[TB + 2*DAYMS, 150]] };
+    const W2 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => early[n] || null);
+    // a run landing exactly when the next session was composed belongs to the OLDER window
+    const onBoundary = { W: [[TB + 4*DAYMS, 150]] };
+    const W3 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => onBoundary[n] || null);
+    R.window = {
+      lateRun:  { resolved: W1.overall.revisits, collected: W1.overall.collected,
+                  aN: W1.overall.arms.a.n, bN: W1.overall.arms.b.n },
+      earlyRun: { resolved: W2.overall.revisits, aN: W2.overall.arms.a.n, bN: W2.overall.arms.b.n },
+      boundary: { aN: W3.overall.arms.a.n, bN: W3.overall.arms.b.n },
+      windowed: W1.overall.windowed,
+      // windowEnds itself: three servings of one name, one of another
+      ends: (()=>{
+        const xs = [{ key: 'k1', name: 'A', at: 10 }, { key: 'k2', name: 'A', at: 20 },
+                    { key: 'k3', name: 'A', at: 30 }, { key: 'k4', name: 'B', at: 15 }];
+        const m = E.windowEnds(xs);
+        return { k1: m.get('k1'), k2: m.get('k2'), k3: m.get('k3'), k4: m.get('k4') };
+      })()
+    };
+    // ---- the ledger is the authority, and it keeps what the log threw away -----------
+    // Day 300 served X (arm A) and was REROLLED: seedBump 1 served Y (arm B), and the log
+    // kept only the reroll. The ledger kept both. X was played after being served and
+    // before the reroll, so it resolves -- and under the log alone it does not exist.
+    const rerollLog = [
+      { day: 300, seedBump: 1, startedAt: TB + 3600000, rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'Y', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B' }] }
+    ];
+    const ledger = [
+      { name: 'X', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A', day: 300, seedBump: 0, servedAt: TB },
+      { name: 'Y', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B', day: 300, seedBump: 1, servedAt: TB + 3600000 }
+    ];
+    const played = { X: [[TB + 600000, 150]], Y: [[TB + 7200000, 150]] };
+    const runsPlayed = n => played[n] || null;
+    const noLedger = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed);
+    const withLedger = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, ledger);
+    R.ledger = {
+      without: { aN: noLedger.overall.arms.a.n, bN: noLedger.overall.arms.b.n,
+                 from: noLedger.overall.resolvedFrom, orphans: noLedger.overall.orphans },
+      with:    { aN: withLedger.overall.arms.a.n, aHits: withLedger.overall.arms.a.hits,
+                 bN: withLedger.overall.arms.b.n, bHits: withLedger.overall.arms.b.hits,
+                 from: withLedger.overall.resolvedFrom, orphans: withLedger.overall.orphans,
+                 sessions: withLedger.overall.sessions },
+      // an empty or absent ledger must leave the log path exactly as it was
+      emptyIsIdentity: JSON.stringify(E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, []).overall)
+                    === JSON.stringify(noLedger.overall),
+      // A pre-3c session could list the SAME scenario twice -- the owner's own day-20687
+      // session has Gridshot as both a revisit and the weakest pick. A name-keyed exposure
+      // silently merged the two; the key is positional so both survive, and the windowing
+      // still hands the single run to exactly one of them.
+      twice: (()=>{
+        const dupLog = [{ day: 400, seedBump: 0, startedAt: TB, rating: null, regime: 'normal', done: 1, size: 2,
+          items: [{ name: 'D', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A' },
+                  { name: 'D', why: 'weakest', pbAt: 100, p: 0.5, n: 9 }] }];
+        const H = E.sessionHistoryStats(dupLog, () => 150, TB + 2*DAYMS, null, n => n==='D' ? [[TB + 600000, 150]] : null);
+        const sess = H.sessions[0];
+        return { served: H.overall.served.items, whys: sess.all.map(r=>r.why),
+                 resolved: sess.all.filter(r=>r.resolved).length, revisitResolved: H.overall.revisits };
+      })(),
+      // a ledger row for a scenario with NO run record must be unresolved, never resolved
+      // off the PB -- ledger rows carry no tick-off count to lean on
+      noRuns: (()=>{
+        const L = [{ name: 'Z', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A', day: 300, seedBump: 0, servedAt: TB }];
+        const H = E.sessionHistoryStats(rerollLog, () => 999, TB + 2*DAYMS, null, runsPlayed, L);
+        return { resolved: H.overall.revisits, collected: H.overall.collected };
+      })()
+    };
+
     return R;
   }
   const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
@@ -872,6 +957,37 @@
       if(!near(AS.diff, 3/6, 1e-12)) problems.push('armStats: the difference of excesses is what the experiment reports, got '+J(AS.diff));
       if(AS.scorable !== false) problems.push('armStats: six per arm is under ARM_MIN_PER_ARM, so no verdict yet, got '+J(AS.scorable));
       if(AS.unassigned !== 0) problems.push('armStats: every row here carries an arm, got '+J(AS.unassigned));
+    }
+    const WN = R.window;
+    if(!WN) problems.push('window: missing');
+    else {
+      if(WN.windowed !== true) problems.push('window: the engine must report that resolution is windowed, got '+J(WN.windowed));
+      // THE REGRESSION: one run, two servings -- exactly one exposure may claim it
+      if(WN.lateRun.resolved !== 1 || WN.lateRun.collected !== 1) problems.push('window: ONE run of a scenario served twice must resolve exactly ONE exposure, got resolved '+WN.lateRun.resolved+' collected '+WN.lateRun.collected);
+      if(WN.lateRun.aN !== 0 || WN.lateRun.bN !== 1) problems.push('window: a run AFTER the second serving belongs to the second serving alone -- arm A must not also book it, got A '+WN.lateRun.aN+' B '+WN.lateRun.bN);
+      if(WN.earlyRun.aN !== 1 || WN.earlyRun.bN !== 0) problems.push('window: a run BETWEEN the two servings belongs to the FIRST, and the second is then unresolved, got A '+WN.earlyRun.aN+' B '+WN.earlyRun.bN);
+      if(WN.earlyRun.resolved !== 1) problems.push('window: still exactly one resolved exposure when the run lands early, got '+WN.earlyRun.resolved);
+      if(WN.boundary.aN !== 1 || WN.boundary.bN !== 0) problems.push('window: a run landing EXACTLY when the next session was composed belongs to the older window, got A '+WN.boundary.aN+' B '+WN.boundary.bN);
+      if(WN.ends.k1 !== 20 || WN.ends.k2 !== 30 || WN.ends.k3 !== Infinity) problems.push('window: windowEnds must bound each serving by the NEXT serving of the same name, got '+J([WN.ends.k1, WN.ends.k2, WN.ends.k3]));
+      if(WN.ends.k4 !== Infinity) problems.push('window: a name served once is bounded by nothing, got '+J(WN.ends.k4));
+    }
+    const LD = R.ledger;
+    if(!LD) problems.push('ledger: missing');
+    else {
+      if(LD.without.aN !== 0) problems.push('ledger: without it the rerolled-away exposure is invisible -- that is the defect, got A '+LD.without.aN);
+      if(LD.without.from !== 'runs') problems.push('ledger: with no ledger the provenance stays runs, got '+J(LD.without.from));
+      if(LD.with.aN !== 1 || LD.with.aHits !== 1) problems.push('ledger: the rerolled-away exposure was served AND played, so it must resolve with its arm, got A n '+LD.with.aN+' hits '+LD.with.aHits);
+      if(LD.with.bN !== 1 || LD.with.bHits !== 1) problems.push('ledger: the surviving exposure must still resolve, got B n '+LD.with.bN+' hits '+LD.with.bHits);
+      if(LD.with.from !== 'ledger') problems.push('ledger: the provenance must say the ledger produced the numbers, got '+J(LD.with.from));
+      if(LD.with.orphans !== 1) problems.push('ledger: the exposure with no surviving log row must be COUNTED and named, not silently absorbed, got '+J(LD.with.orphans));
+      if(LD.with.sessions !== 1) problems.push('ledger: the session list stays the display record of what the log kept, got '+J(LD.with.sessions));
+      if(!LD.emptyIsIdentity) problems.push('ledger: an empty ledger must leave the pre-3c log path byte-identical');
+      if(LD.noRuns.resolved !== 0 || LD.noRuns.collected !== 0) problems.push('ledger: a row whose scenario has NO run record must be unresolved, never resolved off the PB, got '+J(LD.noRuns));
+      // the legacy duplicate-name session: both slots survive, ONE of them owns the run
+      const TW = LD.twice;
+      if(TW.served !== 2 || J(TW.whys) !== J(['revisit', 'weakest'])) problems.push('ledger: a session listing one scenario twice keeps BOTH slots -- the key is positional, not by name, got '+J(TW));
+      if(TW.resolved !== 1) problems.push('ledger: one run must resolve exactly ONE of two same-name slots, got '+TW.resolved+' resolved');
+      if(TW.revisitResolved !== 1) problems.push('ledger: and it is the slot the window gives it to, got '+J(TW));
     }
 
 

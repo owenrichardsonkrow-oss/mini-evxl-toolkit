@@ -1787,7 +1787,9 @@ const MiniEvxlEngine = (function(){
   //
   // Without `runsOf` (an older caller, or a store with no attempts record) the pre-2026-08-25
   // reading is kept and flagged `src: 'pb'`, so nothing silently reports zero.
-  function resolveItem(it, startedAt, runsOf, pb, sessionDone){
+  // `until` (step 3c) closes the exposure's window: runs are its own only up to the next
+  // serving of the same scenario. Omitted or Infinity means "nothing superseded it".
+  function resolveItem(it, startedAt, runsOf, pb, sessionDone, until){
     const pbAt = Number(it.pbAt)||0;
     const n = (it.n===null || it.n===undefined) ? null : Number(it.n);
     const out = { name: it.name, why: it.why||null, p: Number(it.p), n,
@@ -1809,8 +1811,9 @@ const MiniEvxlEngine = (function(){
       out.src = 'pb'; out.resolved = true; out.hit = rose; out.hitAny = rose;
       return out;
     }
+    const end = (until===undefined || until===null || !Number.isFinite(Number(until))) ? Infinity : Number(until);
     const after = rows.map(x=>[Number(x[0]), Number(x[1])])
-      .filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1]) && x[0] > startedAt)
+      .filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1]) && x[0] > startedAt && x[0] <= end)
       .sort((a,b)=>a[0]-b[0]);
     out.src = 'runs'; out.k = after.length;
     if(!after.length) return out;                       // never attempted -- not a miss, no answer
@@ -1824,16 +1827,93 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   const meanOf = xs => xs.length ? xs.reduce((a,b)=>a+b, 0)/xs.length : null;
-  function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf){
+  // POSITIONAL: a pre-3c session could list the same scenario twice (once as a revisit and
+  // once as the weakest pick), so the slot index is part of the identity of an exposure.
+  const expKey = (day, seedBump, idx, name) => day+'|'+(seedBump||0)+'|'+(Number(idx)||0)+'|'+name;
+  // ---- Exposure windows (Review Ledger IV step 3c, 2026-08-25) ------------------------
+  // An EXPOSURE is one serving of one scenario: "on this day, against this PB and this
+  // attempt count, you were told to play X". Resolution asks what the first run AFTER that
+  // serving did. Until 3c every exposure searched the whole future independently, so ONE run
+  // resolved EVERY earlier exposure of that scenario: served day 1, served again day 5,
+  // played once on day 6, and both servings booked the same PB as a first-try collect.
+  //
+  // With the arm live that is not a mild double count. Measured on a fixture before this
+  // change: one run of one scenario served twice put n=1 hits=1 into arm A AND arm B -- a
+  // perfectly correlated pair in the one comparison whose validity rests on the two piles
+  // being independent draws, and it needs no reroll to happen, just an ordinary re-serve.
+  //
+  // An exposure therefore OWNS the half-open window (servedAt, nextServingOfTheSameScenario].
+  // Runs outside it belong to whichever serving was live when they happened. A serving nobody
+  // acted on before it was superseded is simply unresolved -- which is the truth: you did not
+  // play it while it was the thing you had been told to play. The bound is inclusive at the
+  // top so a run landing exactly when the next session was composed belongs to the older
+  // list, and no run can fall between two windows.
+  function windowEnds(exposures){
+    const byName = new Map();
+    exposures.forEach(x=>{ const l = byName.get(x.name); if(l) l.push(x); else byName.set(x.name, [x]); });
+    const out = new Map();
+    byName.forEach(list=>{
+      list.sort((a,b)=> a.at - b.at || (Number(a.idx)||0) - (Number(b.idx)||0));
+      for(let i=0; i<list.length; i++){
+        // Two slots of ONE session can name the same scenario (a pre-3c composition could
+        // list it as both the revisit and the weakest pick). They share an instant, so they
+        // are one exposure: the first slot owns the window and the rest get a zero-width one,
+        // or a single run would book a hit against every twin.
+        if(i>0 && list[i].at === list[i-1].at){ out.set(list[i].key, list[i].at); continue; }
+        let j = i+1;
+        while(j<list.length && list[j].at === list[i].at) j++;
+        out.set(list[i].key, j<list.length ? list[j].at : Infinity);
+      }
+    });
+    return out;
+  }
+  function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf, ledger){
     const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
-    const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
-    const sessions = (log||[]).filter(e=>e && Number.isFinite(e.day)).map(e=>{
+    const isLive = x => !!(liveKey && x.day===liveKey.day && (x.seedBump||0)===(liveKey.seedBump||0));
+    const entries = (log||[]).filter(e=>e && Number.isFinite(e.day));
+    const doneOf = e => typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
+    // ---- what was exposed, and when --------------------------------------------------
+    // The SERVED LEDGER is append-only: items from a composition the log dropped on a reroll
+    // are still here, with the arm they were served under. It is the authority when present;
+    // the log's own item lists are the fallback, and the only source for a record written
+    // before 3c. Ledger rows pass done = 0 so a scenario with no run record falls through to
+    // UNRESOLVED rather than to the legacy "did the PB rise at some point" reading.
+    const useLedger = Array.isArray(ledger) && ledger.length && typeof runsOf==='function';
+    const exposures = [];
+    if(useLedger){
+      ledger.forEach(r=>{
+        if(!r || !r.name || !Number.isFinite(Number(r.servedAt)) || !Number.isFinite(Number(r.day))) return;
+        exposures.push({ key: expKey(Number(r.day), r.seedBump, r.idx, String(r.name)), name: String(r.name),
+          at: Number(r.servedAt), idx: Number(r.idx)||0, day: Number(r.day), seedBump: Number(r.seedBump)||0, item: r, done: 0 });
+      });
+    } else {
+      entries.forEach(e=>{
+        const at = Number(e.startedAt)||0, done = doneOf(e);
+        (Array.isArray(e.items) ? e.items : []).forEach((it, i)=>{
+          if(it && it.name) exposures.push({ key: expKey(e.day, e.seedBump, i, String(it.name)), name: String(it.name),
+            at, idx: i, day: e.day, seedBump: e.seedBump||0, item: it, done });
+        });
+      });
+    }
+    const ends = windowEnds(exposures);
+    const resolvedBy = new Map();
+    exposures.forEach(x=>{
+      const r = resolveItem(x.item, x.at, runsOf, pb, x.done, ends.get(x.key));
+      r.day = x.day; r.seedBump = x.seedBump; r.servedAt = x.at; r.live = isLive(x);
+      resolvedBy.set(x.key, r);
+    });
+    const logKeys = new Set();
+    entries.forEach(e=>(Array.isArray(e.items)?e.items:[]).forEach((it, i)=>{ if(it && it.name) logKeys.add(expKey(e.day, e.seedBump, i, String(it.name))); }));
+    const sessions = entries.map(e=>{
       const items = Array.isArray(e.items) ? e.items : [];
-      const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
+      const done = doneOf(e);
       const startedAt = Number(e.startedAt)||0;
       // EVERY served item is resolved, not only the revisits (Q4). `rows` stays the revisit
       // rows because that is what the forecast is calibrated on and what the page reads.
-      const all = items.map(it=>resolveItem(it, startedAt, runsOf, pb, done));
+      const all = items.map((it, i)=>{
+        const pre = (it && it.name) ? resolvedBy.get(expKey(e.day, e.seedBump, i, String(it.name))) : null;
+        return pre || resolveItem(it, startedAt, runsOf, pb, done, Infinity);
+      });
       const rows = all.filter(r=>r.why==='revisit');
       const resolvedRows = rows.filter(r=>r.resolved);
       const servedResolved = all.filter(r=>r.resolved);
@@ -1849,32 +1929,36 @@ const MiniEvxlEngine = (function(){
     }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
     const weekOf = day => day - (((day % 7) + 7 + 3) % 7);
     const nowDay = Math.floor((nowMs - new Date(nowMs).getTimezoneOffset()*60000)/DAY_MS);
+    // Every aggregate below runs over EXPOSURES, not over the log's sessions: an exposure
+    // whose session row the log dropped on a reroll still happened, and its outcome still
+    // counts. `sessions` stays the display record of what was composed.
+    const expRows = exposures.map(x=>resolvedBy.get(x.key)).filter(r=>r && !r.live);
     const weeks = [];
-    if(sessions.length){
-      const first = weekOf(Math.min(...sessions.map(s=>s.day))), lastW = weekOf(nowDay);
+    const dayPool = expRows.map(r=>r.day).concat(sessions.map(s=>s.day)).filter(Number.isFinite);
+    if(dayPool.length){
+      const first = weekOf(dayPool.reduce((a,b)=>Math.min(a,b))), lastW = weekOf(nowDay);
       for(let w=first; w<=lastW; w+=7){
         const ss = sessions.filter(s=>weekOf(s.day)===w);
-        const closed = ss.filter(s=>!s.live);
+        const er = expRows.filter(r=>weekOf(r.day)===w);
+        const revRows = er.filter(r=>r.why==='revisit');
         // The DENOMINATOR is resolved revisits, not scheduled ones: an item you never
         // attempted cannot have been collected or missed.
-        const revisits = closed.reduce((a,s)=>a+s.resolved, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
-        const scheduled = closed.reduce((a,s)=>a+s.revisits, 0);
-        const wp = closed.filter(s=>s.predicted!==null), wb = closed.filter(s=>s.baseline!==null);
+        const res = revRows.filter(r=>r.resolved);
+        const servedOkW = er.filter(r=>r.resolved);
         const ratings = { easy: 0, good: 0, hard: 0 }; ss.forEach(s=>{ if(s.rating && ratings[s.rating]!==undefined) ratings[s.rating]++; });
         weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0),
-          revisits, scheduled, collected, collectedAny: closed.reduce((a,s)=>a+s.collectedAny, 0),
-          servedResolved: closed.reduce((a,s)=>a+s.servedResolved, 0), servedHit: closed.reduce((a,s)=>a+s.servedHit, 0),
-          rate: revisits ? collected/revisits : null,
-          predicted: wp.length ? wp.reduce((a,s)=>a+s.predicted*s.resolved, 0)/Math.max(wp.reduce((a,s)=>a+s.resolved, 0), 1) : null,
-          baseline: wb.length ? wb.reduce((a,s)=>a+s.baseline*s.resolved, 0)/Math.max(wb.reduce((a,s)=>a+s.resolved, 0), 1) : null, ratings });
+          revisits: res.length, scheduled: revRows.length, collected: res.filter(r=>r.hit).length,
+          collectedAny: res.filter(r=>r.hitAny).length,
+          servedResolved: servedOkW.length, servedHit: servedOkW.filter(r=>r.hit).length,
+          rate: res.length ? res.filter(r=>r.hit).length/res.length : null,
+          predicted: meanOf(res.map(r=>r.p).filter(Number.isFinite)),
+          baseline: meanOf(res.map(r=>r.base).filter(Number.isFinite)), ratings });
       }
     }
-    const closed = sessions.filter(s=>!s.live);
-    const allRows = []; closed.forEach(s=>s.rows.forEach(r=>allRows.push(r)));
-    const servedRows = []; closed.forEach(s=>s.all.forEach(r=>servedRows.push(r)));
+    const allRows = expRows.filter(r=>r.why==='revisit');
+    const servedRows = expRows;
     const resolved = allRows.filter(r=>r.resolved);
     const collected = resolved.filter(r=>r.hit).length;
-    const preds = closed.filter(s=>s.predicted!==null);
     // The forecast is scored on RESOLVED revisits only, and against the strict outcome --
     // the same event 1/(n+1) describes. Matching those two is the whole point of COACH-2.
     const scored = resolved.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
@@ -1905,6 +1989,8 @@ const MiniEvxlEngine = (function(){
     // The interval is a normal approximation on a difference of means and is stated as
     // such: it is here so the number cannot be read without its width, not because it is
     // the right test. COACH-4's model is what replaces it, with the arm as a covariate.
+    // It also assumes the rows are INDEPENDENT, which is exactly what the exposure window
+    // above exists to make true -- before 3c a single run could enter both arms at once.
     const armStat = tag => {
       const rows = resolved.filter(r=>r.arm===tag && Number.isFinite(r.base));
       if(!rows.length) return { arm: tag, n: 0, hits: 0, rate: null, base: null, excess: null, se: null };
@@ -1928,12 +2014,17 @@ const MiniEvxlEngine = (function(){
       collectedAny: resolved.filter(r=>r.hitAny).length,
       rate: resolved.length ? collected/resolved.length : null,
       rateAny: resolved.length ? resolved.filter(r=>r.hitAny).length/resolved.length : null,
-      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.resolved, 0)/Math.max(preds.reduce((a,s)=>a+s.resolved, 0), 1) : null,
+      predicted: meanOf(resolved.map(r=>r.p).filter(Number.isFinite)),
       baseline: meanOf(resolved.map(r=>r.base).filter(Number.isFinite)),
       baselineAny: meanOf(resolved.map(r=>r.baseAny).filter(Number.isFinite)),
       scoredOn: scored.length, brier, brierBase, skill, scorable: scored.length >= SCORE_MIN_REVISITS, scoreMin: SCORE_MIN_REVISITS,
       reliability: scored.length ? reliabilityBins(scored) : [], served,
-      resolvedFrom: typeof runsOf==='function' ? 'runs' : 'pb' };
+      // provenance, so a number can never be read without knowing what produced it
+      resolvedFrom: useLedger ? 'ledger' : (typeof runsOf==='function' ? 'runs' : 'pb'),
+      windowed: true,
+      // exposures with no surviving log row -- compositions the reroll rule dropped. Before
+      // 3c these were lost outright; they are counted here and named so the loss is visible.
+      orphans: exposures.filter(x=>!logKeys.has(x.key)).length };
     return { sessions, weeks, overall };
   }
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
@@ -3315,6 +3406,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    ARM_B_SHARE, ARM_MIN_PER_ARM, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_MIN_PER_ARM, windowEnds, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;

@@ -215,6 +215,50 @@ the realised-share invariant, no leak into any item reason, and -- the point -- 
 ON REMOVES a revisit the OFF run served and does not re-serve it) and `features.armStats` (six
 per arm, excess over baseline not raw rate, the difference, and no verdict under the minimum).
 
+**Ledger IV step 3c -- the exposure window + the served ledger (2026-08-25).** Two defects
+found while verifying step 3 on real data; the first meant the randomised arm could not have
+measured what it claims to.
+
+**The double count.** `resolveItem` took "the first run after `startedAt`", searching the
+whole future independently for every exposure -- so ONE run resolved EVERY earlier serving of
+that scenario. Served day 100 as arm A, served day 104 as arm B, played once on day 105:
+`resolved 2`, `arm A n=1 hits=1`, `arm B n=1 hits=1`, the same run in both piles. No reroll
+needed; an ordinary re-serve does it. The arm interval assumes independent draws, and a
+perfectly correlated pair straddling both arms is the one thing it cannot survive.
+
+An exposure now OWNS the half-open window `(servedAt, nextServingOfTheSameScenario]`. Runs
+outside belong to whichever serving was live when they happened; a serving nobody acted on
+before it was superseded is unresolved, which is the truth. The top bound is inclusive so a
+run landing exactly when the next session was composed belongs to the older list and no run
+falls between two windows. `resolveItem` gained `until`; `windowEnds(exposures)` computes the
+bounds and is exported. `hitAny`/`k` are bounded by the same window, so `k/(n+k)` is over the
+runs that exposure could actually claim.
+
+Two slots of one session can name the same scenario (a pre-3c composition could list it as
+both the revisit and the weakest pick). They share an instant, so they are one exposure: the
+first slot owns the window, the rest get a zero-width one. The exposure key is POSITIONAL --
+`day|seedBump|idx|name` -- because a name-keyed one silently merged them.
+
+**The erasure.** The app's session log keeps one row per day and drops a same-day composition
+with nothing ticked off and no rating. Tick-off is a manual UI action, not evidence, so an
+item served, played, and rerolled away before being ticked off vanished with its arm. A list
+you reroll is not a random list, so what survived into the record was what you accepted --
+an intention-to-treat violation in the one comparison built to be unbiased. The app now keeps
+an append-only served ledger and passes it as `sessionHistoryStats`'s sixth argument; when
+present it is the authority, and every aggregate runs over EXPOSURES rather than over the
+log's sessions. `overall.resolvedFrom` reads `'ledger'`, `overall.windowed` is true, and
+`overall.orphans` counts exposures with no surviving log row so the loss is visible instead
+of silent.
+
+Tests: `features.window` (the regression itself -- one run, two servings, exactly one
+resolution and only the live arm books it; the mirror where the run lands inside the first
+window; the boundary run belonging to the older window; and `windowEnds` bounding each
+serving by the next of the same name) and `features.ledger` (without it the rerolled-away
+exposure is invisible, with it the exposure resolves with its arm, the orphan is counted, an
+EMPTY ledger is byte-identical to the pre-3c path, a row whose scenario has no run record is
+unresolved rather than resolved off the PB, and the legacy duplicate-name session keeps both
+slots while one run resolves exactly one of them).
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
