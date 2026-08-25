@@ -1398,7 +1398,7 @@ const MiniEvxlEngine = (function(){
   // different quantities. Rows are stamped from here on, and only the current stamp is
   // scored; the older rows still count toward return-collect and the arm, neither of which
   // reads `p`.
-  const P_VERSION = 2;
+  const P_VERSION = 3;   // 2 = post-COACH-1; 3 = post-MET-4, the slope applied in logit space
   const ARM_B_SHARE = 0.25;      // share of revisit slots that serve the runner-up
   const ARM_MIN_PER_ARM = 10;    // resolved items per arm before the comparison gets a verdict
   // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
@@ -1656,7 +1656,28 @@ const MiniEvxlEngine = (function(){
   // record can say whether 70% means 70%.
   function revisitForecast(sc, byName, helpers){
     if(!(sc.att && sc.att.lastT>0)) return null;
+    // The candidate's OWN percentile is required, because the prediction is a movement placed
+    // at the point you currently stand (see predOf). A played scenario with no curve has no
+    // percentile, so there is nowhere to place it: the honest answer is no forecast, not a
+    // number derived from an anchor that does not exist. (The S3 quantile map gives such a row
+    // an `m` on the calibrated-percentile scale, which is the obvious refinement -- but `m` is
+    // mapped from To-2nd, not measured against a board, so it is not the same quantity the
+    // map's correlations were computed over. Left alone deliberately.)
+    if(sc.pct===null || sc.pct===undefined || !Number.isFinite(Number(sc.pct))) return null;
     const T = sc.att.lastT;
+    // ---- the space the slope lives in (Review Ledger IV step 5a, MET-4) --------------------
+    // The map's r is a correlation of RESIDUALS, and as of step 5a those residuals are LOGITS
+    // of percentiles, not percentiles. So r is a standardised regression slope IN LOGIT SPACE,
+    // and multiplying it by a percentile difference mixes two units.
+    //
+    // The board calibration does not interfere: `adjustPercentile` shifts a percentile's LOGIT
+    // by a per-scenario constant, so it cancels out of a same-scenario movement and leaves the
+    // slope unchanged -- only the intercept moves. The candidate's calibrated percentile is
+    // therefore the right anchor, and `gain` stays in the calibrated-percentile units that
+    // `margin`, `odds` and the logged record all already use.
+    const clampP = v => Math.min(Math.max(Number(v), PCT_EPS), 1-PCT_EPS);
+    const ownZ = logitShare(clampP(sc.pct));
+    const predOf = (w, was, now) => shareOfLogit(ownZ + w*(logitShare(clampP(now)) - logitShare(clampP(was)))) - Number(sc.pct);
     const hasP = row => row && row.played && row.pct!==null && row.pct!==undefined;
     const touched = row => !!((row.att && row.att.lastT > T) || (row.raises||[]).some(r=>Number(r[0]) > T));
     const hsRaw = helpers ? helpers.historySince : null;
@@ -1691,7 +1712,7 @@ const MiniEvxlEngine = (function(){
       // this neighbour's movement predicts about YOURS. See the note below the loop.
       const delta = row.pct - at.pct;
       const rs = shrinkR(r, n);
-      evidence.push({ name: row.name, r, n, rs, delta, pred: rs*delta, via: null, synced: at.synced });
+      evidence.push({ name: row.name, r, n, rs, delta, pred: predOf(rs, at.pct, row.pct), via: null, synced: at.synced });
     };
     const idx = helpers && helpers.pairsIndex && typeof helpers.pairsIndex.edges==='function' ? helpers.pairsIndex : null;
     if(idx){
@@ -1706,10 +1727,20 @@ const MiniEvxlEngine = (function(){
     // This used to be sum(r*delta)/sum(r): an r-weighted MEAN OF THE NEIGHBOURS' MOVEMENTS.
     // Read out loud, it said "the scenarios that co-vary with this one gained 12 points, so
     // you gained 12 points here" -- r decided which evidence counted more, but never
-    // discounted how much that evidence implied. Both quantities are percentiles, so the
-    // standard-deviation ratio is about one and the regression prediction of your movement
-    // given theirs is simply r * delta. So r is the WEIGHT and also the ATTENUATION:
-    //     gain = sum(w * pred) / sum(w),  w = shrinkR(r, n),  pred = w * delta
+    // discounted how much that evidence implied. Both residuals have about the same spread,
+    // so the standardised regression prediction of your movement given theirs is simply
+    // r times theirs. So r is the WEIGHT and also the ATTENUATION:
+    //     gain = sum(w * pred) / sum(w),  w = shrinkR(r, n)
+    //
+    // CORRECTED AT STEP 5a. `pred` was `w * delta` with delta a PERCENTILE difference, resting
+    // on a comment that said "both quantities are percentiles, so the sd ratio is about one".
+    // MET-4 made that sentence false -- the map's residuals are logits now -- so the slope is
+    // applied in logit space and converted back (predOf above). The error it removes is the
+    // Jacobian ratio p(1-p) between the neighbour's position and yours, and it is TWO-SIDED:
+    // a neighbour moving 0.50 -> 0.62 predicted 0.040 for a candidate at the 95th percentile
+    // where the map's own space implies 0.007 (5.5x over), and the same movement for a
+    // candidate at the median implies 0.141 where a neighbour at 0.85 -> 0.97 gave 0.040
+    // (3.5x under). It agrees with the old form only when the two sit at the same percentile.
     // On the toolkit's own fixture (a neighbour at r 0.5 that moved +0.12, and one at r 0.4
     // that did not move) the old form gave 0.067 and this gives roughly a third of that.
     // It is not cosmetic: composeSession counts a revisit as RIPE when odds > 0, and two

@@ -241,6 +241,25 @@
       return sc;
     });
     const sD = E.composeSession(fxD, OPTS, FILL);
+    // ---- step 5a (MET-4): the slope is applied where YOU stand ---------------------------
+    // The map's r correlates LOGIT residuals, so it is a slope in logit space. Before 5a the
+    // code multiplied it by a percentile difference, which gives the same answer wherever the
+    // candidate stands. It should not: a 12-point move at the middle of a board is a much
+    // bigger change in log-odds than the same 12 points near either end, so the SAME evidence
+    // has to predict less for someone at the 10th or 92nd percentile than at the 50th.
+    // One neighbour, one movement (0.40 -> 0.52 at r 0.5 / n 400), three candidates.
+    const placementGain = ownPct => {
+      const NB = 'Nb Mover';
+      const sc = { name: 'Cand', played: true, pct: ownPct, att: { n: 4, lastT: T(20), nearness: 1 },
+        neighbours: [[NB, 0.5, 400]], resp: { n: 5, gain: 0, nearPct: 0.02, state: 'responsive' } };
+      const nb = { name: NB, played: true, pct: 0.52, att: { n: 3, lastT: T(10), nearness: 1 },
+        raises: [[T(10), 0.40, 0.52]] };
+      const f = E.revisitForecast(sc, new Map([[NB, nb], ['Cand', sc]]), { historySince: T(90) });
+      return f ? f.gain : null;
+    };
+    R.forecastPlacement = { low: placementGain(0.10), mid: placementGain(0.50), high: placementGain(0.92),
+      // a candidate with no curve has no percentile, so the movement has nowhere to be placed
+      noCurve: placementGain(null) };
     R.forecastOrder = sD.items.filter(it=>it.why==='revisit').map(it=>[it.name, it.forecast ? Math.round(it.forecast.p*100)/100 : null]);
     // template + profile confidence
     R.templates = {};
@@ -1058,10 +1077,21 @@
       // The old r-weighted MEAN OF MOVEMENTS gave 0.066667 -- it read a neighbour's 12-point
       // gain as 12 of your own points. Worth stating as an inequality too, because that is
       // the property that must hold whatever the numbers are.
+      // STEP 5a (MET-4): the slope is applied in LOGIT space. The map's r correlates logit
+      // residuals, so r times a PERCENTILE difference mixes units. `pred` carries the
+      // neighbour's movement through the logit and places it at the candidate's OWN
+      // percentile. Derived from the fixture's own numbers rather than pasted: Sw Old Switch
+      // stands at 0.48 and Cl Wide Pasu moved 0.40 -> 0.52. The correction is SMALL here
+      // because those percentiles are close; features.forecastPlacement makes it bite.
+      const LG = v => { const c = Math.min(Math.max(v, 0.005), 1-0.005); return Math.log(c/(1-c)); };
+      const IL = z => 1/(1+Math.exp(-z));
       const wA = 0.5*400/450, wB = 0.4*300/350;
-      const gainAttenuated = (wA*(wA*0.12) + wB*(wB*0)) / (wA + wB);
+      const predA = IL(LG(0.48) + wA*(LG(0.52) - LG(0.40))) - 0.48;
+      const gainAttenuated = (wA*predA + wB*0) / (wA + wB);
+      const gainPctSpace = (wA*(wA*0.12) + wB*0) / (wA + wB);      // the pre-5a form, for contrast
       const gainOldForm = (0.5*0.12 + 0.4*0) / (0.5 + 0.4);
       if(!near(f.gain, gainAttenuated, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gainAttenuated-0.02, 1e-9)) problems.push('forecast: gain must attenuate by the shrunk r (w*delta), not average the neighbours\' movements, got '+J(f));
+      if(near(f.gain, gainPctSpace, 1e-9)) problems.push('forecast: gain equals the pre-5a percentile-space product exactly -- the logit conversion is not being applied');
       if(!(f.gain < gainOldForm*0.6)) problems.push('forecast: the attenuated gain must be materially below the old r-weighted mean of movements ('+gainOldForm.toFixed(4)+'), got '+f.gain);
       if(!f.evidence.every(e=>e[1] !== undefined)) problems.push('forecast: every evidence row keeps its raw r for display');
       if(!near(f.p, 1/(1+Math.exp(-(gainAttenuated-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
@@ -1083,8 +1113,16 @@
     // 0.53 rather than 0.78 since COACH-1: one neighbour at r 0.6 on n 500 that moved
     // +0.10 gives w = 0.6*500/550 = 0.5455 and gain = 0.5455*0.10 = 0.05455 against the old
     // form's 0.10. What the case is FOR is the ordering, so assert that as well as the value.
+    const FP = R.forecastPlacement;
+    if(!FP) problems.push('forecastPlacement: missing');
+    else {
+      if(!(FP.mid > FP.low && FP.mid > FP.high)) problems.push('forecastPlacement: the same movement must predict MOST for a candidate at the middle of the board, got '+J(FP));
+      if(!(FP.low < FP.mid*0.6 && FP.high < FP.mid*0.6)) problems.push('forecastPlacement: the ends must be materially damped against the middle -- if all three are equal the slope is being applied in percentile space, got '+J(FP));
+      if(!(FP.high < FP.low)) problems.push('forecastPlacement: 0.92 is nearer the ceiling than 0.10 is to the floor, so it must be damped harder, got '+J(FP));
+      if(FP.noCurve !== null) problems.push('forecastPlacement: a candidate with no percentile has nowhere to place the movement and must get NO forecast, got '+J(FP.noCurve));
+    }
     if(!R.forecastOrder.length || R.forecastOrder[0][0]!=='Tr Old Smooth') problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
-    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.53]])) problems.push('forecast order: p moved with the attenuation and is pinned at 0.53, got '+J(R.forecastOrder));
+    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.54]])) problems.push('forecast order: p moved with the attenuation and the step-5a logit slope, pinned at 0.54, got '+J(R.forecastOrder));
     // v0.5 blocks
     const B = R.blocks;
     if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
