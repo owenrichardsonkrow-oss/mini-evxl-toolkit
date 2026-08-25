@@ -2461,7 +2461,11 @@ const MiniEvxlEngine = (function(){
     // little earlier: practice there is the shared-skill prior's best bet.
     const blocks = opts.blocks && typeof opts.blocks.of==='function' ? opts.blocks : null;
     const blockOf = sc => blocks ? (blocks.of(sc.name) || null) : null;
-    const blockList = blocks ? (blocks.list||[]).map(b=>({ id: b.id, name: b.name||b.id })) : [];
+    // The engine takes only what it needs off a block, deliberately -- but that means a new
+    // field has to be added HERE too. `icc` (step 6) is the block's cross-playlist cohesion:
+    // MET-6 pools the ranking by it, INTENT-3 turns it into the standing's confidence.
+    const blockList = blocks ? (blocks.list||[]).map(b=>({ id: b.id, name: b.name||b.id,
+      icc: (b.icc===null || b.icc===undefined || !Number.isFinite(Number(b.icc))) ? null : Number(b.icc) })) : [];
     const blockNameOf = sc => { const id = blockOf(sc); if(!id) return null; const b = blockList.find(x=>x.id===id); return b ? b.name : id; };
     const hubDegree = sc => (sc.neighbours||[]).filter(nb=>nb && nb[1]>0 && nb[2]>=100).length;
     const hubBonus = sc => blocks ? HUB_BONUS*Math.min(1, hubDegree(sc)/HUB_FULL) : 0;
@@ -2470,6 +2474,9 @@ const MiniEvxlEngine = (function(){
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
         forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
+        // MET-6: what the RANKING used. `m` above is the number you can check; this is the
+        // one the order was decided on, carried rather than hidden.
+        mPooled: (()=>{ const v = pooledOf(sc); return Number.isFinite(Number(v)) ? Number(v) : null; })(),
         pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
@@ -2503,9 +2510,43 @@ const MiniEvxlEngine = (function(){
     // board-size term back into the ranking the calibration just took out. Board size is
     // still shown on every item -- displayed, not silently mixed into the number.
     const shrunk = sc => { const m = sessionMetric(sc); if(calibrated || !hasPct(sc) || popLevel===null) return m; const cf = conf(sc); return cf>=1 ? m : cf*m + (1-cf)*popLevel; };
-    // The v0.4 weakest key: v0.3's metric, shrunk, minus the gain a session can
+    // Block standings: median percentile over the played, curved scenarios of each
+    // block (the same number the Overlap page shows as 'you N%'); lastT = the newest
+    // run on any of its scenarios.
+    //
+    // MOVED ABOVE the weakest key at step 6: the ranking now pools each scenario toward its
+    // own block's standing, so the standings have to exist before the key can be defined.
+    // `icc` rides on the block (its cross-playlist cohesion) and `reliability` is that same
+    // number through Spearman-Brown over the scenarios the standing is actually made of.
+    let blockStats = [];
+    const blockStandingOf = new Map(), blockIccOf = new Map();
+    if(blocks){
+      const per = new Map();
+      played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
+      blockStats = blockList.map(b=>{
+        const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 };
+        const median = e.pcts.length ? medianOf(e.pcts) : null;
+        const icc = (b.icc===null || b.icc===undefined || !Number.isFinite(Number(b.icc))) ? null : Number(b.icc);
+        if(median!==null) blockStandingOf.set(b.id, median);
+        if(icc!==null) blockIccOf.set(b.id, icc);
+        return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median, lastT: e.lastT||null,
+          icc, reliability: standingReliability(e.pcts.length, icc) };
+      });
+    }
+    // MET-6: PARTIAL POOLING, and it moves the RANKING only. A scenario's percentile is
+    // pulled toward its own block's standing by that block's ICC -- the measured share of a
+    // single scenario's variance that is the block's common skill (0.077 to 0.232 on the
+    // shipped blocks). Identity when the scenario has no block, its block has no standing,
+    // or the ICC is under POOL_MIN_ICC, so every pre-step-6 path is unchanged.
+    //
+    // RATIFIED: pool the ranking, DISPLAY the unpooled number. The percentile you see is the
+    // one you can check against the KovaaK's leaderboard; the pooled value is what decided
+    // the order, and it is carried on the item and named in the reason rather than hidden.
+    const pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
+      return poolToward(shrunk(sc), blockStandingOf.has(b) ? blockStandingOf.get(b) : null, blockIccOf.has(b) ? blockIccOf.get(b) : null); };
+    // The v0.4 weakest key: v0.3's metric, shrunk, POOLED, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
-    const weakKey = sc => shrunk(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
+    const weakKey = sc => pooledOf(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
       .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
     const respNote = sc => { const r = sc.resp; if(!r) return '';
@@ -2513,16 +2554,15 @@ const MiniEvxlEngine = (function(){
       if(r.state==='plateaued') return ' — plateaued: '+r.n+' runs, no gain, best recent '+(r.nearPct!==null ? Math.round(r.nearPct*100)+' pts' : 'well')+' under PB';
       return ''; };
     const shrinkNote = sc => { if(calibrated) return ''; const cf = conf(sc); return (hasPct(sc) && cf<1 && popLevel!==null) ? ' — board of '+Number(sc.boardN).toLocaleString()+' players (confidence '+cf.toFixed(2)+'), ranked as '+percentileLabel(shrunk(sc)) : ''; };
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+gameNote(sc)+'.';
-    // Block standings: median percentile over the played, curved scenarios of each
-    // block (the same number the Overlap page shows as 'you N%'); lastT = the newest
-    // run on any of its scenarios.
-    let blockStats = [];
-    if(blocks){
-      const per = new Map();
-      played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++; if(hasPct(sc)) e.pcts.push(sc.pct); if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
-      blockStats = blockList.map(b=>{ const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 }; return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median: e.pcts.length ? medianOf(e.pcts) : null, lastT: e.lastT||null }; });
-    }
+    // MET-6: named only where it actually moved the number, and it says WHY the pull exists.
+    const poolNote = sc => {
+      const b = blockOf(sc); if(!b || !blockIccOf.has(b) || !blockStandingOf.has(b)) return '';
+      const raw = shrunk(sc), pooled = pooledOf(sc);
+      if(!Number.isFinite(raw) || !Number.isFinite(pooled) || Math.abs(pooled - raw) < 0.005) return '';
+      const icc = blockIccOf.get(b);
+      return ' — ranked as '+percentileLabel(pooled)+': only '+Math.round(icc*100)+'% of a single scenario standing is the block skill, so the order pulls it that far toward the block ('+percentileLabel(blockStandingOf.get(b))+')';
+    };
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+gameNote(sc)+'.';
     // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
     if(rotate){
       const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);
@@ -3015,6 +3055,40 @@ const MiniEvxlEngine = (function(){
   // coveredBy). Deterministic. opts.eligible(id) filters the candidates first.
   //   { kept: [{id, size, cohesion, tested, coveredBy: [{id, overlap}]}],
   //     incoherent: [{id, cohesion}], thin: [{id, tested, vs}], skipped: [{id, by, overlap}] }
+  // ---- MET-6 / INTENT-3: partial pooling, and the confidence that falls out of it ------
+  // A block's cross-playlist cohesion IS its intraclass correlation. Under the one-factor
+  // reading a block assumes -- member residual = loading x common skill + specific -- the
+  // correlation between two members is the squared loading, which is also the share of ONE
+  // member's variance that is the common skill. Measured on the shipped blocks: 0.077 to
+  // 0.232, median 0.135. So a single scenario's percentile is mostly SPECIFIC to that
+  // scenario, and ranking on it alone treats a noisy one-item estimate as if it were a
+  // reading of the skill.
+  //
+  // Partial pooling is the standard answer: pull the observation toward its group's centre
+  // by exactly the share that IS the group. No invented constant -- the weight is the
+  // measured ICC. At 0.135 that is a 13.5% pull, which is small on purpose: 86.5% of what
+  // the percentile says really is about that scenario.
+  const POOL_MIN_ICC = 0.02;    // under this the pull is indistinguishable from noise
+  function poolToward(value, groupValue, icc){
+    const v = Number(value);
+    if(value===null || value===undefined || !Number.isFinite(v)) return value;
+    if(groupValue===null || groupValue===undefined || !Number.isFinite(Number(groupValue))) return v;
+    const w = (icc===null || icc===undefined || !Number.isFinite(Number(icc))) ? 0 : Math.min(1, Math.max(0, Number(icc)));
+    if(!(w > POOL_MIN_ICC)) return v;
+    return w*Number(groupValue) + (1-w)*v;
+  }
+  // INTENT-3, and it is the SAME number read the other way. Spearman-Brown: k items whose
+  // pairwise correlation is `icc` measure their common factor with reliability
+  // k*icc/(1+(k-1)*icc). That is the per-skill confidence DESIGN_INTENT has asked for since
+  // the beginning -- a block standing over 5 scenarios at icc 0.135 is 0.44 reliable, over
+  // 50 it is 0.89. An approximation for a MEDIAN standing (the formula is for a mean), and
+  // it says nothing about whether the scenarios are the right ones; it is the sampling
+  // question only.
+  function standingReliability(k, icc){
+    const n = Number(k), r = Number(icc);
+    if(!Number.isFinite(n) || n < 1 || !Number.isFinite(r) || r <= 0) return null;
+    return (n*r)/(1 + (n-1)*r);
+  }
   function independentGroups(matrix, opts){
     // `requireSe` (step 5c): a group's cohesion must clear its OWN standard error to be kept.
     // A floor alone accepts a mean of 0.11 over pairs scattered from -0.4 to +0.6 as readily
@@ -3548,6 +3622,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    ARM_B_SHARE, ARM_MIN_PER_ARM, P_VERSION, windowEnds, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_MIN_PER_ARM, P_VERSION, windowEnds, poolToward, standingReliability, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
