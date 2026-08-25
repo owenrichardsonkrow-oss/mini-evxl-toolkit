@@ -1076,12 +1076,42 @@ const MiniEvxlEngine = (function(){
   // -- it pushed short records into the nearness fallback, which is the drift-prone reading
   // this whole statistic exists to replace, so the SAME recent form read 'ok' on a long
   // history and 'stuck' on a short one. The fixture asserts that invariant directly.
+  // THE NULL IS EXACT, NOT BINOMIAL (Review Ledger IV COACH-3, 2026-08-25).
+  // S6 got the statistic right and its dispersion wrong. The m older runs are all compared
+  // against the SAME recent maximum, so their indicators are positively dependent and the
+  // binomial standard error understates the spread. Exactly: rank the m+k runs; the recent
+  // max sits at rank R, and B (older runs it beats) = R - k, so
+  //     P(B = j) = C(j+k-1, k-1) / C(m+k, k)          [negative hypergeometric]
+  //     E[B]/m   = k/(k+1)                            [the fixed expectation S6 relies on]
+  //     SD(B)/m  = sqrt( k(m+k+1) / (m (k+1)^2 (k+2)) )
+  // That SD equals the binomial one at m = 1 and is 1.7x larger at m = 15 (a full 20-run
+  // record), so the bar sat too close to the expectation exactly where the record is long.
+  // Simulated under the null at k = 5, the rate of calling an unchanged scenario 'stuck'
+  // ran 16.6% at m=1 up to 28.1% at m=15 -- the same drift with play count S6 exists to
+  // remove, one order smaller. With the exact SD it stops trending.
+  //
+  // The BAR is still expectation - 1 SD, deliberately: S6 chose a loose heuristic because a
+  // false 'stuck' costs a scenario you should be training, and tightening it to a 5% test
+  // would move the bar from 0.67 to 0.47 at m = 15 -- a different product decision, not a
+  // correction. The exact one-sided p-value is reported alongside so the choice is visible.
+  function stuckShareSd(k, m){ return Math.sqrt(k*m*(m+k+1)/((k+1)*(k+1)*(k+2)))/m; }
+  // P(B <= j) under the same null. m is at most ATTEMPT_KEEP, so plain arithmetic is exact enough.
+  function stuckShareP(k, m, j){
+    let denom = 1;
+    for(let t=1;t<=k;t++) denom = denom*(m+t)/t;              // C(m+k, k)
+    let term = 1, cum = 0;                                     // C(k-1, k-1) = 1 at i = 0
+    for(let i=0;i<=j;i++){
+      if(i>0) term = term*(i+k-1)/i;                           // C(i+k-1, k-1)
+      cum += term;
+    }
+    return Math.max(0, Math.min(1, cum/denom));
+  }
   const STUCK_SHARE_MIN_OLDER = 1;
   const STUCK_NEARNESS = 0.85;        // the legacy fallback, used only when there is no older window
   function stuckness(rec, pb, k){
     k = k || 5;
     const last = rec && Array.isArray(rec.last) ? rec.last.map(x=>[Number(x[0]), Number(x[1])]).filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1])) : [];
-    const out = { runs: last.length, recentBest: null, older: 0, share: null, expected: k/(k+1), se: null, state: 'unknown', src: null };
+    const out = { runs: last.length, recentBest: null, older: 0, share: null, expected: k/(k+1), se: null, seBinomial: null, p: null, state: 'unknown', src: null };
     if(!last.length) return out;
     const sorted = last.slice().sort((a,b)=>b[0]-a[0]);          // newest first
     const recent = sorted.slice(0, k).map(x=>x[1]);
@@ -1089,11 +1119,14 @@ const MiniEvxlEngine = (function(){
     const recentBest = Math.max(...recent);
     out.recentBest = recentBest; out.older = older.length;
     if(older.length >= STUCK_SHARE_MIN_OLDER){
+      const m = older.length;
       const beaten = older.filter(v=>v < recentBest).length;
-      const share = beaten/older.length;
-      const se = Math.sqrt(out.expected*(1-out.expected)/older.length);
-      out.share = share; out.se = se; out.src = 'rank';
-      out.state = (share < out.expected - se) ? 'stuck' : 'ok';
+      const share = beaten/m;
+      const sd = stuckShareSd(k, m);
+      out.share = share; out.se = sd; out.src = 'rank';
+      out.seBinomial = Math.sqrt(out.expected*(1-out.expected)/m);   // what S6 used, kept for the record
+      out.p = stuckShareP(k, m, beaten);                             // exact one-sided, for display
+      out.state = (share < out.expected - sd) ? 'stuck' : 'ok';
       return out;
     }
     // no older window: fall back to the PB reading, and say it is the weaker one
@@ -1611,7 +1644,11 @@ const MiniEvxlEngine = (function(){
       const row = byName.get(name); if(!hasP(row) || !touched(row)) return;
       const at = pctAt(row); if(!at) return;
       seenEv.add(name);
-      evidence.push({ name: row.name, r, n, delta: row.pct - at.pct, via: null, synced: at.synced });
+      // `rs` is the shrunk r -- the single estimator S8/R4 settled on -- and `pred` is what
+      // this neighbour's movement predicts about YOURS. See the note below the loop.
+      const delta = row.pct - at.pct;
+      const rs = shrinkR(r, n);
+      evidence.push({ name: row.name, r, n, rs, delta, pred: rs*delta, via: null, synced: at.synced });
     };
     const idx = helpers && helpers.pairsIndex && typeof helpers.pairsIndex.edges==='function' ? helpers.pairsIndex : null;
     if(idx){
@@ -1621,8 +1658,27 @@ const MiniEvxlEngine = (function(){
       (sc.neighbours||[]).forEach(nb=>{ if(nb[1]>0 && nb[2]>=100) addEv(nb[0], nb[1], nb[2]); });
     }
     if(!evidence.some(e=>e.delta>0)) return null;
-    const wsum = evidence.reduce((s,e)=>s+e.r, 0);
-    const gain = evidence.reduce((s,e)=>s+e.r*e.delta, 0)/wsum;
+    // THE r HAS TO APPEAR TWICE (Review Ledger IV COACH-1, 2026-08-25).
+    //
+    // This used to be sum(r*delta)/sum(r): an r-weighted MEAN OF THE NEIGHBOURS' MOVEMENTS.
+    // Read out loud, it said "the scenarios that co-vary with this one gained 12 points, so
+    // you gained 12 points here" -- r decided which evidence counted more, but never
+    // discounted how much that evidence implied. Both quantities are percentiles, so the
+    // standard-deviation ratio is about one and the regression prediction of your movement
+    // given theirs is simply r * delta. So r is the WEIGHT and also the ATTENUATION:
+    //     gain = sum(w * pred) / sum(w),  w = shrinkR(r, n),  pred = w * delta
+    // On the toolkit's own fixture (a neighbour at r 0.5 that moved +0.12, and one at r 0.4
+    // that did not move) the old form gave 0.067 and this gives roughly a third of that.
+    // It is not cosmetic: composeSession counts a revisit as RIPE when odds > 0, and two
+    // ripe revisits make the day a Collect session, so the rotation's first trigger was
+    // firing on an inflated number.
+    //
+    // Still a PRIOR, and a weaker one than it looks: the map's r is a correlation of LEVELS
+    // across players, and what this needs is the correlation of CHANGES within one person.
+    // Those are different quantities and the second is normally smaller. Nothing measures it
+    // yet; data/attempts.json is the only source that could (Review Ledger IV NEXT-3).
+    const wsum = evidence.reduce((s,e)=>s+e.rs, 0);
+    const gain = wsum > 0 ? evidence.reduce((s,e)=>s+e.rs*e.pred, 0)/wsum : 0;
     const margin = sc.resp && sc.resp.nearPct!==null && sc.resp.nearPct!==undefined ? sc.resp.nearPct : FORECAST_PRIOR_MARGIN;
     const odds = gain - margin;
     const p = 1/(1+Math.exp(-odds/FORECAST_SLOPE));
@@ -1670,27 +1726,90 @@ const MiniEvxlEngine = (function(){
     }
     return out;
   }
-  function sessionHistoryStats(log, pbNow, nowMs, liveKey){
+  // ---- Resolution: a served item is scored only when a run was LOGGED after it ----------
+  // (Review Ledger IV COACH-2, extended by the owner's Q4, 2026-08-25.)
+  //
+  // This used to score a revisit as collected when the CURRENT PB exceeded the PB at compose
+  // time, over every item in any session where at least one thing was done. Two problems, in
+  // opposite directions, in the one number D11 makes the tool's report card:
+  //
+  //   * The outcome was "the PB rose at some point since", while the null model 1/(n+1) is
+  //     "the NEXT SINGLE ATTEMPT is a PB". Play a recommended revisit twelve times and PB on
+  //     the twelfth and that scored as a hit against a baseline that assumed one try.
+  //   * A revisit that was never attempted scored as a MISS, because the session had some
+  //     other item done. A question that was never asked is not a wrong answer.
+  //
+  // Both are fixed by resolving from the run record instead of from the PB: an item resolves
+  // when `runsOf(name)` holds a run after the session started, and then
+  //   firstTry  the FIRST such run beats pbAt        -- baseline 1/(n+1)
+  //   anyTime   ANY of the k runs beats pbAt         -- baseline k/(n+k)
+  // Both baselines are exact under exchangeability of the n prior and k new runs: the first
+  // new run is equally likely to be any rank among n+1, and the maximum of n+k is equally
+  // likely to sit in either group. The strict reading is what the FORECAST is calibrated
+  // against, because "first-try PB odds" is what the forecast claims; the any-time reading is
+  // the product question -- "did the coach serve me something I could high-score" -- and the
+  // owner's Q4 extends it past revisits to EVERY served item.
+  //
+  // Without `runsOf` (an older caller, or a store with no attempts record) the pre-2026-08-25
+  // reading is kept and flagged `src: 'pb'`, so nothing silently reports zero.
+  function resolveItem(it, startedAt, runsOf, pb, sessionDone){
+    const pbAt = Number(it.pbAt)||0;
+    const n = (it.n===null || it.n===undefined) ? null : Number(it.n);
+    const out = { name: it.name, why: it.why||null, p: Number(it.p), n,
+      block: it.block||null, rung: (it.rung===null || it.rung===undefined) ? null : Number(it.rung),
+      gain: (it.gain===null || it.gain===undefined) ? null : Number(it.gain),
+      margin: (it.margin===null || it.margin===undefined) ? null : Number(it.margin),
+      odds: (it.odds===null || it.odds===undefined) ? null : Number(it.odds),
+      arm: it.arm||null, pbAt, k: 0, resolved: false, hit: 0, hitAny: 0,
+      base: collectBaseline(it.n), baseAny: null, src: null };
+    const rows = typeof runsOf==='function' ? runsOf(it.name) : null;
+    if(!Array.isArray(rows)){
+      // Legacy: the PB is all we have, so it answers the any-time question only -- and with
+      // no run record the ONLY signal that a session was actually played is its done count,
+      // so the pre-2026-08-25 gate stays here (a composition you opened and walked away from
+      // scheduled revisits that were never attempted). The run-based path above does not need
+      // it: it asks each item directly.
+      if(!(Number(sessionDone) > 0)){ out.src = 'pb'; return out; }
+      const rose = (Number(pb(it.name))||0) > pbAt ? 1 : 0;
+      out.src = 'pb'; out.resolved = true; out.hit = rose; out.hitAny = rose;
+      return out;
+    }
+    const after = rows.map(x=>[Number(x[0]), Number(x[1])])
+      .filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1]) && x[0] > startedAt)
+      .sort((a,b)=>a[0]-b[0]);
+    out.src = 'runs'; out.k = after.length;
+    if(!after.length) return out;                       // never attempted -- not a miss, no answer
+    out.resolved = true;
+    out.hit = after[0][1] > pbAt ? 1 : 0;
+    out.hitAny = after.some(x=>x[1] > pbAt) ? 1 : 0;
+    // k/(n+k): the chance that the maximum of the n prior and k new runs lands among the new
+    // ones. Null when the attempt count is unknown -- Number(null) is 0 and 0/(0+k) = 1 would
+    // report CERTAINTY, which is the trap this file keeps re-learning.
+    if(n!==null && Number.isFinite(n) && n >= 0 && out.k > 0) out.baseAny = out.k/(n + out.k);
+    return out;
+  }
+  const meanOf = xs => xs.length ? xs.reduce((a,b)=>a+b, 0)/xs.length : null;
+  function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf){
     const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
     const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
     const sessions = (log||[]).filter(e=>e && Number.isFinite(e.day)).map(e=>{
       const items = Array.isArray(e.items) ? e.items : [];
       const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
-      // The log is written at compose time, so a session that was opened and never
-      // played is in it too; its revisits were never attempted and must not count
-      // toward the return-collect rate (review 2026-08-22 late): only sessions with
-      // at least one item done contribute revisits.
-      const revs = done > 0 ? items.filter(it=>it.why==='revisit') : [];
-      // one row per scheduled revisit: what the coach predicted, what the null model
-      // predicted from the attempts behind it, and whether the PB actually fell
-      const rows = revs.map(it=>({ name: it.name, p: Number(it.p), base: collectBaseline(it.n),
-        hit: (Number(pb(it.name))||0) > (Number(it.pbAt)||0) ? 1 : 0 }));
-      const collected = rows.filter(r=>r.hit).length;
-      const ps = revs.map(it=>Number(it.p)).filter(v=>Number.isFinite(v));
-      const bases = rows.map(r=>r.base).filter(Number.isFinite);
+      const startedAt = Number(e.startedAt)||0;
+      // EVERY served item is resolved, not only the revisits (Q4). `rows` stays the revisit
+      // rows because that is what the forecast is calibrated on and what the page reads.
+      const all = items.map(it=>resolveItem(it, startedAt, runsOf, pb, done));
+      const rows = all.filter(r=>r.why==='revisit');
+      const resolvedRows = rows.filter(r=>r.resolved);
+      const servedResolved = all.filter(r=>r.resolved);
+      const ps = resolvedRows.map(r=>r.p).filter(v=>Number.isFinite(v));
+      const bases = resolvedRows.map(r=>r.base).filter(Number.isFinite);
       return { day: e.day, seedBump: e.seedBump||0, startedAt: e.startedAt, rating: e.rating||null, regime: e.regime||null, done, size: Number(e.size)||items.length,
-        revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null,
-        baseline: bases.length ? bases.reduce((a,b)=>a+b, 0)/bases.length : null, rows,
+        revisits: rows.length, resolved: resolvedRows.length, collected: resolvedRows.filter(r=>r.hit).length,
+        collectedAny: resolvedRows.filter(r=>r.hitAny).length,
+        served: all.length, servedResolved: servedResolved.length,
+        servedHit: servedResolved.filter(r=>r.hit).length, servedHitAny: servedResolved.filter(r=>r.hitAny).length,
+        predicted: meanOf(ps), baseline: meanOf(bases), rows, all,
         type: e.type||null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
     }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
     const weekOf = day => day - (((day % 7) + 7 + 3) % 7);
@@ -1701,34 +1820,57 @@ const MiniEvxlEngine = (function(){
       for(let w=first; w<=lastW; w+=7){
         const ss = sessions.filter(s=>weekOf(s.day)===w);
         const closed = ss.filter(s=>!s.live);
-        const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
-        const preds = closed.filter(s=>s.predicted!==null);
+        // The DENOMINATOR is resolved revisits, not scheduled ones: an item you never
+        // attempted cannot have been collected or missed.
+        const revisits = closed.reduce((a,s)=>a+s.resolved, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
+        const scheduled = closed.reduce((a,s)=>a+s.revisits, 0);
+        const wp = closed.filter(s=>s.predicted!==null), wb = closed.filter(s=>s.baseline!==null);
         const ratings = { easy: 0, good: 0, hard: 0 }; ss.forEach(s=>{ if(s.rating && ratings[s.rating]!==undefined) ratings[s.rating]++; });
-        const bws = closed.filter(s=>s.baseline!==null);
-        weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0), revisits, collected,
-          rate: revisits ? collected/revisits : null, predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
-          baseline: bws.length ? bws.reduce((a,s)=>a+s.baseline*s.revisits, 0)/bws.reduce((a,s)=>a+s.revisits, 0) : null, ratings });
+        weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0),
+          revisits, scheduled, collected, collectedAny: closed.reduce((a,s)=>a+s.collectedAny, 0),
+          servedResolved: closed.reduce((a,s)=>a+s.servedResolved, 0), servedHit: closed.reduce((a,s)=>a+s.servedHit, 0),
+          rate: revisits ? collected/revisits : null,
+          predicted: wp.length ? wp.reduce((a,s)=>a+s.predicted*s.resolved, 0)/Math.max(wp.reduce((a,s)=>a+s.resolved, 0), 1) : null,
+          baseline: wb.length ? wb.reduce((a,s)=>a+s.baseline*s.resolved, 0)/Math.max(wb.reduce((a,s)=>a+s.resolved, 0), 1) : null, ratings });
       }
     }
     const closed = sessions.filter(s=>!s.live);
-    const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
+    const allRows = []; closed.forEach(s=>s.rows.forEach(r=>allRows.push(r)));
+    const servedRows = []; closed.forEach(s=>s.all.forEach(r=>servedRows.push(r)));
+    const resolved = allRows.filter(r=>r.resolved);
+    const collected = resolved.filter(r=>r.hit).length;
     const preds = closed.filter(s=>s.predicted!==null);
-    // Every resolved revisit, pooled: the coach's p, the null model's 1/(n+1), the outcome.
-    const allRows = [];
-    closed.forEach(s=>s.rows.forEach(r=>allRows.push(r)));
-    const scored = allRows.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
+    // The forecast is scored on RESOLVED revisits only, and against the strict outcome --
+    // the same event 1/(n+1) describes. Matching those two is the whole point of COACH-2.
+    const scored = resolved.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
     const brier = brierScore(scored, r=>[r.p, r.hit]);
     const brierBase = brierScore(scored, r=>[r.base, r.hit]);
     // Skill score: how much of the null model's error the coach removes. 0 = no better
     // than "nothing changed since you were last here"; 1 = perfect; NEGATIVE = worse than
     // the null, which is the reading that would say the forecast weights are wrong.
     const skill = (brier!==null && brierBase!==null && brierBase>0) ? 1 - brier/brierBase : null;
-    const baseRows = allRows.filter(r=>Number.isFinite(r.base));
-    const overall = { sessions: sessions.length, revisits, collected, rate: revisits ? collected/revisits : null,
-      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
-      baseline: baseRows.length ? baseRows.reduce((a,r)=>a+r.base, 0)/baseRows.length : null,
+    // Q4: the product question, over EVERY served item -- "was I served things I could
+    // high-score?" -- reported both strictly and as it feels when you play.
+    const servedOk = servedRows.filter(r=>r.resolved);
+    const servedBaseAny = servedOk.map(r=>r.baseAny).filter(Number.isFinite);
+    const served = { items: servedRows.length, resolved: servedOk.length,
+      firstTry: servedOk.filter(r=>r.hit).length, anyTime: servedOk.filter(r=>r.hitAny).length,
+      firstTryRate: servedOk.length ? servedOk.filter(r=>r.hit).length/servedOk.length : null,
+      anyTimeRate: servedOk.length ? servedOk.filter(r=>r.hitAny).length/servedOk.length : null,
+      firstTryBase: meanOf(servedOk.map(r=>r.base).filter(Number.isFinite)),
+      anyTimeBase: meanOf(servedBaseAny),
+      runs: servedOk.reduce((a,r)=>a+r.k, 0) };
+    const overall = { sessions: sessions.length,
+      revisits: resolved.length, scheduled: allRows.length, collected,
+      collectedAny: resolved.filter(r=>r.hitAny).length,
+      rate: resolved.length ? collected/resolved.length : null,
+      rateAny: resolved.length ? resolved.filter(r=>r.hitAny).length/resolved.length : null,
+      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.resolved, 0)/Math.max(preds.reduce((a,s)=>a+s.resolved, 0), 1) : null,
+      baseline: meanOf(resolved.map(r=>r.base).filter(Number.isFinite)),
+      baselineAny: meanOf(resolved.map(r=>r.baseAny).filter(Number.isFinite)),
       scoredOn: scored.length, brier, brierBase, skill, scorable: scored.length >= SCORE_MIN_REVISITS, scoreMin: SCORE_MIN_REVISITS,
-      reliability: scored.length ? reliabilityBins(scored) : [] };
+      reliability: scored.length ? reliabilityBins(scored) : [], served,
+      resolvedFrom: typeof runsOf==='function' ? 'runs' : 'pb' };
     return { sessions, weeks, overall };
   }
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --

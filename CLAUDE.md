@@ -151,6 +151,37 @@ comments had been embedding into every built template, because comments ship ver
 comments say "the owner" now and both guards name the string literally. A name in a denylist
 is not a leak; it is what lets the check fail.
 
+**Ledger IV step 2 -- the instruments (2026-08-25).** Four engine changes as one step,
+because the forecast's `p` and the outcome's definition feed the same calibration record.
+
+`revisitForecast` **attenuates by r**. Its gain was `sum(r*delta)/sum(r)` -- an r-weighted
+mean of the NEIGHBOURS' movements, which said "they gained 12 points, so you gained 12".
+Both sides are percentiles, so the regression prediction is `r * delta`: r is the weight AND
+the attenuation, and the weight is the SHRUNK r. On the fixture, gain 0.0667 -> 0.0301 and
+the bucket flips good -> fair. `collectReady` counts off `odds > 0`, so the rotation's first
+trigger was firing on an inflated number.
+
+`sessionHistoryStats(log, pbNow, now, liveKey, **runsOf**)` **resolves from the run record**.
+An item is scored only once a run is logged AFTER it was served, and the outcome is that
+FIRST run against the PB it was served against -- the event `1/(n+1)` actually describes. The
+old rule scored "the PB rose at some point" against that baseline, and counted a revisit you
+never attempted as a miss. The any-time reading is kept beside it with its own null,
+`k/(n+k)`, and the owner's Q4 extends both past revisits to EVERY served item. Without
+`runsOf` the older PB reading applies, keeps its `done > 0` gate, and the result says so
+(`resolvedFrom`).
+
+`stuckness` uses the **exact null**. The m older runs are compared against the same recent
+maximum, so they are positively dependent and the binomial SE understates the spread; the
+exact negative-hypergeometric SD equals it at m = 1 and is 1.7x larger at m = 15. Simulated,
+the false-stuck rate ran 16.6% -> 28.1% across that range -- the same drift with play count
+S6 exists to remove. The bar stays expectation - 1 SD; the exact one-sided p is reported
+alongside.
+
+Tests: `features.resolve` (a first-try collect, a miss-then-collect, a never-attempted item,
+an attempted-never-beaten one, both baselines, the legacy contrast, and Q4's served stats
+over a mixed session) and `features.stuckNull`. The forecast assertions now pin the
+RELATIONSHIP as well as the value, and derive the bucket from `forecastBucket(p)`.
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's

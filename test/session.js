@@ -305,7 +305,7 @@
       { day: dayOf(FIXED_MS), seedBump: 1, startedAt: FIXED_MS, rating: null, regime: 'normal', done: 0, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'E', why: 'revisit', pbAt: 10, p: 0.9 }] }
     ];
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
-    R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
+    R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live, s.resolved]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
 
     // ---- R6: WHEN it stopped improving (2026-08-25) ---------------------------------
     // A changepoint search without a penalty always finds a changepoint -- it returns the
@@ -521,6 +521,64 @@
         atZero: E.adjustPercentile(0, 2), atOne: E.adjustPercentile(1, -2), nullIn: E.adjustPercentile(null, 1) }
     };
 
+    // ---- COACH-2 + Q4: resolution from the RUN RECORD ------------------------------------
+    // An item is scored only once a run is logged AFTER it was served, and the outcome is
+    // that FIRST run -- the event 1/(n+1) actually describes. The old rule scored "the PB
+    // rose at some point" against that baseline, and counted a revisit you never attempted
+    // as a miss. Both are pinned here, in both directions.
+    const servedAt = 1000;
+    const logRuns = rows => rows.map((r, i) => ({ day: 200 + i, seedBump: 0, startedAt: servedAt, rating: null,
+      regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'R' + i, why: 'revisit', pbAt: 100, p: r.p, n: r.n }] }));
+    // R0 first run back beats it (a true first-try collect)
+    // R1 first run misses, a LATER run beats it -- the old rule called this collected
+    // R2 never attempted after being served -- the old rule called this a miss
+    // R3 attempted, never beaten
+    const RUNS = {
+      R0: [[servedAt + 10, 150]],
+      R1: [[servedAt + 10,  90], [servedAt + 20, 150]],
+      R2: [[servedAt - 50, 150]],                       // only a run from BEFORE it was served
+      R3: [[servedAt + 10,  80], [servedAt + 20,  90]]
+    };
+    const runsOf = name => RUNS[name] || null;
+    const fourLog = logRuns([{ p: 0.5, n: 9 }, { p: 0.5, n: 9 }, { p: 0.5, n: 9 }, { p: 0.5, n: 9 }]);
+    const strict = E.sessionHistoryStats(fourLog, () => 150, FIXED_MS, null, runsOf);
+    const legacy = E.sessionHistoryStats(fourLog, () => 150, FIXED_MS, null);
+    R.resolve = {
+      strict: { revisits: strict.overall.revisits, scheduled: strict.overall.scheduled,
+        collected: strict.overall.collected, collectedAny: strict.overall.collectedAny,
+        rate: strict.overall.rate, rateAny: strict.overall.rateAny, from: strict.overall.resolvedFrom,
+        rows: strict.sessions.slice().sort((a, b) => a.day - b.day).map(x => {
+          const r = x.rows[0];
+          return [r.name, r.resolved, r.hit, r.hitAny, r.k, r.base, r.baseAny];
+        }) },
+      legacy: { revisits: legacy.overall.revisits, collected: legacy.overall.collected, from: legacy.overall.resolvedFrom },
+      // Q4: every served item, not only revisits
+      served: { items: strict.overall.served.items, resolved: strict.overall.served.resolved,
+        firstTry: strict.overall.served.firstTry, anyTime: strict.overall.served.anyTime,
+        runs: strict.overall.served.runs },
+      // an unresolved item must not be scored, so the Brier pool shrinks to the resolved ones
+      scoredOn: strict.overall.scoredOn
+    };
+    // A mixed non-revisit session: the served stats must count weakest/route items too.
+    const mixedLog = [{ day: 300, seedBump: 0, startedAt: servedAt, rating: null, regime: 'normal', done: 2, size: 3,
+      items: [{ name: 'R0', why: 'weakest', pbAt: 100, n: 9 }, { name: 'R3', why: 'route', pbAt: 100, n: 9 },
+              { name: 'R2', why: 'revisit', pbAt: 100, p: 0.5, n: 9 }] }];
+    const mixed2 = E.sessionHistoryStats(mixedLog, () => 150, FIXED_MS, null, runsOf);
+    R.resolve.mixed = { servedItems: mixed2.overall.served.items, servedResolved: mixed2.overall.served.resolved,
+      servedFirstTry: mixed2.overall.served.firstTry, revisitsResolved: mixed2.overall.revisits };
+
+    // ---- COACH-3: the exact null for "stuck" ---------------------------------------------
+    // The bar is expectation - 1 SD, and the SD is now the exact one. It equals the binomial
+    // SD at m = 1 and is materially larger for a long record, which is where the old form
+    // let the flag drift with play count.
+    const mkRunsC3 = scores => ({ n: scores.length, last: scores.map((v, i) => [FIXED_MS - i * DAY, v]) });
+    const longFlat = mkRunsC3([90, 91, 89, 92, 90].concat(Array.from({ length: 15 }, (u, i) => 88 + (i % 5))));
+    R.stuckNull = {
+      long: (() => { const st = E.stuckness(longFlat, 100, 5); return { older: st.older, share: st.share, se: st.se, seBinomial: st.seBinomial, p: st.p, state: st.state }; })(),
+      m1: (() => { const st = E.stuckness(mkRunsC3([90, 91, 89, 92, 90, 60]), 100, 5); return { older: st.older, se: st.se, seBinomial: st.seBinomial }; })()
+    };
+
     return R;
   }
   const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
@@ -682,6 +740,51 @@
       if(!(A.atZero > 0 && A.atOne < 1)) problems.push('calibrate: the eps clamp must keep a 0 or 1 percentile finite, got '+J(A));
       if(A.nullIn !== null) problems.push('calibrate: adjustPercentile(null) must be null, got '+J(A.nullIn));
     }
+    const RS = R.resolve;
+    if(!RS) problems.push('resolve: missing');
+    else {
+      if(RS.strict.from !== 'runs' || RS.legacy.from !== 'pb') problems.push('resolve: the result must say which rule resolved it, got '+J([RS.strict.from, RS.legacy.from]));
+      // four revisits scheduled, three attempted after being served
+      if(RS.strict.scheduled !== 4 || RS.strict.revisits !== 3) problems.push('resolve: 4 scheduled, 3 with a run after they were served, got '+J(RS.strict));
+      // R0 collected first try; R1 only on a later run; R3 never
+      if(RS.strict.collected !== 1) problems.push('resolve: exactly one FIRST-try collect, got '+RS.strict.collected);
+      if(RS.strict.collectedAny !== 2) problems.push('resolve: two collected on ANY run, got '+RS.strict.collectedAny);
+      if(!near(RS.strict.rate, 1/3, 1e-12) || !near(RS.strict.rateAny, 2/3, 1e-12)) problems.push('resolve: rates are over RESOLVED revisits, got '+J(RS.strict));
+      const byName = {}; RS.strict.rows.forEach(r=>{ byName[r[0]] = r; });
+      // [name, resolved, hit, hitAny, k, base, baseAny]
+      if(!byName.R0 || byName.R0[1]!==true || byName.R0[2]!==1 || byName.R0[4]!==1) problems.push('resolve: R0 is a first-try collect on one run, got '+J(byName.R0));
+      if(!byName.R1 || byName.R1[2]!==0 || byName.R1[3]!==1 || byName.R1[4]!==2) problems.push('resolve: R1 missed first try and collected on the second -- the case the old rule scored as a clean hit, got '+J(byName.R1));
+      if(!byName.R2 || byName.R2[1]!==false || byName.R2[4]!==0) problems.push('resolve: R2 was never attempted after being served and must be UNRESOLVED, not a miss, got '+J(byName.R2));
+      if(!byName.R3 || byName.R3[1]!==true || byName.R3[2]!==0 || byName.R3[3]!==0) problems.push('resolve: R3 was attempted twice and never beaten, got '+J(byName.R3));
+      // the two baselines: 1/(n+1) for the first run, k/(n+k) for any of k
+      if(!near(byName.R1[5], 0.1, 1e-12)) problems.push('resolve: the strict baseline is 1/(9+1), got '+J(byName.R1[5]));
+      if(!near(byName.R1[6], 2/11, 1e-12)) problems.push('resolve: the any-run baseline is k/(n+k) = 2/11 on two tries over nine priors, got '+J(byName.R1[6]));
+      if(byName.R2[6] !== null) problems.push('resolve: an unresolved item has no k, so no any-run baseline, got '+J(byName.R2[6]));
+      // an unresolved revisit cannot enter the Brier pool
+      if(RS.scoredOn !== 3) problems.push('resolve: only resolved revisits are scored, got '+RS.scoredOn);
+      // the OLD rule, for contrast: the PB is 150 everywhere, so all four read as collected
+      if(RS.legacy.collected !== 4 || RS.legacy.revisits !== 4) problems.push('resolve: the legacy PB rule counts every item and calls them all collected -- that contrast is the point, got '+J(RS.legacy));
+      // Q4: the served stats span every item, not only revisits
+      if(RS.served.items !== 4 || RS.served.resolved !== 3 || RS.served.firstTry !== 1 || RS.served.anyTime !== 2) problems.push('resolve: served stats over every item, got '+J(RS.served));
+      if(RS.served.runs !== 5) problems.push('resolve: served.runs counts the logged runs after serving (1+2+2), got '+RS.served.runs);
+      const MX = RS.mixed;
+      if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
+      if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
+    }
+    const SN = R.stuckNull;
+    if(!SN) problems.push('stuckNull: missing');
+    else {
+      // 15 older runs: the exact SD is sqrt(k(m+k+1)/(m(k+1)^2(k+2))) = 0.16667, the binomial
+      // one 0.09623 -- 1.7x apart, and the bar sits a full SD below 5/6 either way.
+      if(SN.long.older !== 15) problems.push('stuckNull: expected a 15-run older window, got '+SN.long.older);
+      if(!near(SN.long.se, 0.166667, 1e-4)) problems.push('stuckNull: the exact SD at k=5, m=15 is 0.16667, got '+J(SN.long.se));
+      if(!near(SN.long.seBinomial, Math.sqrt((5/6)*(1/6)/15), 1e-9)) problems.push('stuckNull: the binomial SD is kept for the record, got '+J(SN.long.seBinomial));
+      if(!(SN.long.se > SN.long.seBinomial * 1.6)) problems.push('stuckNull: the exact SD must be materially LARGER on a long record -- that gap is the drift being removed, got '+J(SN.long));
+      if(!(SN.long.p >= 0 && SN.long.p <= 1)) problems.push('stuckNull: the exact one-sided p must be a probability, got '+J(SN.long.p));
+      // at m = 1 the two coincide exactly, which is why the short-record reading is unchanged
+      if(!near(SN.m1.se, SN.m1.seBinomial, 1e-9)) problems.push('stuckNull: at one older run the exact and binomial SDs are equal, got '+J(SN.m1));
+    }
+
 
     // revisit forecast
     const f = R.forecast && R.forecast.forecast;
@@ -693,12 +796,28 @@
       // where a pairs index ships, the forecast reads the measured neighbourhood instead.
       const want = [['Cl Wide Pasu', 0.5, 0.12, null, true], ['Tr Control Pill', 0.4, 0, null, false]];
       if(f.evidence.length!==want.length || !f.evidence.every((e, i)=> e[0]===want[i][0] && near(e[1], want[i][1], 1e-9) && near(e[2], want[i][2], 1e-9) && e[3]===want[i][3] && e[4]===want[i][4])) problems.push('forecast: evidence must be A (+0.12) and the touched-but-unmoved B (0), and nothing else -- the third row used to be a label bridge whose only touched scenario was A counted twice: '+J(f.evidence));
-      const gain = (0.5*0.12 + 0.4*0)/(0.5+0.4);
-      if(!near(f.gain, gain, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gain-0.02, 1e-9)) problems.push('forecast: gain = r-weighted mean over touched evidence (unmoved counts as 0), margin = nearPct, got '+J(f));
-      if(!near(f.p, 1/(1+Math.exp(-(gain-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
+      // COACH-1 (Review Ledger IV): the r appears TWICE -- once as the weight, once as the
+      // attenuation -- because a neighbour moving by delta predicts r*delta of YOUR movement,
+      // not delta. And the weight is the SHRUNK r, the one estimator S8/R4 settled on. So
+      //     w  = shrinkR(r, n),  pred = w * delta,  gain = sum(w * pred) / sum(w)
+      // Here: w_A = 0.5*400/450 = 0.4444, w_B = 0.4*300/350 = 0.34286, only A moved (+0.12),
+      // so gain = 0.4444 * (0.4444 * 0.12) / (0.4444 + 0.34286) = 0.030108.
+      // The old r-weighted MEAN OF MOVEMENTS gave 0.066667 -- it read a neighbour's 12-point
+      // gain as 12 of your own points. Worth stating as an inequality too, because that is
+      // the property that must hold whatever the numbers are.
+      const wA = 0.5*400/450, wB = 0.4*300/350;
+      const gainAttenuated = (wA*(wA*0.12) + wB*(wB*0)) / (wA + wB);
+      const gainOldForm = (0.5*0.12 + 0.4*0) / (0.5 + 0.4);
+      if(!near(f.gain, gainAttenuated, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gainAttenuated-0.02, 1e-9)) problems.push('forecast: gain must attenuate by the shrunk r (w*delta), not average the neighbours\' movements, got '+J(f));
+      if(!(f.gain < gainOldForm*0.6)) problems.push('forecast: the attenuated gain must be materially below the old r-weighted mean of movements ('+gainOldForm.toFixed(4)+'), got '+f.gain);
+      if(!f.evidence.every(e=>e[1] !== undefined)) problems.push('forecast: every evidence row keeps its raw r for display');
+      if(!near(f.p, 1/(1+Math.exp(-(gainAttenuated-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
       // the BUCKET and the uncalibrated note, never a percentage: p is an invented
       // logistic and must not read as a measured probability (2026-08-24)
-      if(!/first-try PB odds: good \(uncalibrated/.test(R.forecast.reason) || /\(\d+%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry the bucket + the uncalibrated note, no percentage, and the sync-dated flag: '+R.forecast.reason);
+      // The bucket is whatever forecastBucket says of THIS p -- asserting the word would
+      // pin the arithmetic twice, and the attenuation moved this case from good to fair.
+      const wantBucket = f.p >= 0.6 ? 'good' : (f.p >= 0.4 ? 'fair' : 'poor');
+      if(!new RegExp('first-try PB odds: '+wantBucket+' \\(uncalibrated').test(R.forecast.reason) || /\(\d+%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry forecastBucket(p) ("'+wantBucket+'") + the uncalibrated note, no percentage, and the sync-dated flag: '+R.forecast.reason);
       if(!Number.isFinite(f.p)) problems.push('forecast: p must still be computed and logged for calibration, got '+J(f.p));
     }
     // Tr Old Smooth: neighbour Tr Recent Sphere +0.10 (r 0.6) and the smoothness|reactive tracking
@@ -708,7 +827,11 @@
     // 40-day candidate has none, so the forecast reorders the revisit pool past pure
     // recency. p rose from 0.65 to 0.78 on 2026-08-25 only because the label-bridge row
     // that used to dilute the r-weighted mean is gone (A2/S5).
-    if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.78]])) problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    // 0.53 rather than 0.78 since COACH-1: one neighbour at r 0.6 on n 500 that moved
+    // +0.10 gives w = 0.6*500/550 = 0.5455 and gain = 0.5455*0.10 = 0.05455 against the old
+    // form's 0.10. What the case is FOR is the ordering, so assert that as well as the value.
+    if(!R.forecastOrder.length || R.forecastOrder[0][0]!=='Tr Old Smooth') problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.53]])) problems.push('forecast order: p moved with the attenuation and is pinned at 0.53, got '+J(R.forecastOrder));
     // v0.5 blocks
     const B = R.blocks;
     if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
@@ -744,7 +867,11 @@
     if(h.sessions.length!==3 || h.sessions[0][6]!==true || h.sessions[1][6]!==false) problems.push('history: 3 sessions newest first, the live one flagged: '+J(h.sessions));
     // the live session has nothing done yet, so its revisits are not counted (a session that
     // was never played must not deflate the return-collect rate)
-    if(J(h.sessions.map(s=>[s[3], s[4]]))!==J([[0,0],[2,1],[1,1]])) problems.push('history: revisits/collected per session must be [0,0] (live, nothing done), [2,1], [1,1], got '+J(h.sessions));
+    // [scheduled, resolved, collected] per session. Since Review Ledger IV COACH-2
+    // `revisits` counts what was SCHEDULED and `resolved` what was actually attempted --
+    // the live session scheduled one and played nothing, which is unresolved, not missed.
+    // (No runsOf here, so this exercises the legacy PB path and its done-count gate.)
+    if(J(h.sessions.map(s=>[s[3], s[7], s[4]]))!==J([[1,0,0],[2,2,1],[1,1,1]])) problems.push('history: [scheduled, resolved, collected] per session must be [1,0,0] (live, nothing done -> unresolved), [2,2,1], [1,1,1], got '+J(h.sessions));
     if(h.overall.revisits!==3 || h.overall.collected!==2 || !near(h.overall.rate, 2/3, 1e-9) || !near(h.overall.predicted, (0.8*1 + 0.5*2)/3, 1e-9)) problems.push('history: overall must exclude the live session (3 revisits, 2 collected, predicted mean weighted by revisits), got '+J(h.overall));
     if(h.weeks.length!==2 || h.weeks[0][1]!==1 || h.weeks[1][1]!==2) problems.push('history: two contiguous Monday-start weeks (1 session, then 2), got '+J(h.weeks));
     if(!(h.weeks[0][3]===1 && h.weeks[1][3]===1 && h.weeks[1][2]===2)) problems.push('history: weekly collected/revisits must follow the sessions, got '+J(h.weeks));
