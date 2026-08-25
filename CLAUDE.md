@@ -43,6 +43,19 @@ personal string survives anywhere. It also copies the shared files (`lib/`,
 **`src/engine.js`**) from the tracker repo when they differ.
 `IS_TOOLKIT_TEMPLATE` is `SITE.template`.
 
+**Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
+both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
+Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's
+`dev`; the engine copy here follows at the next build. C1 one `forecastBucket` rule
+so the item reason and the session chip cannot disagree; C2 the session header's
+return-collect goes through `sessionHistoryStats` like the history view; C3 reset
+clears the coach's record (data model 5 above); C4 the coverage slot needs a
+MEASURED absence, not a missing one. The session snapshot passed unchanged through
+all four — the fixture's cold block is cold on real 40-day-old runs. The larger
+statistical findings (the percentile metric is confounded with leaderboard size;
+two-thirds of transfer routes are playlist-mates) are staged behind them and not
+started.
+
 **Tests (six since 2026-08-22):** `test/session.js` pins the session coach's
 output (`composeSession`, `skillProfile`) on a synthetic fixture — no dataset;
 the snapshot lives in the test source as `EXPECTED`, regenerated with
@@ -207,6 +220,14 @@ and then only as behavior rules, never as descriptions of him.
    `apply-scores.ps1` bakes them into a page's `#attempts-data` block (`{}` in
    this template; `template-integrity.js` asserts it). Cards show "N plays ·
    last 3d ago · best of last 5: 92% of PB". Cleared by reset.
+5. **The coach's record** (2026-08-25) — `storeKey('session')` (today's composition)
+   and `storeKey('session-log')` (every session composed, each revisit item carrying
+   the `p` it was predicted at; the return-collect rate is computed over it). Carried
+   by Export/Import since format v3, merged as unions. **Cleared by reset** (review
+   C3): every `pbAt` in the log is a score the reset removes, so a surviving log
+   reports return-collect against numbers that no longer exist — and here the same
+   button reads "Clear synced data", where keeping a previous user's session history
+   would be plainly wrong. Nothing cleared these two keys before that date.
 
 Everything derives from one rule: **a scenario renders iff at least one present,
 non-excluded playlist references it.** `getParsedBenchmarks()` implements it, so

@@ -1166,6 +1166,13 @@ const MiniEvxlEngine = (function(){
   const FORECAST_SLOPE = 0.04;                       // logistic slope of the revisit forecast (a stated prior, uncalibrated)
   const FORECAST_PRIOR_MARGIN = 0.05;                // gap to PB assumed when the candidate's recent runs are unknown
   const FORECAST_MAX_BRIDGES = 3;                    // label bridges that may contribute forecast evidence (strongest by r)
+  // The revisit forecast's p is reported as a BUCKET, never a percentage (2026-08-24):
+  // it comes from an invented slope over an invented prior margin, so "83%" reads as a
+  // measured probability sitting next to real percentiles. ONE rule, at module scope,
+  // because the two places that report it drifted apart the first time (the item reason
+  // dropped the percentage and the session page's chip kept it -- review C1, 2026-08-25).
+  const FORECAST_GOOD = 0.6, FORECAST_FAIR = 0.4;
+  function forecastBucket(p){ if(p===null || p===undefined) return ''; const v = Number(p); return Number.isFinite(v) ? (v>=FORECAST_GOOD ? 'good' : v>=FORECAST_FAIR ? 'fair' : 'poor') : ''; }   // Number(null) is 0, which is finite -- a missing forecast must not read as 'poor'
   const HUB_BONUS = 0.03;                            // v0.5: full bonus for a scenario with >= HUB_FULL positive neighbours (practice there co-varies with the most)
   const HUB_FULL = 8;
   const BLOCK_UNTOUCHED_DAYS = 14;                   // v0.5: a block with no run or raise this long gets the coverage slot
@@ -1567,7 +1574,16 @@ const MiniEvxlEngine = (function(){
       // 1 - median (floor at 0.05), largest-remainder rounding, weakest block first;
       // a block whose pool runs dry hands its slots to the next weakest.
       const ranked = blockStats.filter(b=>b.median!==null && b.rated>=2).sort((a,b)=> a.median-b.median || (a.name<b.name?-1:1));
-      const coverageSlot = template.weakest>1 && blockStats.some(b=>b.lastT===null || (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS) ? 1 : 0;
+      // COLD is a MEASURED absence, never a missing one: the block has runs on record
+      // and none of them inside BLOCK_UNTOUCHED_DAYS. A block with no logged run at all
+      // is UNKNOWN -- the same reading profileConfidence gives an empty attempts store --
+      // and does not take a slot. Review C4 (2026-08-25): `lastT === null` counted as
+      // untouched, so on a store with few logged runs every block qualified, the sort
+      // tied on `lastT || 0`, and the slot went to whichever block sorted first by NAME.
+      // On the owner's page that was the block he stood strongest in, in a reason that
+      // said so ("your standing top 9% (8th weakest of 8 blocks)").
+      const isCold = b => b.played>0 && b.lastT!==null && (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS;
+      const coverageSlot = template.weakest>1 && blockStats.some(isCold) ? 1 : 0;
       const slots = template.weakest - coverageSlot;
       const ws = ranked.map(b=>Math.max(0.05, 1-b.median)); const wsum = ws.reduce((a,b)=>a+b, 0) || 1;
       const raw = ws.map(w=>w*slots/wsum); const alloc = raw.map(Math.floor); let used = alloc.reduce((a,b)=>a+b, 0);
@@ -1586,11 +1602,15 @@ const MiniEvxlEngine = (function(){
       // COVERAGE: the block nothing touched for BLOCK_UNTOUCHED_DAYS -- its weakest
       // non-sink scenario at or under level; the least recently touched block first.
       if(coverageSlot){
-        const cold = blockStats.filter(b=>b.played>0 && (b.lastT===null || (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS)).sort((a,b)=> (a.lastT||0)-(b.lastT||0) || (a.name<b.name?-1:1));
+        // Among the neglected blocks the WEAKEST earns the slot (D1's floor bias is
+        // what decides between them), then the longest neglected, then the name so the
+        // order is deterministic. Ordering by recency alone spent the slot on whichever
+        // block happened to be coldest regardless of whether it needed the work.
+        const cold = blockStats.filter(isCold).sort((a,b)=> (a.median===null?1:0)-(b.median===null?1:0) || (a.median-b.median) || (a.lastT||0)-(b.lastT||0) || (a.name<b.name?-1:1));
         for(const b of cold){
           const pool = weakPool.filter(sc=>blockOf(sc)===b.id && !sinks(sc) && !chosen.has(sc.name));
           const before = items.length;
-          take(pool, 'coverage', sc=>'Coverage — nothing in the '+b.name+' block '+(b.lastT ? 'for '+Math.round((opts.now-b.lastT)/DAY_MS)+' days' : 'on record')+': it moves independently of the blocks you have been training, so it does not improve by proxy; '+standing(sc)+', '+label(sc)+blockNote(sc)+'.', 1);
+          take(pool, 'coverage', sc=>'Coverage — nothing in the '+b.name+' block for '+Math.round((opts.now-b.lastT)/DAY_MS)+' days: it moves independently of the blocks you have been training, so it does not improve by proxy; '+standing(sc)+', '+label(sc)+blockNote(sc)+'.', 1);
           if(items.length>before) break;
         }
       }
@@ -1696,7 +1716,7 @@ const MiniEvxlEngine = (function(){
     // against your own gap to the PB) are all printed; p is still logged per item
     // so the return-collect record can calibrate it, and the percentage comes back
     // the day predicted and collected can be compared (2026-08-24).
-    const oddsWord = p => p>=0.6 ? 'good' : p>=0.4 ? 'fair' : 'poor';
+    const oddsWord = forecastBucket;
     take(revOrdered, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
       if(!f) return 'Revisit — last played '+days+' days ago; go collect the PB (if it falls first try, the time away did the work).';
       const rs = f.evidence.map(e=>e.r); const rTxt = rs.length>1 ? Math.min(...rs).toFixed(1)+'–'+Math.max(...rs).toFixed(1) : rs[0].toFixed(2);
@@ -2393,7 +2413,7 @@ const MiniEvxlEngine = (function(){
     if(fx.exclude) out.push('no-aim');
     return out;
   }
-  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
+  return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
