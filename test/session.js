@@ -305,7 +305,7 @@
       { day: dayOf(FIXED_MS), seedBump: 1, startedAt: FIXED_MS, rating: null, regime: 'normal', done: 0, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'E', why: 'revisit', pbAt: 10, p: 0.9 }] }
     ];
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
-    R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
+    R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live, s.resolved]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
 
     // ---- R6: WHEN it stopped improving (2026-08-25) ---------------------------------
     // A changepoint search without a penalty always finds a changepoint -- it returns the
@@ -472,6 +472,253 @@
       noN: E.sessionHistoryStats(logOf([{ p: 0.5 }]), () => 200, FIXED_MS, null).overall.scoredOn
     };
 
+    // ---- calibrateScenarios: the boundary every ranking now passes through --------------
+    // Review Ledger IV BUG-4. This function applies the board offsets AND quantile-maps a
+    // curve-less scenario's To 2nd onto the same scale, and the suite that gates the deploy
+    // never executed either branch: OPTS carries no `offsets`, so only the identity path ran.
+    // Steps 5, 6 and 7b all touch the metric again, so it gets pinned first.
+    const calRow = (name, pct, to2nd, played) => ({ name, played: played !== false, pct, to2nd,
+      toMax: 0.5, toNext: 0.5, maxed: false, rung: 3, labels: [], facets: [], playlists: 1,
+      plKeys: [], att: null, raises14d: 0, neighbours: [] });
+    // 25 curved played rows, percentile and To 2nd both rising -- enough to clear
+    // METRIC_MIN_CURVED (20) so the quantile map is allowed to run.
+    const curved = Array.from({ length: 25 }, (u, i) => calRow('C' + i, (i + 1) / 26, (i + 1) / 26));
+    const noCurveLow  = Object.assign(calRow('NoCurveLow',  null, 0.10));
+    const noCurveHigh = Object.assign(calRow('NoCurveHigh', null, 0.90));
+    const unplayed    = calRow('Unplayed', null, 0, false);
+    const base = curved.concat([noCurveLow, noCurveHigh, unplayed]);
+    const find = (rows, n) => rows.find(r => r.name === n);
+
+    // (a) no offsets: curved rows keep their percentile, and `calibrated` must be FALSE.
+    const calNone = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: null });
+    // (b) offsets that name NONE of these rows -- the Number(null) trap: deltaOf must answer
+    //     null, not 0, or every uncalibrated build reports itself calibrated.
+    const calMiss = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: { 'Nobody': [1.5, 40] } });
+    // (c) real offsets on two rows: a POSITIVE delta lowers a percentile, a negative one raises it.
+    const calSome = E.calibrateScenarios(base.map(r => Object.assign({}, r)), { offsets: { 'C4': [1.2, 90], 'C20': [-1.2, 90] } });
+    // (d) idempotent: a row set that already carries `m` comes back untouched.
+    const calTwice = E.calibrateScenarios(calSome, { offsets: { 'C4': [1.2, 90], 'C20': [-1.2, 90] } });
+    // (e) under METRIC_MIN_CURVED there is nothing to map onto, so To 2nd stays raw.
+    const thin = curved.slice(0, 5).concat([Object.assign({}, noCurveLow)]);
+    const calThin = E.calibrateScenarios(thin.map(r => Object.assign({}, r)), { offsets: null });
+
+    R.calibrate = {
+      none: { calibrated: !!calNone.calibrated, offsetsUsed: calNone.offsetsUsed || 0,
+        c4m: find(calNone, 'C4').m, c4pct: find(calNone, 'C4').pct, c4scale: find(calNone, 'C4').mScale,
+        curved: calNone.curved, mapped: calNone.mapped },
+      missOffsets: { calibrated: !!calMiss.calibrated, offsetsUsed: calMiss.offsetsUsed || 0, c4m: find(calMiss, 'C4').m },
+      some: { calibrated: !!calSome.calibrated, offsetsUsed: calSome.offsetsUsed || 0,
+        c4m: find(calSome, 'C4').m, c4raw: find(calSome, 'C4').pctRaw, c4pctBefore: (4 + 1) / 26,
+        c20m: find(calSome, 'C20').m, c20raw: find(calSome, 'C20').pctRaw, c20pctBefore: (20 + 1) / 26,
+        c9m: find(calSome, 'C9').m, c9raw: find(calSome, 'C9').pctRaw === undefined ? null : find(calSome, 'C9').pctRaw },
+      mapped: { lowM: find(calNone, 'NoCurveLow').m, lowMapped: !!find(calNone, 'NoCurveLow').mMapped,
+        lowScale: find(calNone, 'NoCurveLow').mScale,
+        highM: find(calNone, 'NoCurveHigh').m, highMapped: !!find(calNone, 'NoCurveHigh').mMapped },
+      unplayed: { m: find(calNone, 'Unplayed').m, scale: find(calNone, 'Unplayed').mScale, mapped: !!find(calNone, 'Unplayed').mMapped },
+      thin: { m: find(calThin, 'NoCurveLow').m, scale: find(calThin, 'NoCurveLow').mScale, mapped: !!find(calThin, 'NoCurveLow').mMapped },
+      idempotent: calTwice === calSome,
+      adjust: { zero: E.adjustPercentile(0.5, 0), up: E.adjustPercentile(0.5, -1), down: E.adjustPercentile(0.5, 1),
+        atZero: E.adjustPercentile(0, 2), atOne: E.adjustPercentile(1, -2), nullIn: E.adjustPercentile(null, 1) }
+    };
+
+    // ---- COACH-2 + Q4: resolution from the RUN RECORD ------------------------------------
+    // An item is scored only once a run is logged AFTER it was served, and the outcome is
+    // that FIRST run -- the event 1/(n+1) actually describes. The old rule scored "the PB
+    // rose at some point" against that baseline, and counted a revisit you never attempted
+    // as a miss. Both are pinned here, in both directions.
+    const servedAt = 1000;
+    const logRuns = rows => rows.map((r, i) => ({ day: 200 + i, seedBump: 0, startedAt: servedAt, rating: null,
+      regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'R' + i, why: 'revisit', pbAt: 100, p: r.p, n: r.n }] }));
+    // R0 first run back beats it (a true first-try collect)
+    // R1 first run misses, a LATER run beats it -- the old rule called this collected
+    // R2 never attempted after being served -- the old rule called this a miss
+    // R3 attempted, never beaten
+    const RUNS = {
+      R0: [[servedAt + 10, 150]],
+      R1: [[servedAt + 10,  90], [servedAt + 20, 150]],
+      R2: [[servedAt - 50, 150]],                       // only a run from BEFORE it was served
+      R3: [[servedAt + 10,  80], [servedAt + 20,  90]]
+    };
+    const runsOf = name => RUNS[name] || null;
+    const fourLog = logRuns([{ p: 0.5, n: 9 }, { p: 0.5, n: 9 }, { p: 0.5, n: 9 }, { p: 0.5, n: 9 }]);
+    const strict = E.sessionHistoryStats(fourLog, () => 150, FIXED_MS, null, runsOf);
+    const legacy = E.sessionHistoryStats(fourLog, () => 150, FIXED_MS, null);
+    R.resolve = {
+      strict: { revisits: strict.overall.revisits, scheduled: strict.overall.scheduled,
+        collected: strict.overall.collected, collectedAny: strict.overall.collectedAny,
+        rate: strict.overall.rate, rateAny: strict.overall.rateAny, from: strict.overall.resolvedFrom,
+        rows: strict.sessions.slice().sort((a, b) => a.day - b.day).map(x => {
+          const r = x.rows[0];
+          return [r.name, r.resolved, r.hit, r.hitAny, r.k, r.base, r.baseAny];
+        }) },
+      legacy: { revisits: legacy.overall.revisits, collected: legacy.overall.collected, from: legacy.overall.resolvedFrom },
+      // Q4: every served item, not only revisits
+      served: { items: strict.overall.served.items, resolved: strict.overall.served.resolved,
+        firstTry: strict.overall.served.firstTry, anyTime: strict.overall.served.anyTime,
+        runs: strict.overall.served.runs },
+      // an unresolved item must not be scored, so the Brier pool shrinks to the resolved ones
+      scoredOn: strict.overall.scoredOn
+    };
+    // A mixed non-revisit session: the served stats must count weakest/route items too.
+    const mixedLog = [{ day: 300, seedBump: 0, startedAt: servedAt, rating: null, regime: 'normal', done: 2, size: 3,
+      items: [{ name: 'R0', why: 'weakest', pbAt: 100, n: 9 }, { name: 'R3', why: 'route', pbAt: 100, n: 9 },
+              { name: 'R2', why: 'revisit', pbAt: 100, p: 0.5, n: 9 }] }];
+    const mixed2 = E.sessionHistoryStats(mixedLog, () => 150, FIXED_MS, null, runsOf);
+    R.resolve.mixed = { servedItems: mixed2.overall.served.items, servedResolved: mixed2.overall.served.resolved,
+      servedFirstTry: mixed2.overall.served.firstTry, revisitsResolved: mixed2.overall.revisits };
+
+    // ---- COACH-3: the exact null for "stuck" ---------------------------------------------
+    // The bar is expectation - 1 SD, and the SD is now the exact one. It equals the binomial
+    // SD at m = 1 and is materially larger for a long record, which is where the old form
+    // let the flag drift with play count.
+    const mkRunsC3 = scores => ({ n: scores.length, last: scores.map((v, i) => [FIXED_MS - i * DAY, v]) });
+    const longFlat = mkRunsC3([90, 91, 89, 92, 90].concat(Array.from({ length: 15 }, (u, i) => 88 + (i % 5))));
+    R.stuckNull = {
+      long: (() => { const st = E.stuckness(longFlat, 100, 5); return { older: st.older, share: st.share, se: st.se, seBinomial: st.seBinomial, p: st.p, state: st.state }; })(),
+      m1: (() => { const st = E.stuckness(mkRunsC3([90, 91, 89, 92, 90, 60]), 100, 5); return { older: st.older, se: st.se, seBinomial: st.seBinomial }; })()
+    };
+
+    // ---- NEXT-4: the randomised arm -------------------------------------------------------
+    // Three things have to hold or the experiment measures nothing:
+    //   1. OFF is the identity -- every pre-NEXT-4 path is untouched.
+    //   2. The B arm DISPLACES: the withheld top pick must NOT also appear in the session.
+    //      A swap would serve both and there would be no contrast at all.
+    //   3. Roughly ARM_B_SHARE of slots go B over many seeds, and every served revisit
+    //      carries an arm.
+    const armOn = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true, arm: true }), FILL);
+    const armOff = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true }), FILL);
+    const revsOf = s2 => s2.items.filter(it=>it.why==='revisit');
+    let bSlots = 0, aSlots = 0, armless = 0, displaced = 0, dupes = 0;
+    for(let seed=1; seed<=200; seed++){
+      const on = armOn(seed);
+      const revs = revsOf(on);
+      revs.forEach(it=>{ if(it.arm==='B') bSlots++; else if(it.arm==='A') aSlots++; else armless++; });
+      // no scenario may be served twice in one session, arm or no arm
+      const names = on.items.map(it=>it.name);
+      if(new Set(names).size !== names.length) dupes++;
+      // when a slot went B, the candidate it displaced must be absent from the whole session
+      if(revs.some(it=>it.arm==='B')) displaced++;
+    }
+    // the identity check, on a seed whose ON run actually used the B arm
+    let sameSeed = null;
+    for(let seed=1; seed<=60 && sameSeed===null; seed++){ if(revsOf(armOn(seed)).some(it=>it.arm==='B')) sameSeed = seed; }
+    const onS = sameSeed===null ? null : armOn(sameSeed), offS = sameSeed===null ? null : armOff(sameSeed);
+    R.arm = {
+      share: E.ARM_B_SHARE, minPerArm: E.ARM_MIN_PER_ARM,
+      aSlots, bSlots, armless, dupes,
+      bShareObserved: (aSlots + bSlots) ? bSlots/(aSlots + bSlots) : null,
+      offHasNoArm: armOff(7).items.every(it=>!it.arm),
+      offIdentical: JSON.stringify(armOff(7).items.map(item)) === JSON.stringify(E.composeSession(fixture(E), Object.assign({}, OPTS, { seed: 7, rotate: true }), FILL).items.map(item)),
+      // the displacement: on a seed that used B, the withheld candidate is not in the session
+      displacedAbsent: (onS && offS) ? (()=>{
+        const onNames = new Set(onS.items.map(it=>it.name));
+        const bItem = revsOf(onS).find(it=>it.arm==='B');
+        // the A-arm run for the same seed serves the top pick for that slot; under B it is held back
+        const offRevs = revsOf(offS).map(it=>it.name);
+        const withheld = offRevs.find(n=>!onNames.has(n));
+        return { bItem: bItem ? bItem.name : null, withheld: withheld || null, stillServed: withheld ? onNames.has(withheld) : null };
+      })() : null,
+      // and the item must not leak its arm into anything the page renders
+      leaks: (()=>{ const on = onS || armOn(1); return on.items.filter(it=>/\barm\b|runner-?up|second pick/i.test(String(it.reason||''))).length; })()
+    };
+    // the comparison in sessionHistoryStats
+    const armLog = rows => rows.map((r, i)=>({ day: 400+i, seedBump: 0, startedAt: 500, rating: null, regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'A'+i, why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: r.arm }] }));
+    // six A (four collected) and six B (one collected), every one attempted once after serving
+    const armRuns = {};
+    const armRows = [];
+    [['A', 1], ['A', 1], ['A', 1], ['A', 1], ['A', 0], ['A', 0], ['B', 1], ['B', 0], ['B', 0], ['B', 0], ['B', 0], ['B', 0]]
+      .forEach((r, i)=>{ armRuns['A'+i] = [[600, r[1] ? 150 : 50]]; armRows.push({ arm: r[0] }); });
+    const armH = E.sessionHistoryStats(armLog(armRows), () => 150, FIXED_MS, null, n => armRuns[n] || null);
+    R.armStats = { a: armH.overall.arms.a, b: armH.overall.arms.b, diff: armH.overall.arms.diff,
+      scorable: armH.overall.arms.scorable, unassigned: armH.overall.arms.unassigned };
+
+    // ---- step 3c: the exposure window, and the served ledger -------------------------
+    // THE REGRESSION THIS PINS. Before 3c an exposure searched the whole future for its
+    // first run, independently of every other exposure, so ONE run resolved EVERY earlier
+    // serving of that scenario. Served day 100 as arm A, served day 104 as arm B, played
+    // ONCE on day 105: both bookings scored a first-try collect off the same run and the
+    // same run entered BOTH arms. That is a perfectly correlated pair inside the one
+    // comparison whose validity rests on the piles being independent draws, and it needs
+    // no reroll -- an ordinary re-serve is enough.
+    const DAYMS = 86400000, TB = 1787000000000;
+    const oneRunLog = [
+      { day: 100, seedBump: 0, startedAt: TB,           rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'W', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A' }] },
+      { day: 104, seedBump: 0, startedAt: TB + 4*DAYMS, rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'W', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B' }] }
+    ];
+    const oneRun = { W: [[TB + 5*DAYMS, 150]] };                  // exactly ONE run, and it is a PB
+    const W1 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => oneRun[n] || null);
+    // and the mirror: the run lands INSIDE the first window, so the FIRST serving owns it
+    const early = { W: [[TB + 2*DAYMS, 150]] };
+    const W2 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => early[n] || null);
+    // a run landing exactly when the next session was composed belongs to the OLDER window
+    const onBoundary = { W: [[TB + 4*DAYMS, 150]] };
+    const W3 = E.sessionHistoryStats(oneRunLog, () => 150, TB + 6*DAYMS, null, n => onBoundary[n] || null);
+    R.window = {
+      lateRun:  { resolved: W1.overall.revisits, collected: W1.overall.collected,
+                  aN: W1.overall.arms.a.n, bN: W1.overall.arms.b.n },
+      earlyRun: { resolved: W2.overall.revisits, aN: W2.overall.arms.a.n, bN: W2.overall.arms.b.n },
+      boundary: { aN: W3.overall.arms.a.n, bN: W3.overall.arms.b.n },
+      windowed: W1.overall.windowed,
+      // windowEnds itself: three servings of one name, one of another
+      ends: (()=>{
+        const xs = [{ key: 'k1', name: 'A', at: 10 }, { key: 'k2', name: 'A', at: 20 },
+                    { key: 'k3', name: 'A', at: 30 }, { key: 'k4', name: 'B', at: 15 }];
+        const m = E.windowEnds(xs);
+        return { k1: m.get('k1'), k2: m.get('k2'), k3: m.get('k3'), k4: m.get('k4') };
+      })()
+    };
+    // ---- the ledger is the authority, and it keeps what the log threw away -----------
+    // Day 300 served X (arm A) and was REROLLED: seedBump 1 served Y (arm B), and the log
+    // kept only the reroll. The ledger kept both. X was played after being served and
+    // before the reroll, so it resolves -- and under the log alone it does not exist.
+    const rerollLog = [
+      { day: 300, seedBump: 1, startedAt: TB + 3600000, rating: null, regime: 'normal', done: 1, size: 1,
+        items: [{ name: 'Y', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B' }] }
+    ];
+    const ledger = [
+      { name: 'X', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A', day: 300, seedBump: 0, servedAt: TB },
+      { name: 'Y', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'B', day: 300, seedBump: 1, servedAt: TB + 3600000 }
+    ];
+    const played = { X: [[TB + 600000, 150]], Y: [[TB + 7200000, 150]] };
+    const runsPlayed = n => played[n] || null;
+    const noLedger = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed);
+    const withLedger = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, ledger);
+    R.ledger = {
+      without: { aN: noLedger.overall.arms.a.n, bN: noLedger.overall.arms.b.n,
+                 from: noLedger.overall.resolvedFrom, orphans: noLedger.overall.orphans },
+      with:    { aN: withLedger.overall.arms.a.n, aHits: withLedger.overall.arms.a.hits,
+                 bN: withLedger.overall.arms.b.n, bHits: withLedger.overall.arms.b.hits,
+                 from: withLedger.overall.resolvedFrom, orphans: withLedger.overall.orphans,
+                 sessions: withLedger.overall.sessions },
+      // an empty or absent ledger must leave the log path exactly as it was
+      emptyIsIdentity: JSON.stringify(E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, []).overall)
+                    === JSON.stringify(noLedger.overall),
+      // A pre-3c session could list the SAME scenario twice -- the owner's own day-20687
+      // session has Gridshot as both a revisit and the weakest pick. A name-keyed exposure
+      // silently merged the two; the key is positional so both survive, and the windowing
+      // still hands the single run to exactly one of them.
+      twice: (()=>{
+        const dupLog = [{ day: 400, seedBump: 0, startedAt: TB, rating: null, regime: 'normal', done: 1, size: 2,
+          items: [{ name: 'D', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A' },
+                  { name: 'D', why: 'weakest', pbAt: 100, p: 0.5, n: 9 }] }];
+        const H = E.sessionHistoryStats(dupLog, () => 150, TB + 2*DAYMS, null, n => n==='D' ? [[TB + 600000, 150]] : null);
+        const sess = H.sessions[0];
+        return { served: H.overall.served.items, whys: sess.all.map(r=>r.why),
+                 resolved: sess.all.filter(r=>r.resolved).length, revisitResolved: H.overall.revisits };
+      })(),
+      // a ledger row for a scenario with NO run record must be unresolved, never resolved
+      // off the PB -- ledger rows carry no tick-off count to lean on
+      noRuns: (()=>{
+        const L = [{ name: 'Z', why: 'revisit', pbAt: 100, p: 0.5, n: 9, arm: 'A', day: 300, seedBump: 0, servedAt: TB }];
+        const H = E.sessionHistoryStats(rerollLog, () => 999, TB + 2*DAYMS, null, runsPlayed, L);
+        return { resolved: H.overall.revisits, collected: H.overall.collected };
+      })()
+    };
+
     return R;
   }
   const E_SESSION_TYPES_HAS = t => ['floor','transfer','collect','breadth'].includes(t);
@@ -598,6 +845,153 @@
       if(!near(SC.perfect.brier, 0, 1e-12) || !near(SC.perfect.skill, 1, 1e-12)) problems.push('scoring: a perfect forecast is Brier 0, skill 1, got '+J(SC.perfect));
       if(SC.noN!==0) problems.push('scoring: a revisit with no attempt count cannot be scored (no baseline), got '+SC.noN);
     }
+    const CAL = R.calibrate;
+    if(!CAL) problems.push('calibrate: missing');
+    else {
+      // (a) identity without offsets
+      if(CAL.none.calibrated !== false || CAL.none.offsetsUsed !== 0) problems.push('calibrate: no offsets must report calibrated=false, got '+J(CAL.none));
+      if(!near(CAL.none.c4m, 5/26, 1e-12) || CAL.none.c4scale !== 'pct') problems.push('calibrate: without offsets a curved row keeps its percentile as m, got '+J(CAL.none));
+      if(CAL.none.curved !== 25) problems.push('calibrate: the reference distribution is the PLAYED curved rows (25 here), got '+CAL.none.curved);
+      // (b) THE TRAP: offsets that name none of these rows is NOT a calibration
+      if(CAL.missOffsets.calibrated !== false || CAL.missOffsets.offsetsUsed !== 0) problems.push('calibrate: an offsets table naming no row must leave calibrated=false -- Number(null) is 0 and would report a calibration on every uncalibrated build, got '+J(CAL.missOffsets));
+      if(!near(CAL.missOffsets.c4m, 5/26, 1e-12)) problems.push('calibrate: a row with no offset entry must keep its percentile, got '+J(CAL.missOffsets));
+      // (c) sign: a POSITIVE delta means a generous board, so it must LOWER the percentile
+      const S = CAL.some;
+      if(S.calibrated !== true || S.offsetsUsed !== 2) problems.push('calibrate: two offsets applied should report calibrated=true and offsetsUsed=2, got '+J(S));
+      if(!(S.c4m < S.c4pctBefore)) problems.push('calibrate: a positive delta must LOWER the percentile (generous board), got '+J(S));
+      if(!(S.c20m > S.c20pctBefore)) problems.push('calibrate: a negative delta must RAISE the percentile (harsh board), got '+J(S));
+      if(!near(S.c4raw, S.c4pctBefore, 1e-12) || !near(S.c20raw, S.c20pctBefore, 1e-12)) problems.push('calibrate: pctRaw must keep the number you can check on the leaderboard, got '+J(S));
+      if(S.c9raw !== null) problems.push('calibrate: an unadjusted row must not claim a pctRaw, got '+J(S.c9raw));
+      // (d) the S3 quantile map, and that it is monotone
+      const M = CAL.mapped;
+      if(!M.lowMapped || !M.highMapped || M.lowScale !== 'pct') problems.push('calibrate: a played curve-less row must be quantile-mapped onto the percentile scale, got '+J(M));
+      if(!(M.lowM < M.highM)) problems.push('calibrate: the quantile map must be monotone -- a higher To 2nd cannot rank lower, got '+J(M));
+      if(!(M.lowM >= 0 && M.highM <= 1)) problems.push('calibrate: a mapped value must stay inside [0,1], got '+J(M));
+      // (e) an unplayed row contributes nothing and is not mapped
+      if(CAL.unplayed.mapped || CAL.unplayed.scale !== 'to2nd') problems.push('calibrate: an unplayed row has no standing to map, got '+J(CAL.unplayed));
+      // (f) under the floor, raw To 2nd
+      if(CAL.thin.mapped || CAL.thin.scale !== 'to2nd' || !near(CAL.thin.m, 0.10, 1e-12)) problems.push('calibrate: under METRIC_MIN_CURVED the fallback is raw To 2nd, got '+J(CAL.thin));
+      // (g) idempotence -- the app calibrates once and hands the same list to two callers
+      if(CAL.idempotent !== true) problems.push('calibrate: a row set that already carries m must be returned untouched');
+      // (h) adjustPercentile algebra
+      const A = CAL.adjust;
+      if(!near(A.zero, 0.5, 1e-12)) problems.push('calibrate: a zero delta is the identity, got '+J(A.zero));
+      if(!(A.down < 0.5 && A.up > 0.5)) problems.push('calibrate: adjustPercentile sign is wrong, got '+J(A));
+      if(!(A.atZero > 0 && A.atOne < 1)) problems.push('calibrate: the eps clamp must keep a 0 or 1 percentile finite, got '+J(A));
+      if(A.nullIn !== null) problems.push('calibrate: adjustPercentile(null) must be null, got '+J(A.nullIn));
+    }
+    const RS = R.resolve;
+    if(!RS) problems.push('resolve: missing');
+    else {
+      if(RS.strict.from !== 'runs' || RS.legacy.from !== 'pb') problems.push('resolve: the result must say which rule resolved it, got '+J([RS.strict.from, RS.legacy.from]));
+      // four revisits scheduled, three attempted after being served
+      if(RS.strict.scheduled !== 4 || RS.strict.revisits !== 3) problems.push('resolve: 4 scheduled, 3 with a run after they were served, got '+J(RS.strict));
+      // R0 collected first try; R1 only on a later run; R3 never
+      if(RS.strict.collected !== 1) problems.push('resolve: exactly one FIRST-try collect, got '+RS.strict.collected);
+      if(RS.strict.collectedAny !== 2) problems.push('resolve: two collected on ANY run, got '+RS.strict.collectedAny);
+      if(!near(RS.strict.rate, 1/3, 1e-12) || !near(RS.strict.rateAny, 2/3, 1e-12)) problems.push('resolve: rates are over RESOLVED revisits, got '+J(RS.strict));
+      const byName = {}; RS.strict.rows.forEach(r=>{ byName[r[0]] = r; });
+      // [name, resolved, hit, hitAny, k, base, baseAny]
+      if(!byName.R0 || byName.R0[1]!==true || byName.R0[2]!==1 || byName.R0[4]!==1) problems.push('resolve: R0 is a first-try collect on one run, got '+J(byName.R0));
+      if(!byName.R1 || byName.R1[2]!==0 || byName.R1[3]!==1 || byName.R1[4]!==2) problems.push('resolve: R1 missed first try and collected on the second -- the case the old rule scored as a clean hit, got '+J(byName.R1));
+      if(!byName.R2 || byName.R2[1]!==false || byName.R2[4]!==0) problems.push('resolve: R2 was never attempted after being served and must be UNRESOLVED, not a miss, got '+J(byName.R2));
+      if(!byName.R3 || byName.R3[1]!==true || byName.R3[2]!==0 || byName.R3[3]!==0) problems.push('resolve: R3 was attempted twice and never beaten, got '+J(byName.R3));
+      // the two baselines: 1/(n+1) for the first run, k/(n+k) for any of k
+      if(!near(byName.R1[5], 0.1, 1e-12)) problems.push('resolve: the strict baseline is 1/(9+1), got '+J(byName.R1[5]));
+      if(!near(byName.R1[6], 2/11, 1e-12)) problems.push('resolve: the any-run baseline is k/(n+k) = 2/11 on two tries over nine priors, got '+J(byName.R1[6]));
+      if(byName.R2[6] !== null) problems.push('resolve: an unresolved item has no k, so no any-run baseline, got '+J(byName.R2[6]));
+      // an unresolved revisit cannot enter the Brier pool
+      if(RS.scoredOn !== 3) problems.push('resolve: only resolved revisits are scored, got '+RS.scoredOn);
+      // the OLD rule, for contrast: the PB is 150 everywhere, so all four read as collected
+      if(RS.legacy.collected !== 4 || RS.legacy.revisits !== 4) problems.push('resolve: the legacy PB rule counts every item and calls them all collected -- that contrast is the point, got '+J(RS.legacy));
+      // Q4: the served stats span every item, not only revisits
+      if(RS.served.items !== 4 || RS.served.resolved !== 3 || RS.served.firstTry !== 1 || RS.served.anyTime !== 2) problems.push('resolve: served stats over every item, got '+J(RS.served));
+      if(RS.served.runs !== 5) problems.push('resolve: served.runs counts the logged runs after serving (1+2+2), got '+RS.served.runs);
+      const MX = RS.mixed;
+      if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
+      if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
+    }
+    const SN = R.stuckNull;
+    if(!SN) problems.push('stuckNull: missing');
+    else {
+      // 15 older runs: the exact SD is sqrt(k(m+k+1)/(m(k+1)^2(k+2))) = 0.16667, the binomial
+      // one 0.09623 -- 1.7x apart, and the bar sits a full SD below 5/6 either way.
+      if(SN.long.older !== 15) problems.push('stuckNull: expected a 15-run older window, got '+SN.long.older);
+      if(!near(SN.long.se, 0.166667, 1e-4)) problems.push('stuckNull: the exact SD at k=5, m=15 is 0.16667, got '+J(SN.long.se));
+      if(!near(SN.long.seBinomial, Math.sqrt((5/6)*(1/6)/15), 1e-9)) problems.push('stuckNull: the binomial SD is kept for the record, got '+J(SN.long.seBinomial));
+      if(!(SN.long.se > SN.long.seBinomial * 1.6)) problems.push('stuckNull: the exact SD must be materially LARGER on a long record -- that gap is the drift being removed, got '+J(SN.long));
+      if(!(SN.long.p >= 0 && SN.long.p <= 1)) problems.push('stuckNull: the exact one-sided p must be a probability, got '+J(SN.long.p));
+      // at m = 1 the two coincide exactly, which is why the short-record reading is unchanged
+      if(!near(SN.m1.se, SN.m1.seBinomial, 1e-9)) problems.push('stuckNull: at one older run the exact and binomial SDs are equal, got '+J(SN.m1));
+    }
+    const AM = R.arm;
+    if(!AM) problems.push('arm: missing');
+    else {
+      if(!(AM.share > 0 && AM.share < 1)) problems.push('arm: the engine exports no usable ARM_B_SHARE, got '+J(AM.share));
+      if(!AM.offHasNoArm || !AM.offIdentical) problems.push('arm: OFF must be the identity -- no arm on any item and the same list as before NEXT-4, got '+J([AM.offHasNoArm, AM.offIdentical]));
+      if(AM.armless) problems.push('arm: every served revisit must carry an arm when the experiment is on, got '+AM.armless+' without one');
+      if(AM.dupes) problems.push('arm: a scenario was served twice in one session -- the displacement must not reintroduce the withheld pick, got '+AM.dupes+' sessions');
+      if(!AM.bSlots) problems.push('arm: no slot ever took the runner-up over 200 seeds -- the experiment never runs');
+      // The realised share is at MOST ARM_B_SHARE and is below it here (about 0.15 against
+      // 0.25) because a B slot consumes two candidates and this fixture's revisit pool is
+      // barely deeper than its slot count, so a later slot is often forced back to A. That
+      // is the invariant worth pinning -- never above, never near zero -- rather than a
+      // number that only holds for one pool depth. On a real profile the pool is dozens
+      // deep and the two coincide.
+      if(!(AM.bShareObserved <= AM.share + 0.02)) problems.push('arm: the realised B share can never EXCEED ARM_B_SHARE ('+AM.share+'), got '+J(AM.bShareObserved));
+      if(!(AM.bShareObserved > AM.share*0.4)) problems.push('arm: the realised B share collapsed -- the experiment is barely running, got '+J(AM.bShareObserved)+' against '+AM.share);
+      if(AM.leaks) problems.push('arm: BLINDED -- no item reason may mention the arm, got '+AM.leaks+' that do');
+      // THE POINT: a B slot withholds the top pick rather than reordering it
+      const D = AM.displacedAbsent;
+      if(!D || !D.bItem) problems.push('arm: no seed produced a B slot to check displacement against, got '+J(D));
+      else if(D.withheld === null) problems.push('arm: turning the arm ON must remove some revisit the OFF run served -- if the same set is served, B reordered instead of displacing, got '+J(D));
+      else if(D.stillServed) problems.push('arm: the withheld top pick is still in the session -- that is a swap, and a swap measures nothing, got '+J(D));
+    }
+    const AS = R.armStats;
+    if(!AS) problems.push('armStats: missing');
+    else {
+      if(AS.a.n !== 6 || AS.b.n !== 6) problems.push('armStats: six resolved per arm, got '+J([AS.a.n, AS.b.n]));
+      if(AS.a.hits !== 4 || AS.b.hits !== 1) problems.push('armStats: four of six and one of six collected, got '+J([AS.a.hits, AS.b.hits]));
+      // excess over baseline, not raw rate: every item here has n = 9 so the baseline is 0.1
+      if(!near(AS.a.excess, 4/6 - 0.1, 1e-12) || !near(AS.b.excess, 1/6 - 0.1, 1e-12)) problems.push('armStats: the comparison is on excess over 1/(n+1), got '+J([AS.a.excess, AS.b.excess]));
+      if(!near(AS.diff, 3/6, 1e-12)) problems.push('armStats: the difference of excesses is what the experiment reports, got '+J(AS.diff));
+      if(AS.scorable !== false) problems.push('armStats: six per arm is under ARM_MIN_PER_ARM, so no verdict yet, got '+J(AS.scorable));
+      if(AS.unassigned !== 0) problems.push('armStats: every row here carries an arm, got '+J(AS.unassigned));
+    }
+    const WN = R.window;
+    if(!WN) problems.push('window: missing');
+    else {
+      if(WN.windowed !== true) problems.push('window: the engine must report that resolution is windowed, got '+J(WN.windowed));
+      // THE REGRESSION: one run, two servings -- exactly one exposure may claim it
+      if(WN.lateRun.resolved !== 1 || WN.lateRun.collected !== 1) problems.push('window: ONE run of a scenario served twice must resolve exactly ONE exposure, got resolved '+WN.lateRun.resolved+' collected '+WN.lateRun.collected);
+      if(WN.lateRun.aN !== 0 || WN.lateRun.bN !== 1) problems.push('window: a run AFTER the second serving belongs to the second serving alone -- arm A must not also book it, got A '+WN.lateRun.aN+' B '+WN.lateRun.bN);
+      if(WN.earlyRun.aN !== 1 || WN.earlyRun.bN !== 0) problems.push('window: a run BETWEEN the two servings belongs to the FIRST, and the second is then unresolved, got A '+WN.earlyRun.aN+' B '+WN.earlyRun.bN);
+      if(WN.earlyRun.resolved !== 1) problems.push('window: still exactly one resolved exposure when the run lands early, got '+WN.earlyRun.resolved);
+      if(WN.boundary.aN !== 1 || WN.boundary.bN !== 0) problems.push('window: a run landing EXACTLY when the next session was composed belongs to the older window, got A '+WN.boundary.aN+' B '+WN.boundary.bN);
+      if(WN.ends.k1 !== 20 || WN.ends.k2 !== 30 || WN.ends.k3 !== Infinity) problems.push('window: windowEnds must bound each serving by the NEXT serving of the same name, got '+J([WN.ends.k1, WN.ends.k2, WN.ends.k3]));
+      if(WN.ends.k4 !== Infinity) problems.push('window: a name served once is bounded by nothing, got '+J(WN.ends.k4));
+    }
+    const LD = R.ledger;
+    if(!LD) problems.push('ledger: missing');
+    else {
+      if(LD.without.aN !== 0) problems.push('ledger: without it the rerolled-away exposure is invisible -- that is the defect, got A '+LD.without.aN);
+      if(LD.without.from !== 'runs') problems.push('ledger: with no ledger the provenance stays runs, got '+J(LD.without.from));
+      if(LD.with.aN !== 1 || LD.with.aHits !== 1) problems.push('ledger: the rerolled-away exposure was served AND played, so it must resolve with its arm, got A n '+LD.with.aN+' hits '+LD.with.aHits);
+      if(LD.with.bN !== 1 || LD.with.bHits !== 1) problems.push('ledger: the surviving exposure must still resolve, got B n '+LD.with.bN+' hits '+LD.with.bHits);
+      if(LD.with.from !== 'ledger') problems.push('ledger: the provenance must say the ledger produced the numbers, got '+J(LD.with.from));
+      if(LD.with.orphans !== 1) problems.push('ledger: the exposure with no surviving log row must be COUNTED and named, not silently absorbed, got '+J(LD.with.orphans));
+      if(LD.with.sessions !== 1) problems.push('ledger: the session list stays the display record of what the log kept, got '+J(LD.with.sessions));
+      if(!LD.emptyIsIdentity) problems.push('ledger: an empty ledger must leave the pre-3c log path byte-identical');
+      if(LD.noRuns.resolved !== 0 || LD.noRuns.collected !== 0) problems.push('ledger: a row whose scenario has NO run record must be unresolved, never resolved off the PB, got '+J(LD.noRuns));
+      // the legacy duplicate-name session: both slots survive, ONE of them owns the run
+      const TW = LD.twice;
+      if(TW.served !== 2 || J(TW.whys) !== J(['revisit', 'weakest'])) problems.push('ledger: a session listing one scenario twice keeps BOTH slots -- the key is positional, not by name, got '+J(TW));
+      if(TW.resolved !== 1) problems.push('ledger: one run must resolve exactly ONE of two same-name slots, got '+TW.resolved+' resolved');
+      if(TW.revisitResolved !== 1) problems.push('ledger: and it is the slot the window gives it to, got '+J(TW));
+    }
+
+
+
     // revisit forecast
     const f = R.forecast && R.forecast.forecast;
     if(!R.forecast || R.forecast.name!=='Sw Old Switch' || !f) problems.push('forecast: Sw Old Switch must carry a forecast, got '+J(R.forecast));
@@ -608,12 +1002,28 @@
       // where a pairs index ships, the forecast reads the measured neighbourhood instead.
       const want = [['Cl Wide Pasu', 0.5, 0.12, null, true], ['Tr Control Pill', 0.4, 0, null, false]];
       if(f.evidence.length!==want.length || !f.evidence.every((e, i)=> e[0]===want[i][0] && near(e[1], want[i][1], 1e-9) && near(e[2], want[i][2], 1e-9) && e[3]===want[i][3] && e[4]===want[i][4])) problems.push('forecast: evidence must be A (+0.12) and the touched-but-unmoved B (0), and nothing else -- the third row used to be a label bridge whose only touched scenario was A counted twice: '+J(f.evidence));
-      const gain = (0.5*0.12 + 0.4*0)/(0.5+0.4);
-      if(!near(f.gain, gain, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gain-0.02, 1e-9)) problems.push('forecast: gain = r-weighted mean over touched evidence (unmoved counts as 0), margin = nearPct, got '+J(f));
-      if(!near(f.p, 1/(1+Math.exp(-(gain-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
+      // COACH-1 (Review Ledger IV): the r appears TWICE -- once as the weight, once as the
+      // attenuation -- because a neighbour moving by delta predicts r*delta of YOUR movement,
+      // not delta. And the weight is the SHRUNK r, the one estimator S8/R4 settled on. So
+      //     w  = shrinkR(r, n),  pred = w * delta,  gain = sum(w * pred) / sum(w)
+      // Here: w_A = 0.5*400/450 = 0.4444, w_B = 0.4*300/350 = 0.34286, only A moved (+0.12),
+      // so gain = 0.4444 * (0.4444 * 0.12) / (0.4444 + 0.34286) = 0.030108.
+      // The old r-weighted MEAN OF MOVEMENTS gave 0.066667 -- it read a neighbour's 12-point
+      // gain as 12 of your own points. Worth stating as an inequality too, because that is
+      // the property that must hold whatever the numbers are.
+      const wA = 0.5*400/450, wB = 0.4*300/350;
+      const gainAttenuated = (wA*(wA*0.12) + wB*(wB*0)) / (wA + wB);
+      const gainOldForm = (0.5*0.12 + 0.4*0) / (0.5 + 0.4);
+      if(!near(f.gain, gainAttenuated, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gainAttenuated-0.02, 1e-9)) problems.push('forecast: gain must attenuate by the shrunk r (w*delta), not average the neighbours\' movements, got '+J(f));
+      if(!(f.gain < gainOldForm*0.6)) problems.push('forecast: the attenuated gain must be materially below the old r-weighted mean of movements ('+gainOldForm.toFixed(4)+'), got '+f.gain);
+      if(!f.evidence.every(e=>e[1] !== undefined)) problems.push('forecast: every evidence row keeps its raw r for display');
+      if(!near(f.p, 1/(1+Math.exp(-(gainAttenuated-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
       // the BUCKET and the uncalibrated note, never a percentage: p is an invented
       // logistic and must not read as a measured probability (2026-08-24)
-      if(!/first-try PB odds: good \(uncalibrated/.test(R.forecast.reason) || /\(\d+%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry the bucket + the uncalibrated note, no percentage, and the sync-dated flag: '+R.forecast.reason);
+      // The bucket is whatever forecastBucket says of THIS p -- asserting the word would
+      // pin the arithmetic twice, and the attenuation moved this case from good to fair.
+      const wantBucket = f.p >= 0.6 ? 'good' : (f.p >= 0.4 ? 'fair' : 'poor');
+      if(!new RegExp('first-try PB odds: '+wantBucket+' \\(uncalibrated').test(R.forecast.reason) || /\(\d+%\)/.test(R.forecast.reason) || !/sync-dated/.test(R.forecast.reason)) problems.push('forecast: reason must carry forecastBucket(p) ("'+wantBucket+'") + the uncalibrated note, no percentage, and the sync-dated flag: '+R.forecast.reason);
       if(!Number.isFinite(f.p)) problems.push('forecast: p must still be computed and logged for calibration, got '+J(f.p));
     }
     // Tr Old Smooth: neighbour Tr Recent Sphere +0.10 (r 0.6) and the smoothness|reactive tracking
@@ -623,7 +1033,11 @@
     // 40-day candidate has none, so the forecast reorders the revisit pool past pure
     // recency. p rose from 0.65 to 0.78 on 2026-08-25 only because the label-bridge row
     // that used to dilute the r-weighted mean is gone (A2/S5).
-    if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.78]])) problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    // 0.53 rather than 0.78 since COACH-1: one neighbour at r 0.6 on n 500 that moved
+    // +0.10 gives w = 0.6*500/550 = 0.5455 and gain = 0.5455*0.10 = 0.05455 against the old
+    // form's 0.10. What the case is FOR is the ordering, so assert that as well as the value.
+    if(!R.forecastOrder.length || R.forecastOrder[0][0]!=='Tr Old Smooth') problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
+    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.53]])) problems.push('forecast order: p moved with the attenuation and is pinned at 0.53, got '+J(R.forecastOrder));
     // v0.5 blocks
     const B = R.blocks;
     if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
@@ -659,7 +1073,11 @@
     if(h.sessions.length!==3 || h.sessions[0][6]!==true || h.sessions[1][6]!==false) problems.push('history: 3 sessions newest first, the live one flagged: '+J(h.sessions));
     // the live session has nothing done yet, so its revisits are not counted (a session that
     // was never played must not deflate the return-collect rate)
-    if(J(h.sessions.map(s=>[s[3], s[4]]))!==J([[0,0],[2,1],[1,1]])) problems.push('history: revisits/collected per session must be [0,0] (live, nothing done), [2,1], [1,1], got '+J(h.sessions));
+    // [scheduled, resolved, collected] per session. Since Review Ledger IV COACH-2
+    // `revisits` counts what was SCHEDULED and `resolved` what was actually attempted --
+    // the live session scheduled one and played nothing, which is unresolved, not missed.
+    // (No runsOf here, so this exercises the legacy PB path and its done-count gate.)
+    if(J(h.sessions.map(s=>[s[3], s[7], s[4]]))!==J([[1,0,0],[2,2,1],[1,1,1]])) problems.push('history: [scheduled, resolved, collected] per session must be [1,0,0] (live, nothing done -> unresolved), [2,2,1], [1,1,1], got '+J(h.sessions));
     if(h.overall.revisits!==3 || h.overall.collected!==2 || !near(h.overall.rate, 2/3, 1e-9) || !near(h.overall.predicted, (0.8*1 + 0.5*2)/3, 1e-9)) problems.push('history: overall must exclude the live session (3 revisits, 2 collected, predicted mean weighted by revisits), got '+J(h.overall));
     if(h.weeks.length!==2 || h.weeks[0][1]!==1 || h.weeks[1][1]!==2) problems.push('history: two contiguous Monday-start weeks (1 session, then 2), got '+J(h.weeks));
     if(!(h.weeks[0][3]===1 && h.weeks[1][3]===1 && h.weeks[1][2]===2)) problems.push('history: weekly collected/revisits must follow the sessions, got '+J(h.weeks));

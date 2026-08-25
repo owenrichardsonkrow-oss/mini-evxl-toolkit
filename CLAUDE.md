@@ -127,6 +127,138 @@ POWERSHELL copies of the rule with each other, which cannot catch a JS/PS diverg
 and the new check found one immediately (`Get-PctRank 0` answered a percentile where
 `percentileRank` answered null). A checkout without the fixture skips rather than fails.
 
+**Ledger IV step 1 (2026-08-25).** `test/percentile.js` gained a sibling: `test/session.js`
+now pins **`calibrateScenarios`** under `features.calibrate` -- the boundary every ranking
+passes through, which the suite had only ever run on its identity path because the fixture's
+OPTS carries no `offsets`. It failed immediately: `adjustPercentile(null)` answered a
+plausible 0.2nd percentile instead of null, because `Number(null)` is 0 and 0 is finite. That
+is the fifth instance of the trap this project has documented four times; prefer an explicit
+`x === null || x === undefined` check whenever null is a legitimate input.
+
+`overlapOf` now sorts on the **exact** correlation interval (`rInterval`: transform, add,
+transform back) rather than reading a Fisher-z half-width off as an r. Rows carry `lo`/`hi`
+and `band` is the exact half-width. The hand fixture shows why it mattered: ordered by lower
+edge C1's neighbours are Click Three 0.5485, Click Two 0.4575, Mixed One 0.4376, where the
+approximation put Click Two LAST -- subtracting a z-width straight off r over-penalises
+exactly the thin pair it is meant to discount. `groupMatrix` also exposes `overlapSaturated`,
+because a disattenuation ratio above 1 is a statement (these are one construct measured
+twice), not a large number. 148 checks.
+
+**`template-integrity.js` now looks for the owner's name.** It scanned only
+`richardsonkrow|mayogobbler`, and the tracker's build guard derived its needle from
+`SITE.owner` (`'mini'`), so neither caught the bare first name -- which eleven source
+comments had been embedding into every built template, because comments ship verbatim. The
+comments say "the owner" now and both guards name the string literally. A name in a denylist
+is not a leak; it is what lets the check fail.
+
+**Ledger IV step 2 -- the instruments (2026-08-25).** Four engine changes as one step,
+because the forecast's `p` and the outcome's definition feed the same calibration record.
+
+`revisitForecast` **attenuates by r**. Its gain was `sum(r*delta)/sum(r)` -- an r-weighted
+mean of the NEIGHBOURS' movements, which said "they gained 12 points, so you gained 12".
+Both sides are percentiles, so the regression prediction is `r * delta`: r is the weight AND
+the attenuation, and the weight is the SHRUNK r. On the fixture, gain 0.0667 -> 0.0301 and
+the bucket flips good -> fair. `collectReady` counts off `odds > 0`, so the rotation's first
+trigger was firing on an inflated number.
+
+`sessionHistoryStats(log, pbNow, now, liveKey, **runsOf**)` **resolves from the run record**.
+An item is scored only once a run is logged AFTER it was served, and the outcome is that
+FIRST run against the PB it was served against -- the event `1/(n+1)` actually describes. The
+old rule scored "the PB rose at some point" against that baseline, and counted a revisit you
+never attempted as a miss. The any-time reading is kept beside it with its own null,
+`k/(n+k)`, and the owner's Q4 extends both past revisits to EVERY served item. Without
+`runsOf` the older PB reading applies, keeps its `done > 0` gate, and the result says so
+(`resolvedFrom`).
+
+`stuckness` uses the **exact null**. The m older runs are compared against the same recent
+maximum, so they are positively dependent and the binomial SE understates the spread; the
+exact negative-hypergeometric SD equals it at m = 1 and is 1.7x larger at m = 15. Simulated,
+the false-stuck rate ran 16.6% -> 28.1% across that range -- the same drift with play count
+S6 exists to remove. The bar stays expectation - 1 SD; the exact one-sided p is reported
+alongside.
+
+Tests: `features.resolve` (a first-try collect, a miss-then-collect, a never-attempted item,
+an attempted-never-beaten one, both baselines, the legacy contrast, and Q4's served stats
+over a mixed session) and `features.stuckNull`. The forecast assertions now pin the
+RELATIONSHIP as well as the value, and derive the bucket from `forecastBucket(p)`.
+
+**Ledger IV step 3 -- the randomised arm, NEXT-4 (2026-08-25).** Everything else the coach
+measures is "it said play X, you played X, here is what happened", which can never separate a
+good recommendation from improvement you would have made anyway -- there is no counterfactual
+in the record. The calibration curve says whether the forecast's PROBABILITIES are honest; it
+cannot say whether the ORDERING beats serving something else.
+
+`ARM_B_SHARE = 0.25` of revisit slots serve the **runner-up**, from the same seeded RNG so a
+day's session is stable across re-renders; `ARM_MIN_PER_ARM = 10` resolved per arm before a
+verdict. **B DISPLACES, IT DOES NOT REORDER** -- swapping ranks 1 and 2 serves both and
+measures nothing, so the top pick is WITHHELD (and is a candidate again tomorrow). With one
+candidate left the slot stays A, so the experiment never costs a revisit it could have served;
+that makes the realised share at MOST `ARM_B_SHARE` -- 0.218 at a pool of 3, 0.249-0.251 at 4
+or more, about 0.15 on this fixture whose pool barely exceeds its slot count. `test/session.js`
+asserts that invariant (never above, never collapsed) rather than a band that holds at one pool
+depth. It costs power, not validity: under "the ordering carries no information" the expected
+excess over baseline is 0 for either arm whatever the assignment probability was.
+
+**Revisits only** -- a revisit resolves in days and already has a null (`1/(n+1)`); a route's
+claim is that it moves a different scenario weeks later, a different experiment. **Blinded** --
+nothing rendered names the arm, because knowing changes how hard you try and the comparison
+would then measure belief; the history view reveals it only for RESOLVED items.
+
+The comparison is on **excess over baseline**, not raw rate: A and B items differ in `n` by
+construction, so raw rates are confounded. `armStat` compares `hit - 1/(n+1)`, expectation 0
+under the null whatever `n` each arm drew. The interval is a normal approximation on a
+difference of means, labelled as such on the page so the number cannot be read without its
+width; COACH-4's model replaces it with the arm as a covariate.
+
+Tests: `features.arm` (OFF is the identity, every served revisit carries an arm, no duplicates,
+the realised-share invariant, no leak into any item reason, and -- the point -- that turning it
+ON REMOVES a revisit the OFF run served and does not re-serve it) and `features.armStats` (six
+per arm, excess over baseline not raw rate, the difference, and no verdict under the minimum).
+
+**Ledger IV step 3c -- the exposure window + the served ledger (2026-08-25).** Two defects
+found while verifying step 3 on real data; the first meant the randomised arm could not have
+measured what it claims to.
+
+**The double count.** `resolveItem` took "the first run after `startedAt`", searching the
+whole future independently for every exposure -- so ONE run resolved EVERY earlier serving of
+that scenario. Served day 100 as arm A, served day 104 as arm B, played once on day 105:
+`resolved 2`, `arm A n=1 hits=1`, `arm B n=1 hits=1`, the same run in both piles. No reroll
+needed; an ordinary re-serve does it. The arm interval assumes independent draws, and a
+perfectly correlated pair straddling both arms is the one thing it cannot survive.
+
+An exposure now OWNS the half-open window `(servedAt, nextServingOfTheSameScenario]`. Runs
+outside belong to whichever serving was live when they happened; a serving nobody acted on
+before it was superseded is unresolved, which is the truth. The top bound is inclusive so a
+run landing exactly when the next session was composed belongs to the older list and no run
+falls between two windows. `resolveItem` gained `until`; `windowEnds(exposures)` computes the
+bounds and is exported. `hitAny`/`k` are bounded by the same window, so `k/(n+k)` is over the
+runs that exposure could actually claim.
+
+Two slots of one session can name the same scenario (a pre-3c composition could list it as
+both the revisit and the weakest pick). They share an instant, so they are one exposure: the
+first slot owns the window, the rest get a zero-width one. The exposure key is POSITIONAL --
+`day|seedBump|idx|name` -- because a name-keyed one silently merged them.
+
+**The erasure.** The app's session log keeps one row per day and drops a same-day composition
+with nothing ticked off and no rating. Tick-off is a manual UI action, not evidence, so an
+item served, played, and rerolled away before being ticked off vanished with its arm. A list
+you reroll is not a random list, so what survived into the record was what you accepted --
+an intention-to-treat violation in the one comparison built to be unbiased. The app now keeps
+an append-only served ledger and passes it as `sessionHistoryStats`'s sixth argument; when
+present it is the authority, and every aggregate runs over EXPOSURES rather than over the
+log's sessions. `overall.resolvedFrom` reads `'ledger'`, `overall.windowed` is true, and
+`overall.orphans` counts exposures with no surviving log row so the loss is visible instead
+of silent.
+
+Tests: `features.window` (the regression itself -- one run, two servings, exactly one
+resolution and only the live arm books it; the mirror where the run lands inside the first
+window; the boundary run belonging to the older window; and `windowEnds` bounding each
+serving by the next of the same name) and `features.ledger` (without it the rerolled-away
+exposure is invisible, with it the exposure resolves with its arm, the orphan is counted, an
+EMPTY ledger is byte-identical to the pre-3c path, a row whose scenario has no run record is
+unresolved rather than resolved off the PB, and the legacy duplicate-name session keeps both
+slots while one run resolves exactly one of them).
+
 **Review Ledger III (2026-08-25)** — a read-only code + statistics + intent pass on
 both repos (<https://claude.ai/code/artifact/04459fc6-3da8-4090-8fab-83ab2f014b36>).
 Its four wrong-number bugs (C1–C4, all in the coach) are applied on the tracker's

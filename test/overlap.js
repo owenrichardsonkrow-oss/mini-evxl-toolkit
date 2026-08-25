@@ -30,23 +30,28 @@
   };
   // [a, b, r, n] -- every tested pair at n >= 100 (the pairs block), unordered.
   const PAIRS = [
-    [C1, C2,  0.60,  100],   // band ±0.199 -> lower edge 0.40
-    [C1, C3,  0.58, 1800],   // band ±0.046 -> lower edge 0.534 (ranks ABOVE the 0.60 at n = 100)
+    [C1, C2,  0.60,  100],   // exact lower edge 0.4575  (the approximation said 0.401)
+    [C1, C3,  0.58, 1800],   // exact lower edge 0.5485 -- ranks ABOVE the 0.60 at n = 100
     [C2, C3,  0.45,  400],
     [T1, T2,  0.55,  900],
     [T1, T3,  0.50,  250],
     [T2, T3,  0.40, 1200],
     [C1, T1, -0.35,  300],   // the negative: "against"
     [C2, T2,  0.05, 1800],   // near zero, band 0.046: 0.096 < 0.3 -> unrelated
-    [C3, T3,  0.10,  100],   // near zero at n = 100: 0.10 + 0.199 = 0.299 < 0.3 -> still unrelated, just
+    [C3, T3,  0.10,  100],   // near zero at n = 100: exact upper edge 0.2907 < 0.3 -> unrelated, just
     [C1, T2,  0.00,  500],   // near zero, band 0.088 -> unrelated
-    [M1, C1,  0.50,  600],
+    [M1, C1,  0.50,  600],   // exact lower edge 0.4376 -- BELOW Click Two's, which the approximation reversed
     [M1, T1,  0.48,  700],
     [M1, X1,  0.20, 1000],   // weak (0.15 <= |r| < 0.3)
     [X1, C2,  0.30,  150]    // exactly the floor -> "with"
   ];
-  // The inconclusive case (|r| < 0.15 but |r| + band >= 0.3) is added per test
-  // below: 0.11 at n = 100 -> 0.11 + 0.199 = 0.309.
+  // The inconclusive case (|r| < 0.15 but the interval still reaches the strong floor) is
+  // added per test below: 0.12 at n = 100 -> exact upper edge 0.3093.
+  //
+  // It used to be 0.11, chosen against the OLD approximate band (0.11 + 0.199 = 0.309).
+  // Computed exactly that same pair reaches only 0.29996 and is genuinely unrelated -- the
+  // approximation overstated how far a thin interval reaches by about 0.009, which is the
+  // whole reason the rule changed (Review Ledger IV COACH-6).
   // The legacy per-scenario lists, the stamper's rule applied by hand (k 8, kNeg 4, |r| >= 0.3):
   // positives r desc (ties by name), then negatives r asc.
   const LEGACY = {
@@ -124,8 +129,15 @@
     const o1 = E.overlapOf(C1, P);
     eq('overlapOf(C1) tested', o1.tested, 5);
     // with, by lower edge r - band: C3 0.58-0.046 = 0.534, M1 0.50-0.080 = 0.420, C2 0.60-0.199 = 0.401
-    eq('overlapOf(C1) with order (0.60 at n=100 ranks under 0.58 at n=1800)', names(o1.with), [C3, M1, C2]);
-    near('overlapOf(C1) with[0].band', o1.with[0].band, 1.96/Math.sqrt(1797));
+    // Ordered by the EXACT lower edge: C3 0.5485, C2 0.4575, M1 0.4376. The approximation
+    // put C2 last at 0.401 because it subtracts a z-space width straight off r, which
+    // over-penalises exactly the thin pair it is meant to discount.
+    eq('overlapOf(C1) with order (0.60 at n=100 ranks under 0.58 at n=1800)', names(o1.with), [C3, C2, M1]);
+    // half-width of the exact interval on r = 0.58 at n = 1,800, not 1.96/sqrt(n-3): the
+    // approximation is only right near r = 0 and is 51% too wide here.
+    near('overlapOf(C1) with[0].band', o1.with[0].band, 0.030666, 1e-4);
+    near('overlapOf(C1) with[0].lo', o1.with[0].lo, 0.548518, 1e-4);
+    near('overlapOf(C1) with[0].hi', o1.with[0].hi, 0.609849, 1e-4);
     eq('overlapOf(C1) against', names(o1.against), [T1]);
     eq('overlapOf(C1) weak', names(o1.weak), []);
     eq('overlapOf(C1) unrelated (r 0 at n 500: band 0.088 < 0.3)', names(o1.unrelated), [T2]);
@@ -135,9 +147,13 @@
     eq('overlapOf(C3) unrelated: 0.10 at n=100 -> 0.10 + 0.199 = 0.299 < 0.3', names(o3.unrelated), [T3]);
     eq('overlapOf(C3) inconclusive', o3.inconclusive, 0);
     // the inconclusive rule: |r| < 0.15 but |r| + band reaches 0.3 (0.11 at n = 100 -> 0.309)
-    const Pi = E.buildOverlapIndex(pairsTransfer([[X1, T3, 0.11, 100]]));
+    const Pi = E.buildOverlapIndex(pairsTransfer([[X1, T3, 0.12, 100]]));
     const oi = E.overlapOf(X1, Pi);
-    eq('inconclusive: 0.11 at n=100 is too thin to call', [oi.inconclusive, names(oi.unrelated), oi.tested], [1, [], 3]);
+    eq('inconclusive: 0.12 at n=100 is too thin to call', [oi.inconclusive, names(oi.unrelated), oi.tested], [1, [], 3]);
+    // ...and the pair the OLD approximate rule called inconclusive is, measured exactly,
+    // unrelated. The band overstated its reach (0.309 against a true 0.29996).
+    const oi11 = E.overlapOf(X1, E.buildOverlapIndex(pairsTransfer([[X1, T3, 0.11, 100]])));
+    eq('0.11 at n=100 is unrelated once the interval is exact', [oi11.inconclusive, names(oi11.unrelated).includes(T3)], [0, true]);
     const ox = E.overlapOf(X1, P);
     eq('overlapOf(X1) with (exactly the 0.30 floor)', names(ox.with), [C2]);
     eq('overlapOf(X1) weak (0.20)', names(ox.weak), [M1]);
@@ -151,7 +167,7 @@
     eq('overlapOf(X1, unrelatedR 0.25) unrelated', names(oxu.unrelated), [M1]);
     // legacy: unrelated null, inconclusive 0, complete false, the shipped rows only
     const ol = E.overlapOf(C1, L);
-    eq('overlapOf legacy (C1)', [ol.tested, names(ol.with), names(ol.against), ol.unrelated, ol.inconclusive, ol.complete], [4, [C3, M1, C2], [T1], null, 0, false]);
+    eq('overlapOf legacy (C1)', [ol.tested, names(ol.with), names(ol.against), ol.unrelated, ol.inconclusive, ol.complete], [4, [C3, C2, M1], [T1], null, 0, false]);
     // groupMatrix over the curator labels (groupsOf = the label list)
     const groupsOf = n => LABELS[n] || [];
     const SC = 'static clicking', RT = 'reactive tracking', SK = 'static click', BO = 'bonus';

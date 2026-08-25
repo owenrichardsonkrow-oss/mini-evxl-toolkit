@@ -905,7 +905,7 @@ const MiniEvxlEngine = (function(){
   // The dataset keeps the whole pool (so it matches the KovaaK's playlist and
   // survives a structure refresh); the selection is a per-browser preference
   // (`mini-evxl-scenario-selection`, benchKey → [names]) with evxl's default
-  // when unset. Owen's call (2026-08-17): the playlist's FULL SCOPE is the
+  // when unset. The owner's call (2026-08-17): the playlist's FULL SCOPE is the
   // pool — every pool scenario is a member of the playlist for Shared/Unique,
   // completion, counts, Quick wins and sync — while the RANK and VOLTS keep
   // evxl's selection-based calculation. So parsedItemsFor() returns the whole
@@ -1076,12 +1076,42 @@ const MiniEvxlEngine = (function(){
   // -- it pushed short records into the nearness fallback, which is the drift-prone reading
   // this whole statistic exists to replace, so the SAME recent form read 'ok' on a long
   // history and 'stuck' on a short one. The fixture asserts that invariant directly.
+  // THE NULL IS EXACT, NOT BINOMIAL (Review Ledger IV COACH-3, 2026-08-25).
+  // S6 got the statistic right and its dispersion wrong. The m older runs are all compared
+  // against the SAME recent maximum, so their indicators are positively dependent and the
+  // binomial standard error understates the spread. Exactly: rank the m+k runs; the recent
+  // max sits at rank R, and B (older runs it beats) = R - k, so
+  //     P(B = j) = C(j+k-1, k-1) / C(m+k, k)          [negative hypergeometric]
+  //     E[B]/m   = k/(k+1)                            [the fixed expectation S6 relies on]
+  //     SD(B)/m  = sqrt( k(m+k+1) / (m (k+1)^2 (k+2)) )
+  // That SD equals the binomial one at m = 1 and is 1.7x larger at m = 15 (a full 20-run
+  // record), so the bar sat too close to the expectation exactly where the record is long.
+  // Simulated under the null at k = 5, the rate of calling an unchanged scenario 'stuck'
+  // ran 16.6% at m=1 up to 28.1% at m=15 -- the same drift with play count S6 exists to
+  // remove, one order smaller. With the exact SD it stops trending.
+  //
+  // The BAR is still expectation - 1 SD, deliberately: S6 chose a loose heuristic because a
+  // false 'stuck' costs a scenario you should be training, and tightening it to a 5% test
+  // would move the bar from 0.67 to 0.47 at m = 15 -- a different product decision, not a
+  // correction. The exact one-sided p-value is reported alongside so the choice is visible.
+  function stuckShareSd(k, m){ return Math.sqrt(k*m*(m+k+1)/((k+1)*(k+1)*(k+2)))/m; }
+  // P(B <= j) under the same null. m is at most ATTEMPT_KEEP, so plain arithmetic is exact enough.
+  function stuckShareP(k, m, j){
+    let denom = 1;
+    for(let t=1;t<=k;t++) denom = denom*(m+t)/t;              // C(m+k, k)
+    let term = 1, cum = 0;                                     // C(k-1, k-1) = 1 at i = 0
+    for(let i=0;i<=j;i++){
+      if(i>0) term = term*(i+k-1)/i;                           // C(i+k-1, k-1)
+      cum += term;
+    }
+    return Math.max(0, Math.min(1, cum/denom));
+  }
   const STUCK_SHARE_MIN_OLDER = 1;
   const STUCK_NEARNESS = 0.85;        // the legacy fallback, used only when there is no older window
   function stuckness(rec, pb, k){
     k = k || 5;
     const last = rec && Array.isArray(rec.last) ? rec.last.map(x=>[Number(x[0]), Number(x[1])]).filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1])) : [];
-    const out = { runs: last.length, recentBest: null, older: 0, share: null, expected: k/(k+1), se: null, state: 'unknown', src: null };
+    const out = { runs: last.length, recentBest: null, older: 0, share: null, expected: k/(k+1), se: null, seBinomial: null, p: null, state: 'unknown', src: null };
     if(!last.length) return out;
     const sorted = last.slice().sort((a,b)=>b[0]-a[0]);          // newest first
     const recent = sorted.slice(0, k).map(x=>x[1]);
@@ -1089,11 +1119,14 @@ const MiniEvxlEngine = (function(){
     const recentBest = Math.max(...recent);
     out.recentBest = recentBest; out.older = older.length;
     if(older.length >= STUCK_SHARE_MIN_OLDER){
+      const m = older.length;
       const beaten = older.filter(v=>v < recentBest).length;
-      const share = beaten/older.length;
-      const se = Math.sqrt(out.expected*(1-out.expected)/older.length);
-      out.share = share; out.se = se; out.src = 'rank';
-      out.state = (share < out.expected - se) ? 'stuck' : 'ok';
+      const share = beaten/m;
+      const sd = stuckShareSd(k, m);
+      out.share = share; out.se = sd; out.src = 'rank';
+      out.seBinomial = Math.sqrt(out.expected*(1-out.expected)/m);   // what S6 used, kept for the record
+      out.p = stuckShareP(k, m, beaten);                             // exact one-sided, for display
+      out.state = (share < out.expected - sd) ? 'stuck' : 'ok';
       return out;
     }
     // no older window: fall back to the PB reading, and say it is the weaker one
@@ -1206,6 +1239,12 @@ const MiniEvxlEngine = (function(){
   // leaves -0.008 and cannot leave [0,1] at all. Applying it is one line:
   const PCT_EPS = 0.005;   // a percentile of exactly 0 or 1 is the curve's end, not infinite ability
   function adjustPercentile(p, delta){
+    // THE FIFTH TIME (Review Ledger IV BUG-4). Number(null) is 0 and Number.isFinite(0) is
+    // true, so a null percentile fell straight through this guard, got clamped to PCT_EPS and
+    // came back as a real-looking 0.2nd percentile. No caller passes null today -- both guard
+    // first -- which is exactly why it survived being written in the same review that
+    // documented the trap four times. The explicit check is the rule this file keeps re-learning.
+    if(p === null || p === undefined) return null;
     const v = Number(p);
     if(!Number.isFinite(v)) return null;
     const d = Number(delta);
@@ -1219,7 +1258,7 @@ const MiniEvxlEngine = (function(){
 
   // ---- Session engine v0.3 (2026-08-22: percentile metric + transfer routes) ------
   // Composes today's session: `size` items, each with a WHY, from a plain list
-  // of scenarios the app prepares. Built around the loop Owen ran by hand --
+  // of scenarios the app prepares. Built around the loop the owner ran by hand --
   // "sort played scenarios by weakness, high-score the weakest ten, refresh" --
   // with his two fixes (cap difficulty at his level; let the dataset fill out)
   // and, since 2026-08-22, the two things the population data makes possible:
@@ -1292,7 +1331,7 @@ const MiniEvxlEngine = (function(){
   // while the attempts store is empty).
   const CONF_LOW = 0.30, CONF_HIGH = 0.65;
   // ---- Session TYPES (A3, 2026-08-25) ------------------------------------------------
-  // Owen, on using the coach: "I don't like that every session has the same structure.
+  // The owner, on using the coach: "I don't like that every session has the same structure.
   // First I work on my weakest percentile group, 1 scenario spot has me play something
   // I've never played, 1 has me play something I haven't played in 1+ years." That is an
   // accurate description of a fixed 5/2/1/1/1 template filled from the head of a list
@@ -1319,6 +1358,41 @@ const MiniEvxlEngine = (function(){
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
+  // ---- The randomised arm (Review Ledger IV NEXT-4, 2026-08-25) ---------------------
+  // Everything else in this tool is: the coach says play X, you play X, we measure what
+  // happened. That cannot separate a good recommendation from improvement you would have
+  // made anyway, because there is no counterfactual anywhere in the record. One exists
+  // only if the coach sometimes does something else, at random, and says nothing.
+  //
+  // A share of revisit slots serve the RUNNER-UP instead of the top pick. When enough have
+  // resolved, the two piles get compared: if the top picks produce more first-try PBs than
+  // the runners-up, the forecast's ORDERING carries information; if not, it is decoration.
+  //
+  // THE B ARM DISPLACES, IT DOES NOT REORDER. Swapping ranks 1 and 2 would serve both and
+  // measure nothing -- the top pick has to be WITHHELD for the contrast to exist. It is not
+  // lost: it stays in the pool and is a candidate again tomorrow.
+  //
+  // REVISITS ONLY, deliberately. A revisit's outcome is measurable in days and already has
+  // a null model (1/(n+1), COACH-2). A route's claim is that it moves a DIFFERENT scenario
+  // weeks later -- a different experiment with a different outcome measure, and running
+  // both at once would confound them.
+  //
+  // BLINDED: nothing on the session page says which arm an item is, because knowing would
+  // change how hard you try and the comparison would then measure your belief as much as
+  // the ranking. The history view reveals the arm only for items that have already
+  // RESOLVED, where it can no longer change the outcome.
+  //
+  // Opt-in (`opts.arm`) and drawn from the same seeded RNG as everything else, so a day's
+  // session is stable across re-renders and every pre-NEXT-4 path is untouched.
+  // THE REALISED SHARE IS AT MOST THIS, and falls below it on a thin candidate pool: a B
+  // slot consumes TWO candidates (the withheld one and the served one), so once the pool is
+  // down to a single candidate the slot is forced back to A. On the toolkit fixture, whose
+  // revisit pool is barely deeper than its slot count, 0.25 realises as about 0.15. On a real
+  // profile the pool is dozens deep and the two coincide. This costs power, not validity:
+  // under "the ordering carries no information" the expected excess over baseline is 0 for
+  // either arm whatever the assignment probability or the slot position happened to be.
+  const ARM_B_SHARE = 0.25;      // share of revisit slots that serve the runner-up
+  const ARM_MIN_PER_ARM = 10;    // resolved items per arm before the comparison gets a verdict
   // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
   // state: { confidence: {c}|null, collectReady: int, weakBlockTouchedDays: number|null,
   //          weakBlockSinks: bool, blocksWithoutStanding: int, recentTypes: [newest first] }
@@ -1482,11 +1556,17 @@ const MiniEvxlEngine = (function(){
       if(best===null || total < best.total) best = { i, total, left, right };
     }
     if(!best) return out;
-    // BIC-style penalty for the two extra parameters, on the SSE scale. Without it a
-    // search always returns the least-bad split of pure noise; with it, a straight series
-    // reports null, which is the answer that makes the detector usable.
+    // BIC-style penalty on the SSE scale. Without it a search always returns the least-bad
+    // split of pure noise; with it, a straight series reports null, which is the answer that
+    // makes the detector usable.
+    //
+    // THREE extra parameters, not two (Review Ledger IV COACH-6). Two lines cost four
+    // parameters against one line's two -- and the split POINT is a third, chosen by
+    // searching every interior position for the best one. A location parameter selected by
+    // maximisation is the one that most inflates a fit, so leaving it uncharged made the
+    // detector slightly too eager to date a plateau.
     const variance = whole.sse/Math.max(n-2, 1);
-    const penalty = 2*Math.log(n)*variance;
+    const penalty = 3*Math.log(n)*variance;
     out.penalty = penalty;
     // A series one line already explains exactly has nothing to improve on -- and with a
     // zero residual the penalty is zero too, so without this a float epsilon is enough to
@@ -1599,7 +1679,11 @@ const MiniEvxlEngine = (function(){
       const row = byName.get(name); if(!hasP(row) || !touched(row)) return;
       const at = pctAt(row); if(!at) return;
       seenEv.add(name);
-      evidence.push({ name: row.name, r, n, delta: row.pct - at.pct, via: null, synced: at.synced });
+      // `rs` is the shrunk r -- the single estimator S8/R4 settled on -- and `pred` is what
+      // this neighbour's movement predicts about YOURS. See the note below the loop.
+      const delta = row.pct - at.pct;
+      const rs = shrinkR(r, n);
+      evidence.push({ name: row.name, r, n, rs, delta, pred: rs*delta, via: null, synced: at.synced });
     };
     const idx = helpers && helpers.pairsIndex && typeof helpers.pairsIndex.edges==='function' ? helpers.pairsIndex : null;
     if(idx){
@@ -1609,8 +1693,27 @@ const MiniEvxlEngine = (function(){
       (sc.neighbours||[]).forEach(nb=>{ if(nb[1]>0 && nb[2]>=100) addEv(nb[0], nb[1], nb[2]); });
     }
     if(!evidence.some(e=>e.delta>0)) return null;
-    const wsum = evidence.reduce((s,e)=>s+e.r, 0);
-    const gain = evidence.reduce((s,e)=>s+e.r*e.delta, 0)/wsum;
+    // THE r HAS TO APPEAR TWICE (Review Ledger IV COACH-1, 2026-08-25).
+    //
+    // This used to be sum(r*delta)/sum(r): an r-weighted MEAN OF THE NEIGHBOURS' MOVEMENTS.
+    // Read out loud, it said "the scenarios that co-vary with this one gained 12 points, so
+    // you gained 12 points here" -- r decided which evidence counted more, but never
+    // discounted how much that evidence implied. Both quantities are percentiles, so the
+    // standard-deviation ratio is about one and the regression prediction of your movement
+    // given theirs is simply r * delta. So r is the WEIGHT and also the ATTENUATION:
+    //     gain = sum(w * pred) / sum(w),  w = shrinkR(r, n),  pred = w * delta
+    // On the toolkit's own fixture (a neighbour at r 0.5 that moved +0.12, and one at r 0.4
+    // that did not move) the old form gave 0.067 and this gives roughly a third of that.
+    // It is not cosmetic: composeSession counts a revisit as RIPE when odds > 0, and two
+    // ripe revisits make the day a Collect session, so the rotation's first trigger was
+    // firing on an inflated number.
+    //
+    // Still a PRIOR, and a weaker one than it looks: the map's r is a correlation of LEVELS
+    // across players, and what this needs is the correlation of CHANGES within one person.
+    // Those are different quantities and the second is normally smaller. Nothing measures it
+    // yet; data/attempts.json is the only source that could (Review Ledger IV NEXT-3).
+    const wsum = evidence.reduce((s,e)=>s+e.rs, 0);
+    const gain = wsum > 0 ? evidence.reduce((s,e)=>s+e.rs*e.pred, 0)/wsum : 0;
     const margin = sc.resp && sc.resp.nearPct!==null && sc.resp.nearPct!==undefined ? sc.resp.nearPct : FORECAST_PRIOR_MARGIN;
     const odds = gain - margin;
     const p = 1/(1+Math.exp(-odds/FORECAST_SLOPE));
@@ -1658,65 +1761,270 @@ const MiniEvxlEngine = (function(){
     }
     return out;
   }
-  function sessionHistoryStats(log, pbNow, nowMs, liveKey){
+  // ---- Resolution: a served item is scored only when a run was LOGGED after it ----------
+  // (Review Ledger IV COACH-2, extended by the owner's Q4, 2026-08-25.)
+  //
+  // This used to score a revisit as collected when the CURRENT PB exceeded the PB at compose
+  // time, over every item in any session where at least one thing was done. Two problems, in
+  // opposite directions, in the one number D11 makes the tool's report card:
+  //
+  //   * The outcome was "the PB rose at some point since", while the null model 1/(n+1) is
+  //     "the NEXT SINGLE ATTEMPT is a PB". Play a recommended revisit twelve times and PB on
+  //     the twelfth and that scored as a hit against a baseline that assumed one try.
+  //   * A revisit that was never attempted scored as a MISS, because the session had some
+  //     other item done. A question that was never asked is not a wrong answer.
+  //
+  // Both are fixed by resolving from the run record instead of from the PB: an item resolves
+  // when `runsOf(name)` holds a run after the session started, and then
+  //   firstTry  the FIRST such run beats pbAt        -- baseline 1/(n+1)
+  //   anyTime   ANY of the k runs beats pbAt         -- baseline k/(n+k)
+  // Both baselines are exact under exchangeability of the n prior and k new runs: the first
+  // new run is equally likely to be any rank among n+1, and the maximum of n+k is equally
+  // likely to sit in either group. The strict reading is what the FORECAST is calibrated
+  // against, because "first-try PB odds" is what the forecast claims; the any-time reading is
+  // the product question -- "did the coach serve me something I could high-score" -- and the
+  // owner's Q4 extends it past revisits to EVERY served item.
+  //
+  // Without `runsOf` (an older caller, or a store with no attempts record) the pre-2026-08-25
+  // reading is kept and flagged `src: 'pb'`, so nothing silently reports zero.
+  // `until` (step 3c) closes the exposure's window: runs are its own only up to the next
+  // serving of the same scenario. Omitted or Infinity means "nothing superseded it".
+  function resolveItem(it, startedAt, runsOf, pb, sessionDone, until){
+    const pbAt = Number(it.pbAt)||0;
+    const n = (it.n===null || it.n===undefined) ? null : Number(it.n);
+    const out = { name: it.name, why: it.why||null, p: Number(it.p), n,
+      block: it.block||null, rung: (it.rung===null || it.rung===undefined) ? null : Number(it.rung),
+      gain: (it.gain===null || it.gain===undefined) ? null : Number(it.gain),
+      margin: (it.margin===null || it.margin===undefined) ? null : Number(it.margin),
+      odds: (it.odds===null || it.odds===undefined) ? null : Number(it.odds),
+      arm: it.arm||null, pbAt, k: 0, resolved: false, hit: 0, hitAny: 0,
+      base: collectBaseline(it.n), baseAny: null, src: null };
+    const rows = typeof runsOf==='function' ? runsOf(it.name) : null;
+    if(!Array.isArray(rows)){
+      // Legacy: the PB is all we have, so it answers the any-time question only -- and with
+      // no run record the ONLY signal that a session was actually played is its done count,
+      // so the pre-2026-08-25 gate stays here (a composition you opened and walked away from
+      // scheduled revisits that were never attempted). The run-based path above does not need
+      // it: it asks each item directly.
+      if(!(Number(sessionDone) > 0)){ out.src = 'pb'; return out; }
+      const rose = (Number(pb(it.name))||0) > pbAt ? 1 : 0;
+      out.src = 'pb'; out.resolved = true; out.hit = rose; out.hitAny = rose;
+      return out;
+    }
+    const end = (until===undefined || until===null || !Number.isFinite(Number(until))) ? Infinity : Number(until);
+    const after = rows.map(x=>[Number(x[0]), Number(x[1])])
+      .filter(x=>Number.isFinite(x[0]) && Number.isFinite(x[1]) && x[0] > startedAt && x[0] <= end)
+      .sort((a,b)=>a[0]-b[0]);
+    out.src = 'runs'; out.k = after.length;
+    if(!after.length) return out;                       // never attempted -- not a miss, no answer
+    out.resolved = true;
+    out.hit = after[0][1] > pbAt ? 1 : 0;
+    out.hitAny = after.some(x=>x[1] > pbAt) ? 1 : 0;
+    // k/(n+k): the chance that the maximum of the n prior and k new runs lands among the new
+    // ones. Null when the attempt count is unknown -- Number(null) is 0 and 0/(0+k) = 1 would
+    // report CERTAINTY, which is the trap this file keeps re-learning.
+    if(n!==null && Number.isFinite(n) && n >= 0 && out.k > 0) out.baseAny = out.k/(n + out.k);
+    return out;
+  }
+  const meanOf = xs => xs.length ? xs.reduce((a,b)=>a+b, 0)/xs.length : null;
+  // POSITIONAL: a pre-3c session could list the same scenario twice (once as a revisit and
+  // once as the weakest pick), so the slot index is part of the identity of an exposure.
+  const expKey = (day, seedBump, idx, name) => day+'|'+(seedBump||0)+'|'+(Number(idx)||0)+'|'+name;
+  // ---- Exposure windows (Review Ledger IV step 3c, 2026-08-25) ------------------------
+  // An EXPOSURE is one serving of one scenario: "on this day, against this PB and this
+  // attempt count, you were told to play X". Resolution asks what the first run AFTER that
+  // serving did. Until 3c every exposure searched the whole future independently, so ONE run
+  // resolved EVERY earlier exposure of that scenario: served day 1, served again day 5,
+  // played once on day 6, and both servings booked the same PB as a first-try collect.
+  //
+  // With the arm live that is not a mild double count. Measured on a fixture before this
+  // change: one run of one scenario served twice put n=1 hits=1 into arm A AND arm B -- a
+  // perfectly correlated pair in the one comparison whose validity rests on the two piles
+  // being independent draws, and it needs no reroll to happen, just an ordinary re-serve.
+  //
+  // An exposure therefore OWNS the half-open window (servedAt, nextServingOfTheSameScenario].
+  // Runs outside it belong to whichever serving was live when they happened. A serving nobody
+  // acted on before it was superseded is simply unresolved -- which is the truth: you did not
+  // play it while it was the thing you had been told to play. The bound is inclusive at the
+  // top so a run landing exactly when the next session was composed belongs to the older
+  // list, and no run can fall between two windows.
+  function windowEnds(exposures){
+    const byName = new Map();
+    exposures.forEach(x=>{ const l = byName.get(x.name); if(l) l.push(x); else byName.set(x.name, [x]); });
+    const out = new Map();
+    byName.forEach(list=>{
+      list.sort((a,b)=> a.at - b.at || (Number(a.idx)||0) - (Number(b.idx)||0));
+      for(let i=0; i<list.length; i++){
+        // Two slots of ONE session can name the same scenario (a pre-3c composition could
+        // list it as both the revisit and the weakest pick). They share an instant, so they
+        // are one exposure: the first slot owns the window and the rest get a zero-width one,
+        // or a single run would book a hit against every twin.
+        if(i>0 && list[i].at === list[i-1].at){ out.set(list[i].key, list[i].at); continue; }
+        let j = i+1;
+        while(j<list.length && list[j].at === list[i].at) j++;
+        out.set(list[i].key, j<list.length ? list[j].at : Infinity);
+      }
+    });
+    return out;
+  }
+  function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf, ledger){
     const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
-    const isLive = e => !!(liveKey && e.day===liveKey.day && (e.seedBump||0)===(liveKey.seedBump||0));
-    const sessions = (log||[]).filter(e=>e && Number.isFinite(e.day)).map(e=>{
+    const isLive = x => !!(liveKey && x.day===liveKey.day && (x.seedBump||0)===(liveKey.seedBump||0));
+    const entries = (log||[]).filter(e=>e && Number.isFinite(e.day));
+    const doneOf = e => typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
+    // ---- what was exposed, and when --------------------------------------------------
+    // The SERVED LEDGER is append-only: items from a composition the log dropped on a reroll
+    // are still here, with the arm they were served under. It is the authority when present;
+    // the log's own item lists are the fallback, and the only source for a record written
+    // before 3c. Ledger rows pass done = 0 so a scenario with no run record falls through to
+    // UNRESOLVED rather than to the legacy "did the PB rise at some point" reading.
+    const useLedger = Array.isArray(ledger) && ledger.length && typeof runsOf==='function';
+    const exposures = [];
+    if(useLedger){
+      ledger.forEach(r=>{
+        if(!r || !r.name || !Number.isFinite(Number(r.servedAt)) || !Number.isFinite(Number(r.day))) return;
+        exposures.push({ key: expKey(Number(r.day), r.seedBump, r.idx, String(r.name)), name: String(r.name),
+          at: Number(r.servedAt), idx: Number(r.idx)||0, day: Number(r.day), seedBump: Number(r.seedBump)||0, item: r, done: 0 });
+      });
+    } else {
+      entries.forEach(e=>{
+        const at = Number(e.startedAt)||0, done = doneOf(e);
+        (Array.isArray(e.items) ? e.items : []).forEach((it, i)=>{
+          if(it && it.name) exposures.push({ key: expKey(e.day, e.seedBump, i, String(it.name)), name: String(it.name),
+            at, idx: i, day: e.day, seedBump: e.seedBump||0, item: it, done });
+        });
+      });
+    }
+    const ends = windowEnds(exposures);
+    const resolvedBy = new Map();
+    exposures.forEach(x=>{
+      const r = resolveItem(x.item, x.at, runsOf, pb, x.done, ends.get(x.key));
+      r.day = x.day; r.seedBump = x.seedBump; r.servedAt = x.at; r.live = isLive(x);
+      resolvedBy.set(x.key, r);
+    });
+    const logKeys = new Set();
+    entries.forEach(e=>(Array.isArray(e.items)?e.items:[]).forEach((it, i)=>{ if(it && it.name) logKeys.add(expKey(e.day, e.seedBump, i, String(it.name))); }));
+    const sessions = entries.map(e=>{
       const items = Array.isArray(e.items) ? e.items : [];
-      const done = typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
-      // The log is written at compose time, so a session that was opened and never
-      // played is in it too; its revisits were never attempted and must not count
-      // toward the return-collect rate (review 2026-08-22 late): only sessions with
-      // at least one item done contribute revisits.
-      const revs = done > 0 ? items.filter(it=>it.why==='revisit') : [];
-      // one row per scheduled revisit: what the coach predicted, what the null model
-      // predicted from the attempts behind it, and whether the PB actually fell
-      const rows = revs.map(it=>({ name: it.name, p: Number(it.p), base: collectBaseline(it.n),
-        hit: (Number(pb(it.name))||0) > (Number(it.pbAt)||0) ? 1 : 0 }));
-      const collected = rows.filter(r=>r.hit).length;
-      const ps = revs.map(it=>Number(it.p)).filter(v=>Number.isFinite(v));
-      const bases = rows.map(r=>r.base).filter(Number.isFinite);
+      const done = doneOf(e);
+      const startedAt = Number(e.startedAt)||0;
+      // EVERY served item is resolved, not only the revisits (Q4). `rows` stays the revisit
+      // rows because that is what the forecast is calibrated on and what the page reads.
+      const all = items.map((it, i)=>{
+        const pre = (it && it.name) ? resolvedBy.get(expKey(e.day, e.seedBump, i, String(it.name))) : null;
+        return pre || resolveItem(it, startedAt, runsOf, pb, done, Infinity);
+      });
+      const rows = all.filter(r=>r.why==='revisit');
+      const resolvedRows = rows.filter(r=>r.resolved);
+      const servedResolved = all.filter(r=>r.resolved);
+      const ps = resolvedRows.map(r=>r.p).filter(v=>Number.isFinite(v));
+      const bases = resolvedRows.map(r=>r.base).filter(Number.isFinite);
       return { day: e.day, seedBump: e.seedBump||0, startedAt: e.startedAt, rating: e.rating||null, regime: e.regime||null, done, size: Number(e.size)||items.length,
-        revisits: revs.length, collected, predicted: ps.length ? ps.reduce((a,b)=>a+b, 0)/ps.length : null,
-        baseline: bases.length ? bases.reduce((a,b)=>a+b, 0)/bases.length : null, rows,
+        revisits: rows.length, resolved: resolvedRows.length, collected: resolvedRows.filter(r=>r.hit).length,
+        collectedAny: resolvedRows.filter(r=>r.hitAny).length,
+        served: all.length, servedResolved: servedResolved.length,
+        servedHit: servedResolved.filter(r=>r.hit).length, servedHitAny: servedResolved.filter(r=>r.hitAny).length,
+        predicted: meanOf(ps), baseline: meanOf(bases), rows, all,
         type: e.type||null, conf: e.conf===undefined ? null : e.conf, template: e.template||null, live: isLive(e) };
     }).sort((a,b)=> b.startedAt - a.startedAt || b.day - a.day);
     const weekOf = day => day - (((day % 7) + 7 + 3) % 7);
     const nowDay = Math.floor((nowMs - new Date(nowMs).getTimezoneOffset()*60000)/DAY_MS);
+    // Every aggregate below runs over EXPOSURES, not over the log's sessions: an exposure
+    // whose session row the log dropped on a reroll still happened, and its outcome still
+    // counts. `sessions` stays the display record of what was composed.
+    const expRows = exposures.map(x=>resolvedBy.get(x.key)).filter(r=>r && !r.live);
     const weeks = [];
-    if(sessions.length){
-      const first = weekOf(Math.min(...sessions.map(s=>s.day))), lastW = weekOf(nowDay);
+    const dayPool = expRows.map(r=>r.day).concat(sessions.map(s=>s.day)).filter(Number.isFinite);
+    if(dayPool.length){
+      const first = weekOf(dayPool.reduce((a,b)=>Math.min(a,b))), lastW = weekOf(nowDay);
       for(let w=first; w<=lastW; w+=7){
         const ss = sessions.filter(s=>weekOf(s.day)===w);
-        const closed = ss.filter(s=>!s.live);
-        const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
-        const preds = closed.filter(s=>s.predicted!==null);
+        const er = expRows.filter(r=>weekOf(r.day)===w);
+        const revRows = er.filter(r=>r.why==='revisit');
+        // The DENOMINATOR is resolved revisits, not scheduled ones: an item you never
+        // attempted cannot have been collected or missed.
+        const res = revRows.filter(r=>r.resolved);
+        const servedOkW = er.filter(r=>r.resolved);
         const ratings = { easy: 0, good: 0, hard: 0 }; ss.forEach(s=>{ if(s.rating && ratings[s.rating]!==undefined) ratings[s.rating]++; });
-        const bws = closed.filter(s=>s.baseline!==null);
-        weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0), revisits, collected,
-          rate: revisits ? collected/revisits : null, predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
-          baseline: bws.length ? bws.reduce((a,s)=>a+s.baseline*s.revisits, 0)/bws.reduce((a,s)=>a+s.revisits, 0) : null, ratings });
+        weeks.push({ weekStart: w, sessions: ss.length, done: ss.reduce((a,s)=>a+s.done, 0), size: ss.reduce((a,s)=>a+s.size, 0),
+          revisits: res.length, scheduled: revRows.length, collected: res.filter(r=>r.hit).length,
+          collectedAny: res.filter(r=>r.hitAny).length,
+          servedResolved: servedOkW.length, servedHit: servedOkW.filter(r=>r.hit).length,
+          rate: res.length ? res.filter(r=>r.hit).length/res.length : null,
+          predicted: meanOf(res.map(r=>r.p).filter(Number.isFinite)),
+          baseline: meanOf(res.map(r=>r.base).filter(Number.isFinite)), ratings });
       }
     }
-    const closed = sessions.filter(s=>!s.live);
-    const revisits = closed.reduce((a,s)=>a+s.revisits, 0), collected = closed.reduce((a,s)=>a+s.collected, 0);
-    const preds = closed.filter(s=>s.predicted!==null);
-    // Every resolved revisit, pooled: the coach's p, the null model's 1/(n+1), the outcome.
-    const allRows = [];
-    closed.forEach(s=>s.rows.forEach(r=>allRows.push(r)));
-    const scored = allRows.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
+    const allRows = expRows.filter(r=>r.why==='revisit');
+    const servedRows = expRows;
+    const resolved = allRows.filter(r=>r.resolved);
+    const collected = resolved.filter(r=>r.hit).length;
+    // The forecast is scored on RESOLVED revisits only, and against the strict outcome --
+    // the same event 1/(n+1) describes. Matching those two is the whole point of COACH-2.
+    const scored = resolved.filter(r=>Number.isFinite(r.p) && Number.isFinite(r.base));
     const brier = brierScore(scored, r=>[r.p, r.hit]);
     const brierBase = brierScore(scored, r=>[r.base, r.hit]);
     // Skill score: how much of the null model's error the coach removes. 0 = no better
     // than "nothing changed since you were last here"; 1 = perfect; NEGATIVE = worse than
     // the null, which is the reading that would say the forecast weights are wrong.
     const skill = (brier!==null && brierBase!==null && brierBase>0) ? 1 - brier/brierBase : null;
-    const baseRows = allRows.filter(r=>Number.isFinite(r.base));
-    const overall = { sessions: sessions.length, revisits, collected, rate: revisits ? collected/revisits : null,
-      predicted: preds.length ? preds.reduce((a,s)=>a+s.predicted*s.revisits, 0)/preds.reduce((a,s)=>a+s.revisits, 0) : null,
-      baseline: baseRows.length ? baseRows.reduce((a,r)=>a+r.base, 0)/baseRows.length : null,
+    // Q4: the product question, over EVERY served item -- "was I served things I could
+    // high-score?" -- reported both strictly and as it feels when you play.
+    const servedOk = servedRows.filter(r=>r.resolved);
+    const servedBaseAny = servedOk.map(r=>r.baseAny).filter(Number.isFinite);
+    const served = { items: servedRows.length, resolved: servedOk.length,
+      firstTry: servedOk.filter(r=>r.hit).length, anyTime: servedOk.filter(r=>r.hitAny).length,
+      firstTryRate: servedOk.length ? servedOk.filter(r=>r.hit).length/servedOk.length : null,
+      anyTimeRate: servedOk.length ? servedOk.filter(r=>r.hitAny).length/servedOk.length : null,
+      firstTryBase: meanOf(servedOk.map(r=>r.base).filter(Number.isFinite)),
+      anyTimeBase: meanOf(servedBaseAny),
+      runs: servedOk.reduce((a,r)=>a+r.k, 0) };
+    // ---- NEXT-4: the two piles ------------------------------------------------------
+    // A and B items differ in `n` by construction (a lower-ranked revisit is a different
+    // scenario with a different attempt count), so comparing raw collect rates would be
+    // confounded by the baseline. The comparison is therefore on EXCESS OVER BASELINE --
+    // hit minus 1/(n+1) -- whose expectation is 0 under "the ordering carries no
+    // information", whatever n each arm happens to draw.
+    //
+    // The interval is a normal approximation on a difference of means and is stated as
+    // such: it is here so the number cannot be read without its width, not because it is
+    // the right test. COACH-4's model is what replaces it, with the arm as a covariate.
+    // It also assumes the rows are INDEPENDENT, which is exactly what the exposure window
+    // above exists to make true -- before 3c a single run could enter both arms at once.
+    const armStat = tag => {
+      const rows = resolved.filter(r=>r.arm===tag && Number.isFinite(r.base));
+      if(!rows.length) return { arm: tag, n: 0, hits: 0, rate: null, base: null, excess: null, se: null };
+      const ex = rows.map(r=>r.hit - r.base);
+      const mean = ex.reduce((a,b)=>a+b, 0)/ex.length;
+      const varr = ex.length>1 ? ex.reduce((a,b)=>a+(b-mean)*(b-mean), 0)/(ex.length-1) : 0;
+      return { arm: tag, n: ex.length, hits: rows.filter(r=>r.hit).length,
+        rate: rows.filter(r=>r.hit).length/rows.length,
+        base: rows.reduce((a,r)=>a+r.base, 0)/rows.length,
+        excess: mean, se: Math.sqrt(varr/ex.length) };
+    };
+    const armA = armStat('A'), armB = armStat('B');
+    const armDiff = (armA.n && armB.n) ? armA.excess - armB.excess : null;
+    const armDiffSe = (armA.n && armB.n) ? Math.sqrt(armA.se*armA.se + armB.se*armB.se) : null;
+    const arms = { a: armA, b: armB, diff: armDiff, diffSe: armDiffSe,
+      lo: armDiff===null ? null : armDiff - 1.96*armDiffSe, hi: armDiff===null ? null : armDiff + 1.96*armDiffSe,
+      minPerArm: ARM_MIN_PER_ARM, scorable: armA.n >= ARM_MIN_PER_ARM && armB.n >= ARM_MIN_PER_ARM,
+      share: ARM_B_SHARE, unassigned: resolved.filter(r=>!r.arm).length };
+    const overall = { sessions: sessions.length, arms,
+      revisits: resolved.length, scheduled: allRows.length, collected,
+      collectedAny: resolved.filter(r=>r.hitAny).length,
+      rate: resolved.length ? collected/resolved.length : null,
+      rateAny: resolved.length ? resolved.filter(r=>r.hitAny).length/resolved.length : null,
+      predicted: meanOf(resolved.map(r=>r.p).filter(Number.isFinite)),
+      baseline: meanOf(resolved.map(r=>r.base).filter(Number.isFinite)),
+      baselineAny: meanOf(resolved.map(r=>r.baseAny).filter(Number.isFinite)),
       scoredOn: scored.length, brier, brierBase, skill, scorable: scored.length >= SCORE_MIN_REVISITS, scoreMin: SCORE_MIN_REVISITS,
-      reliability: scored.length ? reliabilityBins(scored) : [] };
+      reliability: scored.length ? reliabilityBins(scored) : [], served,
+      // provenance, so a number can never be read without knowing what produced it
+      resolvedFrom: useLedger ? 'ledger' : (typeof runsOf==='function' ? 'runs' : 'pb'),
+      windowed: true,
+      // exposures with no surviving log row -- compositions the reroll rule dropped. Before
+      // 3c these were lost outright; they are counted here and named so the loss is visible.
+      orphans: exposures.filter(x=>!logKeys.has(x.key)).length };
     return { sessions, weeks, overall };
   }
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
@@ -1916,7 +2224,7 @@ const MiniEvxlEngine = (function(){
     return out.sort((x, y)=> y.lower - x.lower || y.pairs - x.pairs || (x.name<y.name?-1:x.name>y.name?1:0));
   }
   // ---- Soft block membership (Review Ledger III A4, 2026-08-25) ------------------
-  // Owen, on the "(other)" buckets: he hoped that with enough information a scenario could
+  // The owner, on the "(other)" buckets: he hoped that with enough information a scenario could
   // find its way out of one and into a clarified bucket -- and his worked example (a
   // pokeball scenario as a hybrid that leans static clicking) describes a MIXTURE, which
   // a hard partition cannot represent at all.
@@ -2082,7 +2390,7 @@ const MiniEvxlEngine = (function(){
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
-        forecast: sc._forecast || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
+        forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         pctShrunk: (!calibrated && hasPct(sc) && cf<1 && popLevel!==null) ? cf*sc.pct + (1-cf)*popLevel : null,
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
@@ -2315,6 +2623,23 @@ const MiniEvxlEngine = (function(){
     const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
+    // NEXT-4: walk the ordered candidates and, for each slot, decide arm. B withholds the
+    // head (it is simply not served today) and serves the next one instead -- see the note
+    // at ARM_B_SHARE for why a swap would measure nothing. With one candidate left there is
+    // no runner-up, so the slot stays A: the experiment never costs a revisit it could have
+    // served. `_arm` rides on the row like `_forecast` and is deleted with it.
+    let revServe = revOrdered;
+    if(opts.arm){
+      const pool = revOrdered.slice();
+      revServe = [];
+      for(let slot=0; slot<template.revisit && pool.length; slot++){
+        const goB = pool.length > 1 && rnd() < ARM_B_SHARE;
+        if(goB) pool.shift();                       // the top pick is WITHHELD, not reordered
+        const pick = pool.shift();
+        pick._arm = goB ? 'B' : 'A';
+        revServe.push(pick);
+      }
+    }
     // The bucket, never the percentage. p comes from a logistic with an INVENTED
     // slope (FORECAST_SLOPE) over an invented prior margin, so "83%" reads as a
     // measured probability sitting next to real percentiles when it is nothing of
@@ -2324,7 +2649,7 @@ const MiniEvxlEngine = (function(){
     // so the return-collect record can calibrate it, and the percentage comes back
     // the day predicted and collected can be compared (2026-08-24).
     const oddsWord = forecastBucket;
-    take(revOrdered, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
+    take(revServe, 'revisit', sc=>{ const f = sc._forecast; const days = Math.round((opts.now - sc.att.lastT)/86400000);
       if(!f) return 'Revisit — last played '+days+' days ago; go collect the PB (if it falls first try, the time away did the work).';
       const rs = f.evidence.map(e=>e.r); const rTxt = rs.length>1 ? Math.min(...rs).toFixed(1)+'–'+Math.max(...rs).toFixed(1) : rs[0].toFixed(2);
       const moved = f.evidence.filter(e=>e.delta>0).length, nbs = f.evidence.filter(e=>!e.via).length, lbs = f.evidence.length - nbs;
@@ -2333,7 +2658,7 @@ const MiniEvxlEngine = (function(){
     // ---- top up: more of the weakest list, then unplayed at/under level
     take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
-    rev.forEach(sc=>{ delete sc._forecast; });
+    rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
       type: sessionType, typeWhy: sessionTypeWhy };
@@ -2376,6 +2701,18 @@ const MiniEvxlEngine = (function(){
   // (exact only near r = 0, narrower at large |r|), used as a claim-strength
   // floor, never as a test. n = 100 -> ±0.20, 400 -> ±0.10, 1,800 -> ±0.046.
   function rBand(n){ return 1.96/Math.sqrt(Math.max((Number(n)||0)-3, 1)); }
+  // The EXACT interval, which is what overlapOf sorts on (Review Ledger IV COACH-6).
+  // rBand reads the Fisher-z half-width straight off as an r, which is only right near
+  // r = 0 -- and the two lists it feeds are sorted by an interval EDGE, so the
+  // approximation was worst exactly where it was doing the most work: a strong pair on a
+  // thin board. Transform, add, transform back; same inputs, no new assumption. At
+  // n = 100 the approximation puts r = 0.60's lower edge at 0.40 where it is really 0.45.
+  function rInterval(r, n){
+    const rv = Math.max(-0.999999, Math.min(0.999999, Number(r)||0));
+    const half = 1.96/Math.sqrt(Math.max((Number(n)||0)-3, 1));
+    const z = Math.atanh(rv);
+    return { lo: Math.tanh(z - half), hi: Math.tanh(z + half) };
+  }
   const TRANSFER_META_KEYS = ['meta', 'labels', 'pairs', 'clusters'];
   // The adjacency index over the shipped pairs. source 'pairs' when the pairs
   // block exists (every tested pair, both directions decoded once); 'legacy'
@@ -2438,7 +2775,12 @@ const MiniEvxlEngine = (function(){
   function overlapOf(name, index, opts){
     const o = Object.assign({ minN: 100, minR: 0.3, unrelatedR: 0.15 }, opts||{});
     const legacy = index.source!=='pairs';
-    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>({ name: e.name, r: e.r, n: e.n, band: rBand(e.n) }));
+    // `lo`/`hi` are the exact interval edges; `band` is its half-width, kept because the
+    // page prints a +/- and because a symmetric number is what a reader expects there.
+    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>{
+      const ci = rInterval(e.r, e.n);
+      return { name: e.name, r: e.r, n: e.n, lo: ci.lo, hi: ci.hi, band: (ci.hi - ci.lo)/2 };
+    });
     const withR = [], against = [], weak = [], unrelated = [];
     let inconclusive = 0;
     rows.forEach(row=>{
@@ -2446,11 +2788,13 @@ const MiniEvxlEngine = (function(){
       if(row.r >= o.minR) withR.push(row);
       else if(row.r <= -o.minR) against.push(row);
       else if(a >= o.unrelatedR) weak.push(row);
-      else if(a + row.band < o.minR) unrelated.push(row);
+      // "unrelated" needs the WHOLE interval inside the strong floor, which is what the
+      // approximate `|r| + band` was reaching for; with exact edges it is just both ends.
+      else if(Math.max(Math.abs(row.lo), Math.abs(row.hi)) < o.minR) unrelated.push(row);
       else inconclusive++;
     });
-    withR.sort((x,y)=> (y.r-y.band)-(x.r-x.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
-    against.sort((x,y)=> (x.r+x.band)-(y.r+y.band) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    withR.sort((x,y)=> y.lo-x.lo || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
+    against.sort((x,y)=> x.hi-y.hi || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     weak.sort((x,y)=> Math.abs(y.r)-Math.abs(x.r) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     unrelated.sort((x,y)=> y.n-x.n || Math.abs(x.r)-Math.abs(y.r) || (x.name<y.name?-1:x.name>y.name?1:0));
     return { tested: rows.length, with: withR, against, weak, unrelated: legacy ? null : unrelated, inconclusive: legacy ? 0 : inconclusive, complete: !legacy };
@@ -2502,11 +2846,18 @@ const MiniEvxlEngine = (function(){
       .sort((a,b)=> b.size-a.size || (a.id<b.id?-1:a.id>b.id?1:0));
     const cell = (a, b) => { const c = cells.get(key(a, b)); return c ? { meanR: c.sum/c.tested, tested: c.tested, strongPos: c.strongPos, strongNeg: c.strongNeg } : null; };
     const cohesion = id => { const c = cell(id, id); return c ? c.meanR : null; };
+    // The disattenuation ratio. It is UNBOUNDED, and a value above 1 is not a big number --
+    // it is the measurement saying the two groups share more than either shares with
+    // itself, i.e. they are one construct measured twice (or a cohesion denominator too
+    // small to divide by). Nothing flagged that, so it rendered as just another cell
+    // (Review Ledger IV COACH-6). `overlap` keeps returning the raw ratio so no caller
+    // changes; `overlapSaturated` is the flag the page reads.
     const overlap = (a, b) => {
       const c = cell(a, b), ca = cohesion(a), cb = cohesion(b);
       if(!c || ca===null || cb===null || ca < o.minCohesion || cb < o.minCohesion) return null;
       return c.meanR/Math.sqrt(ca*cb);
     };
+    const overlapSaturated = (a, b) => { const ov = overlap(a, b); return ov!==null && ov > 1; };
     const pairCache = new Map();
     const pairs = (a, b) => {
       const k = key(a, b); if(pairCache.has(k)) return pairCache.get(k);
@@ -2518,7 +2869,7 @@ const MiniEvxlEngine = (function(){
       });
       pairCache.set(k, out); return out;
     };
-    return { groups, cell, cohesion, overlap, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
+    return { groups, cell, cohesion, overlap, overlapSaturated, pairs, groupsOfName: name => (memberOf.get(name) || []).slice(), opts: o };
   }
   // The greedy "practise separately" set over a group matrix. Walk the groups
   // in `order` -- 'evidence' (size desc, id asc: a property of the map, the same
@@ -2626,7 +2977,7 @@ const MiniEvxlEngine = (function(){
     return fn;
   }
 
-  // ---- Difficulty attribute (redefined 2026-08-17/18, Owen's design) ---------
+  // ---- Difficulty attribute (redefined 2026-08-17/18, the owner's design) ----
   // A NINE-rung scale, read as family × nudge:
   //     0 Easy-  1 Easy  2 Easy+ | 3 Intermediate-  4 Intermediate  5 Intermediate+ | 6 Hard-  7 Hard  8 Hard+
   // plus -1 = unrated. Not a continuous index on purpose: the inputs are curators'
@@ -2644,7 +2995,7 @@ const MiniEvxlEngine = (function(){
   //      (most unknown ladders are tracks, not levels). Median across the playlists
   //      carrying the scenario (even count → rounded mean of the middle two).
   //   2. NAME TIER WORDS pull one rung TOWARD their level: "VT Ground Novice S5 Hard"
-  //      placed Easy (1) + "hard" (7) → Easy+ (2) — Owen: a bonus variant built to
+  //      placed Easy (1) + "hard" (7) → Easy+ (2) — the owner: a bonus variant built to
   //      be harder than its base, still an easy-family scenario. The last tier word
   //      in the name is the one that acts (family word first, modifier last).
   //   3. NAME MODIFIERS (size/speed/mechanic words) push by direction × magnitude
@@ -2808,7 +3159,7 @@ const MiniEvxlEngine = (function(){
   function difficultyFamily(label){ const i = DIFF_LABELS.indexOf(label); return i<0 ? '' : DIFF_FAMILY_OF[i]; }
   function difficultyRungOfText(label){ return DIFF_LABELS.indexOf(label); }   // 'Hard+' → 8, '' → -1
 
-  // ---- Skill facets (ratified 2026-08-18, Owen R1-R21) --------------------
+  // ---- Skill facets (ratified 2026-08-18, owner rulings R1-R21) -----------
   // The label-normalization vocabulary from docs/taxonomy-proposal-2026-08-18.md
   // (toolkit): every curator category / subcategory label maps to
   //   m   -> a mechanic: clicking | tracking | switching
@@ -3055,6 +3406,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    rBand, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_MIN_PER_ARM, windowEnds, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
