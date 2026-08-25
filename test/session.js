@@ -300,9 +300,9 @@
     // session history stats: three logged sessions across two weeks (Mon 2026-08-10 .. Sun 2026-08-23), the live one excluded from the totals
     const dayOf = ms => Math.floor((ms - new Date(ms).getTimezoneOffset()*60000)/DAY);
     const log = [
-      { day: dayOf(T(12)), seedBump: 0, startedAt: T(12), rating: 'good', regime: 'normal', done: 6, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'A', why: 'revisit', pbAt: 100, p: 0.8 }, { name: 'B', why: 'weakest', pbAt: 50 }] },
-      { day: dayOf(T(5)), seedBump: 0, startedAt: T(5), rating: 'hard', regime: 'normal', done: 3, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'C', why: 'revisit', pbAt: 200, p: 0.4 }, { name: 'D', why: 'revisit', pbAt: 300, p: 0.6 }] },
-      { day: dayOf(FIXED_MS), seedBump: 1, startedAt: FIXED_MS, rating: null, regime: 'normal', done: 0, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'E', why: 'revisit', pbAt: 10, p: 0.9 }] }
+      { day: dayOf(T(12)), seedBump: 0, startedAt: T(12), rating: 'good', regime: 'normal', done: 6, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'A', why: 'revisit', pbAt: 100, p: 0.8, pv: E.P_VERSION }, { name: 'B', why: 'weakest', pbAt: 50 }] },
+      { day: dayOf(T(5)), seedBump: 0, startedAt: T(5), rating: 'hard', regime: 'normal', done: 3, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'C', why: 'revisit', pbAt: 200, p: 0.4, pv: E.P_VERSION }, { name: 'D', why: 'revisit', pbAt: 300, p: 0.6, pv: E.P_VERSION }] },
+      { day: dayOf(FIXED_MS), seedBump: 1, startedAt: FIXED_MS, rating: null, regime: 'normal', done: 0, size: 10, conf: 0.5, template: { weakest: 5 }, items: [{ name: 'E', why: 'revisit', pbAt: 10, p: 0.9, pv: E.P_VERSION }] }
     ];
     const H = E.sessionHistoryStats(log, { A: 110, B: 50, C: 200, D: 310, E: 20 }, FIXED_MS, { day: dayOf(FIXED_MS), seedBump: 1 });
     R.history = { sessions: H.sessions.map(s=>[s.day - dayOf(FIXED_MS), s.rating, s.done, s.revisits, s.collected, s.predicted, s.live, s.resolved]), weeks: H.weeks.map(w=>[w.weekStart - dayOf(FIXED_MS), w.sessions, w.revisits, w.collected, w.rate, w.predicted, w.ratings]), overall: H.overall };
@@ -453,7 +453,12 @@
     // The return-collect rate needs a null model or it cannot say anything. P(first-try PB)
     // with nothing changed is 1/(n+1) on n prior attempts -- parameter-free.
     R.baseline = { n0: E.collectBaseline(0), n1: E.collectBaseline(1), n9: E.collectBaseline(9), missing: E.collectBaseline(null) };
+    // `pv` is the forecast version that produced `p`; without it these rows are correctly
+    // refused by the calibration, because a `p` from a superseded formula is a different
+    // quantity. The stale-p case is pinned separately below.
     const logOf = rows => rows.map((r, i)=>({ day: 100+i, seedBump: 0, startedAt: i, rating: null, regime: 'normal', done: 5, size: 10,
+      items: [{ name: 'S'+i, why: 'revisit', pbAt: 100, p: r.p, n: r.n, pv: E.P_VERSION }] }));
+    const logOfStale = rows => rows.map((r, i)=>({ day: 100+i, seedBump: 0, startedAt: i, rating: null, regime: 'normal', done: 5, size: 10,
       items: [{ name: 'S'+i, why: 'revisit', pbAt: 100, p: r.p, n: r.n }] }));
     // four revisits: the coach says 0.9/0.9/0.1/0.1 and two of them land, on scenarios with
     // 9 attempts each (baseline 0.1 throughout)
@@ -469,7 +474,14 @@
         bins: mixed.overall.reliability.filter(b=>b.n>0).map(b=>[b.n, b.predicted, b.observed]) },
       sameAsBase: same.overall.skill,
       perfect: { brier: perfect.overall.brier, skill: perfect.overall.skill },
-      noN: E.sessionHistoryStats(logOf([{ p: 0.5 }]), () => 200, FIXED_MS, null).overall.scoredOn
+      noN: E.sessionHistoryStats(logOf([{ p: 0.5 }]), () => 200, FIXED_MS, null).overall.scoredOn,
+      // a `p` from a superseded forecast must not enter the Brier pool, but must still count
+      // toward return-collect -- the OUTCOME definition did not change, only the prediction
+      stale: (()=>{
+        const H = E.sessionHistoryStats(logOfStale([{ p: 0.9, n: 9 }, { p: 0.9, n: 9 }]), () => 200, FIXED_MS, null);
+        return { scoredOn: H.overall.scoredOn, brier: H.overall.brier, staleP: H.overall.staleP,
+                 predicted: H.overall.predicted, revisits: H.overall.revisits, collected: H.overall.collected };
+      })()
     };
 
     // ---- calibrateScenarios: the boundary every ranking now passes through --------------
@@ -529,7 +541,7 @@
     const servedAt = 1000;
     const logRuns = rows => rows.map((r, i) => ({ day: 200 + i, seedBump: 0, startedAt: servedAt, rating: null,
       regime: 'normal', done: 5, size: 10,
-      items: [{ name: 'R' + i, why: 'revisit', pbAt: 100, p: r.p, n: r.n }] }));
+      items: [{ name: 'R' + i, why: 'revisit', pbAt: 100, p: r.p, n: r.n, pv: E.P_VERSION }] }));
     // R0 first run back beats it (a true first-try collect)
     // R1 first run misses, a LATER run beats it -- the old rule called this collected
     // R2 never attempted after being served -- the old rule called this a miss
@@ -586,8 +598,26 @@
     //      A swap would serve both and there would be no contrast at all.
     //   3. Roughly ARM_B_SHARE of slots go B over many seeds, and every served revisit
     //      carries an arm.
-    const armOn = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true, arm: true }), FILL);
-    const armOff = seed => E.composeSession(fixture(E), Object.assign({}, OPTS, { seed, rotate: true }), FILL);
+    // A DEEPER REVISIT POOL than the snapshot fixture carries. The arm may only take B when
+    // withholding still leaves enough candidates to fill every remaining revisit slot, so on a
+    // pool no deeper than the slot count it correctly never fires -- which is right for the
+    // session and useless for testing the mechanism. These clones are revisit-eligible by
+    // construction (played, last run past the 14-day cut, not maxed) and exist only here; the
+    // snapshot fixture is untouched.
+    const armFixture = E2 => {
+      const rows = fixture(E2);
+      const cut = OPTS.now - 14 * 86400000;
+      const seedRows = rows.filter(r=>r.played && r.att && r.att.lastT > 0 && r.att.lastT < cut && !r.maxed);
+      const extra = [];
+      for(let i=0; i<14 && seedRows.length; i++){
+        const b = seedRows[i % seedRows.length];
+        extra.push(Object.assign({}, b, { name: 'ArmPool ' + i,
+          att: Object.assign({}, b.att, { lastT: b.att.lastT - (i + 1) * 3600000 }) }));
+      }
+      return rows.concat(extra);
+    };
+    const armOn = seed => E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed, rotate: true, arm: true }), FILL);
+    const armOff = seed => E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed, rotate: true }), FILL);
     const revsOf = s2 => s2.items.filter(it=>it.why==='revisit');
     let bSlots = 0, aSlots = 0, armless = 0, displaced = 0, dupes = 0;
     for(let seed=1; seed<=200; seed++){
@@ -609,7 +639,18 @@
       aSlots, bSlots, armless, dupes,
       bShareObserved: (aSlots + bSlots) ? bSlots/(aSlots + bSlots) : null,
       offHasNoArm: armOff(7).items.every(it=>!it.arm),
-      offIdentical: JSON.stringify(armOff(7).items.map(item)) === JSON.stringify(E.composeSession(fixture(E), Object.assign({}, OPTS, { seed: 7, rotate: true }), FILL).items.map(item)),
+      offIdentical: JSON.stringify(armOff(7).items.map(item)) === JSON.stringify(E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed: 7, rotate: true }), FILL).items.map(item)),
+      // THE SHORTFALL. A B slot consumes two candidates; charging the second to a later slot
+      // empties the pool early and the session serves FEWER revisits than its template asked
+      // for, topping up from the weakest list instead. Over 200 seeds the ON run must serve
+      // exactly as many revisits as the OFF run, every time.
+      revisitShortfall: (()=>{ let worst = 0, n = 0;
+        for(let seed=1; seed<=200; seed++){
+          const on = revsOf(armOn(seed)).length, off = revsOf(armOff(seed)).length;
+          if(on < off){ worst = Math.max(worst, off - on); n++; }
+        }
+        return { sessions: n, worst };
+      })(),
       // the displacement: on a seed that used B, the withheld candidate is not in the session
       displacedAbsent: (onS && offS) ? (()=>{
         const onNames = new Set(onS.items.map(it=>it.name));
@@ -932,14 +973,12 @@
       if(AM.armless) problems.push('arm: every served revisit must carry an arm when the experiment is on, got '+AM.armless+' without one');
       if(AM.dupes) problems.push('arm: a scenario was served twice in one session -- the displacement must not reintroduce the withheld pick, got '+AM.dupes+' sessions');
       if(!AM.bSlots) problems.push('arm: no slot ever took the runner-up over 200 seeds -- the experiment never runs');
-      // The realised share is at MOST ARM_B_SHARE and is below it here (about 0.15 against
-      // 0.25) because a B slot consumes two candidates and this fixture's revisit pool is
-      // barely deeper than its slot count, so a later slot is often forced back to A. That
-      // is the invariant worth pinning -- never above, never near zero -- rather than a
-      // number that only holds for one pool depth. On a real profile the pool is dozens
-      // deep and the two coincide.
+      // The realised share can never EXCEED ARM_B_SHARE (a B roll is refused when it is not
+      // affordable, never forced), and on this deepened pool it should sit near it.
       if(!(AM.bShareObserved <= AM.share + 0.02)) problems.push('arm: the realised B share can never EXCEED ARM_B_SHARE ('+AM.share+'), got '+J(AM.bShareObserved));
-      if(!(AM.bShareObserved > AM.share*0.4)) problems.push('arm: the realised B share collapsed -- the experiment is barely running, got '+J(AM.bShareObserved)+' against '+AM.share);
+      if(!(AM.bShareObserved > AM.share*0.6)) problems.push('arm: the realised B share collapsed -- the experiment is barely running, got '+J(AM.bShareObserved)+' against '+AM.share);
+      // and it must never cost the session a revisit -- the defect the affordability rule fixed
+      if(!AM.revisitShortfall || AM.revisitShortfall.sessions !== 0) problems.push('arm: turning the experiment ON must never serve FEWER revisits than OFF, got '+J(AM.revisitShortfall));
       if(AM.leaks) problems.push('arm: BLINDED -- no item reason may mention the arm, got '+AM.leaks+' that do');
       // THE POINT: a B slot withholds the top pick rather than reordering it
       const D = AM.displacedAbsent;
@@ -957,6 +996,14 @@
       if(!near(AS.diff, 3/6, 1e-12)) problems.push('armStats: the difference of excesses is what the experiment reports, got '+J(AS.diff));
       if(AS.scorable !== false) problems.push('armStats: six per arm is under ARM_MIN_PER_ARM, so no verdict yet, got '+J(AS.scorable));
       if(AS.unassigned !== 0) problems.push('armStats: every row here carries an arm, got '+J(AS.unassigned));
+    }
+    const STALE = R.scoring && R.scoring.stale;
+    if(!STALE) problems.push('scoring.stale: missing');
+    else {
+      if(STALE.scoredOn !== 0 || STALE.brier !== null) problems.push('scoring: a `p` from a superseded forecast must not enter the Brier pool, got '+J(STALE));
+      if(STALE.staleP !== 2) problems.push('scoring: the refused rows must be COUNTED, not silently dropped, got '+J(STALE.staleP));
+      if(STALE.predicted !== null) problems.push('scoring: the predicted mean is over the scored pool only, got '+J(STALE.predicted));
+      if(STALE.revisits !== 2 || STALE.collected !== 2) problems.push('scoring: an old `p` still counts toward return-collect -- only the PREDICTION was superseded, not the outcome, got '+J(STALE));
     }
     const WN = R.window;
     if(!WN) problems.push('window: missing');
