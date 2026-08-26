@@ -816,7 +816,17 @@
         singleBorrowsWithSd: near(std(rp([0.40]), { j: 3, sd: 0.10 }), 0.40 + A[3] * 0.10, 1e-9),
         singleUnmovedWithoutSd: near(std(rp([0.40]), { j: 3, sd: null }), 0.40),
         singleClamped: std(rp([0.98]), { j: 3, sd: 0.50 }) <= 0.999,
-        aOf3: near(A[3], 0.8463, 1e-4)
+        aOf3: near(A[3], 0.8463, 1e-4),
+        // PRECEDENCE, pinned because it was NOT obvious and it voided a whole measurement column.
+        // With one observed run the reading comes from the RUN, not from the `fallback`. That is
+        // correct in production -- `sc.pct` is the all-time-PB percentile while runPcts comes from
+        // a 20-run rolling buffer, so for a scenario whose PB predates its last 20 runs the two
+        // genuinely differ and a run statistic must use the runs. It is also the exact behaviour
+        // that let step 21's injection harness feed one field and have the rule read another.
+        singlePrefersRunOverFallback: near(std(rp([0.90]), { j: 3, fallback: 0.40 }), 0.90),
+        noRunsUsesFallback: near(std([], { j: 3, fallback: 0.40 }), 0.40),
+        // and an unknown j must NOT quietly borrow a_3 -- for j = 1 that is the wrong SIGN
+        unknownJDoesNotBorrow: near(std(rp([0.40]), { j: 1, sd: 0.10 }), 0.40)
       };
     }
     {
@@ -1304,6 +1314,9 @@
       if(!MT.singleUnmovedWithoutSd) problems.push('metric: with no scatter available a one-run row must not move at all');
       if(!MT.singleClamped) problems.push('metric: the borrowed bump must stay inside the percentile range');
       if(!MT.aOf3) problems.push('metric: a_3 (the expected maximum of three standard normals) must be 0.8463');
+      if(!MT.singlePrefersRunOverFallback) problems.push('metric: with one observed run the reading must come from the RUN, not the fallback -- this precedence voided an entire measurement column in step 21 and is pinned so it is a decision');
+      if(!MT.noRunsUsesFallback) problems.push('metric: with NO runs the fallback is all there is, and it must be used');
+      if(!MT.unknownJDoesNotBorrow) problems.push('metric: an unknown j must not silently borrow a_3 -- for j = 1 the true constant is ZERO, so the substitution has the wrong sign');
       if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
       if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
       // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified

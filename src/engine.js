@@ -2878,7 +2878,12 @@ const MiniEvxlEngine = (function(){
     if(base === null) return null;
     const sd = numOrNull(o.sd);
     if(sd === null || !(sd > 0)) return base;
-    const a = A_OF_J[Math.round(Number(o.j) || 3)] || A_OF_J[3];
+    // A_OF_J covers j in {2,3,5}. `A_OF_J[j] || A_OF_J[3]` would silently substitute a_3 for any
+    // other j -- and for j = 1, whose true a_1 is ZERO, that pushes one-run rows UP by 0.8463*sd
+    // while the multi-run rows are pulled DOWN to their mean: opposite signs inside one variant,
+    // from a fallback nobody would look at. An unknown j does not borrow at all, and says so.
+    const a = A_OF_J[Math.round(Number(o.j))];
+    if(!Number.isFinite(a)) return base;
     return Math.max(0.001, Math.min(0.999, base + a * sd));
   }
 
