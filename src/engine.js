@@ -2943,9 +2943,10 @@ const MiniEvxlEngine = (function(){
       const per = new Map();
       played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], errs: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++;
         if(hasPct(sc)){ e.pcts.push(sc.pct);
-          // MEASURED errors only -- a borrowed one is not evidence about this scenario, and
-          // averaging borrowed errors into the noise term is what collapses tau^2.
-          if(sc.mRunSeSrc !== 'imputed'){ const v = ownError(sc); if(v!==null) e.errs.push(v*v); } }
+          // EVERY member with a usable error goes in, borrowed or measured. The estimator
+          // below WEIGHTS by 1/(tau^2+s^2) instead of averaging, so a borrowed error is
+          // downweighted rather than excluded -- see the tau^2 block.
+          const v = ownErrorFull(sc); if(v!==null) e.errs.push({ x: sc.pct, s2: v*v }); }
         if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
       blockStats = blockList.map(b=>{
         const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 };
@@ -2959,18 +2960,42 @@ const MiniEvxlEngine = (function(){
           const varr = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
           medianSe = 1.2533*Math.sqrt(varr)/Math.sqrt(e.pcts.length);
         }
-        // step 11: tau^2, the spread of TRUE standings inside this block -- the observed
-        // spread of its members minus the mean measurement error among them. It is the prior
-        // width every member is shrunk against, and both halves are measured on this profile.
-        // `observedVar` rides along on the SAME set so the acceptance criterion (tau^2 must
-        // not fall under a tenth of the observed spread) is checkable rather than asserted.
-        let tau2 = null, observedVar = null, tauFrom = 0;
-        if(e.pcts.length > 1){
-          const mean = e.pcts.reduce((a,x)=>a+x, 0)/e.pcts.length;
-          observedVar = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
-          const meanErr = e.errs.length ? e.errs.reduce((a,x)=>a+x, 0)/e.errs.length : 0;
-          tauFrom = e.errs.length;
-          tau2 = Math.max(observedVar - meanErr, 1e-6);
+        // step 11: tau^2, the spread of TRUE standings inside this block. It is the prior
+        // width every member is shrunk against, so getting it wrong moves the whole ranking.
+        //
+        // PAULE-MANDEL, not the moment estimator. The first version subtracted a mean error
+        // measured on the multi-run members from a variance measured on ALL of them -- two
+        // different sets, which biases tau^2 UPWARD by share_1*(s_1^2 - s_multi^2) and
+        // under-shrinks. Estimating both halves on the multi-run subset instead trades that
+        // for range restriction (scenarios you repeat are ones you have converged on), which
+        // biases DOWNWARD. Neither subset is right, and the two biases partly cancel with an
+        // unknown net -- which is worse than either alone, because you cannot reason about it.
+        //
+        // PM needs no subset: it solves sum (x_i - xbar_w)^2/(tau^2 + s_i^2) = n-1 with
+        // weights 1/(tau^2 + s_i^2) over EVERY member, so a borrowed error is downweighted
+        // rather than excluded. It also has no collapse-to-zero mode of its own, which was
+        // the failure the subsetting hack existed to avoid. `observedVar` is reported on
+        // exactly the set PM used, so criterion (a)'s ratio is checkable rather than asserted.
+        let tau2 = null, observedVar = null, tauFrom = e.errs.length;
+        if(e.errs.length > 1){
+          const n = e.errs.length;
+          const mean = e.errs.reduce((a,r)=>a+r.x, 0)/n;
+          observedVar = e.errs.reduce((a,r)=>a+(r.x-mean)*(r.x-mean), 0)/(n-1);
+          // Q(t) is decreasing in t, so bisect. Q(0)<=0 means the spread is fully explained
+          // by measurement error and there is no true spread left to find.
+          const Q = t => { let sw=0, sx=0;
+            for(const r of e.errs){ const w = 1/(t + r.s2); sw += w; sx += w*r.x; }
+            const xb = sx/sw; let q=0;
+            for(const r of e.errs){ const d = r.x-xb; q += d*d/(t + r.s2); }
+            return q - (n-1); };
+          let lo = 0, hi = Math.max(observedVar, 1e-4);
+          if(Q(lo) <= 0){ tau2 = 1e-6; }
+          else {
+            let guard = 0;
+            while(Q(hi) > 0 && guard++ < 40) hi *= 2;
+            for(let i=0;i<60;i++){ const mid = 0.5*(lo+hi); if(Q(mid) > 0) lo = mid; else hi = mid; }
+            tau2 = Math.max(0.5*(lo+hi), 1e-6);
+          }
         }
         if(median!==null) blockStandingOf.set(b.id, median);
         if(icc!==null) blockIccOf.set(b.id, icc);
