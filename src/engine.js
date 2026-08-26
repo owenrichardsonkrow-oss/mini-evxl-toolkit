@@ -1168,9 +1168,16 @@ const MiniEvxlEngine = (function(){
   // too generous on 98.9% of curves. It read a score as about ten percentile points better
   // than it is at the very first point below the last anchor, and worse further down --
   // which is exactly where the coach's primary output lives (S9 measured 10 of the owner's
-  // weakest 20 inside it). On his played set the change moves 32 scenarios by more than 2
-  // percentile points and reorders his weakest ten; membership of the weakest 20 moves by
-  // one scenario.
+  // weakest 20 inside it). The effect on the owner's page -- how many scenarios move, and by
+  // how much -- is in CLAUDE.md's MET-1/MET-2 section and DELIBERATELY NOT REPEATED HERE.
+  //
+  // It used to be, and the two copies disagreed: this comment said 32 scenarios moved by more
+  // than 2 percentile points "on his played set" while the section said 34 of 1,267 played
+  // CURVED ones. Curved is a subset of played, so 34 on the smaller set cannot sit beside 32 on
+  // the larger -- they are not two framings of one number, they contradict. And NEITHER can be
+  // re-derived: the rule being compared against was deleted when this one replaced it, so there
+  // is no artifact that could settle them and a third number from a reimplemented retired rule
+  // would settle nothing either. The fix for a figure that cannot be checked is to state it once.
   //
   // Below the last anchor is still EXTRAPOLATION -- the slope comes from the last anchor
   // PAIR -- so it is clamped to the last anchor's own share and falls back to the old ramp
@@ -1408,14 +1415,40 @@ const MiniEvxlEngine = (function(){
   //    an average of martingales is a martingale -- so there is no exponent to choose.
   //
   // AGGRESSIVE, and what that cost when it was replayed over his 1,238 real bouts that had a
-  // PB to beat (median history 3 runs). At STAGNATE_AT 0.6 the coach closes 249 items on
-  // stagnation against 550 on a PB, at a median of ONE run before a stop, and 6.1% of all
-  // items are closed before a PB that his actual play went on to get. That cost is smaller
-  // than it looks, because of where his PBs land and how big they are:
+  // PB to beat (median history 3 runs). At STAGNATE_AT 0.685 the coach closes 321 items on
+  // stagnation against 525 on a PB, at a median of ONE run before a stop, and 8.1% of all
+  // items (100) are closed before a PB that his actual play went on to get. At the old 0.6 those
+  // read 244 / 550 / 6.1% (75) -- the threshold move is step 29 and its cost is exactly this.
   //
-  //     PB arrived on run 1 of the bout   468 items (74.9%)   median +6.23% over the old PB
+  // TWO NUMBERS IN THIS COMMENT WERE WRONG UNTIL STEP 22 COMMITTED THE REPLAY. It said 249
+  // stops and "7 of 249" form stops; the file's own step 8 section said 244 (243 exhaustion,
+  // 1 form), and `dev/hazard-lambda.html` -- which reproduces the shipped rule on 1,238 of
+  // 1,238 bouts -- says 243 + 1 = 244. The section was right and this comment was not, which
+  // is what happens to a figure that lives in two places and re-runs in neither.
+  //
+  // AND THE ARRIVAL TABLE BELOW IS OVER A DIFFERENT POPULATION THAN THE SENTENCE ABOVE IT.
+  // It counts every PB EVENT in the record (625), not the 525 the rule actually reaches. The
+  // difference is exactly the 100 early-closes, and by construction those are all LATE PBs --
+  // which is why the run-3+ row is 58 here and only 6 among the PBs the rule reaches. Both
+  // are true and they answer different questions; printed together they read as one.
+  //
+  //     PB arrived on run 1 of the bout   468 events (74.9%)  median +6.23% over the old PB
   //                          run 2         99       (15.8%)          +4.17%
   //                          run 3+        58        (9.3%)          +2.36%
+  //     of which the RULE reaches:        468 / 51 / 6 (525), gains +6.23% / +3.12% / +2.15%
+  //  The event table is a property of the RECORD and does not move with the threshold; the
+  //  rule-reached row does, and at 0.685 it gives up 17 more of the run-2 PBs and 8 more of the
+  //  run-3+ ones.
+  //
+  //  AND THOSE 25 ARE NOT THE SMALL ONES, which this comment and step 8 both used to claim. The
+  //  given-up set was never measured -- both quoted the medians of the PBs the rule still REACHES,
+  //  a different and systematically lower population, because the ones it stops reaching are the
+  //  later ones. Measured by replaying 0.6 and 0.685 over the same bouts and diffing them
+  //  (dev/hazard-lambda.json /givenUp): the 25 are 0 run-1, 17 run-2 and 8 run-3+, and their
+  //  median gains are +5.05% and +1.57% against a first-run PB's +6.23%. So the run-2 ones the
+  //  aggressive setting gives up are worth about FOUR FIFTHS of a first-run PB, not the half or
+  //  the third previously stated; the run-3+ ones are worth about a quarter. The trade is real
+  //  and the decision stands, but it costs more than the file said it did.
   //
   // Three quarters of his PBs come on the FIRST run, and one that takes three or more runs is
   // worth a third as much. His "grinding produces an outlier" turns out to be exactly right
@@ -1423,19 +1456,113 @@ const MiniEvxlEngine = (function(){
   // over a bar that repeated sampling was always going to clear eventually. The PBs an
   // aggressive rule gives up are the small ones.
   //
-  // The form test almost never fires TODAY -- 7 of 249 stops -- because his median history is
-  // three runs and the exhaustion rule gets there first. It is not decoration: it is the rule
+  // THE FORM TEST NOW FIRES ZERO TIMES -- 0 of 321 stops, against 1 of 244 at the old threshold.
+  // His median history is three runs, so its smallest available rank is 1/4 and no single run can
+  // move the martingale far; at 0.685 exhaustion always gets there first. It is a live rule with
+  // nothing left to do on THIS record, and that is a consequence of step 29's threshold move
+  // rather than a defect in it -- it is the rule that acts once a scenario has real history, and
+  // step 7b's seed fix is what lets those counts accumulate. Recorded so it is not rediscovered
+  // as a bug: if the record deepens and it still never fires, it is dead weight and should go. It is not decoration: it is the rule
   // that acts once a scenario has real history, which is exactly when exhaustion turns
   // patient, and the step 7b seed fix is what lets those counts accumulate at last.
-  const STAGNATE_AT = 0.6;        // exhaustion: stop once P(no PB by now) has fallen to here
+  // 0.685 SINCE STEP 29, and the move is step 22's finding taken rather than a new opinion.
+  // At 0.6 the rule advertised "stop when the chance you have not beaten it yet falls to 0.6" and
+  // actually stopped at about 0.51, because the exchangeable null it computes that chance from is
+  // mis-calibrated: lambda measured 1.333 [1.218, 1.433] on this record, so personal bests arrive
+  // about a third more often than exchangeability predicts. Moving the threshold is the same
+  // change as applying lambda -- step 22 showed the two are one dial over the n this record holds
+  // -- so the knob moves and no second parameter is added.
+  //
+  // 0.685 AND NOT 0.684, WHICH IS OUTSIDE THE BAND. The plain thresholds reproducing lambda-hat's
+  // integer stopping schedule over n = 1..19 -- with the lambda rule run at the 0.6 the rule was
+  // ADVERTISING when this was decided -- form a half-open interval:
+  //   decision band [0.684211, 0.6875), width 0.0033
+  // A round 0.684 falls BELOW it; 0.6875 is the first value above it. 0.685 is the roundest
+  // value inside, and it is the only round three-decimal value inside.
+  //
+  // CORRECTED 2026-08-26. This read [0.684211, 0.685855], width 0.0016, until the decision log
+  // was audited: 0.685855 is the band's MIDPOINT quoted as its endpoint, so the published width
+  // was half the truth. The cause is that the enumeration samples only breakpoints and midpoints,
+  // so the largest reproducing CANDIDATE it can return is the midpoint -- and the band was read
+  // off that candidate instead of being computed. dev/hazard-lambda.html derives it exactly now
+  // (rename.decisionBand, from k*(n) = k iff n/(n+k) <= a < n/(n+k-1)) and dev/figures.json
+  // checks BOTH endpoints against the artifact. The decision is unaffected: 0.685 is inside the
+  // corrected band and 0.684 is still below it.
+  //
+  // The owner's call, and reversible: "let's go with aggressive, we could adjust this later if I
+  // don't like how it feels." The cost is measured, not assumed -- see the step 29 section.
+  const STAGNATE_AT = 0.685;      // exhaustion: stop once P(no PB by now) has fallen to here
+  // Step 22's measurement, recorded so the page can say what the exchangeable reading is worth.
+  // It is NOT applied: the default lambda is 1.
+  //
+  // THE POOLED ROW, and the first version of this line took the wrong one. It shipped 1.32 with
+  // an interval of [1.113, 1.515] -- those are the INTERIOR (j >= 2) figures, the row step 22
+  // labels a collider diagnostic and explicitly not a correction -- while quoting the POOLED
+  // sample size beside them. Three rows in one sentence. The estimand is the pooled hazard,
+  // because the rule acts at every j starting at j = 1:
+  //   pooled     1.3326  95% [1.2177, 1.4334]  day-clustered, 1,919 at-risk runs / 1,238 bouts
+  //   corrected  1.3946  95% [1.1864, 1.5821]  the record's first run dropped (step 12 selection)
+  // dev/hazard-lambda.json is the artifact; it re-runs with run-tests.ps1 -Hazard.
+  const HAZARD_LAMBDA_MEASURED = 1.33;
   const FORM_ALPHA = 0.1;         // form: stop once the martingale reaches 1/FORM_ALPHA
   const FORM_MIN_HISTORY = 3;     // fewer ranks than this and u is too coarse to bet on
   const FORM_EPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
   // history: run scores before this bout. bout: run scores in it, in order. pbAt: the PB when
   // the item was served (it can exceed the history's max -- a leaderboard PB whose run was
   // never logged), which is what a run has to beat.
+  // ---- step 22: the hazard multiplier, MEASURED and available, default OFF ------------
+  // n/(n+k) = PRODUCT over j=1..k of (1 - 1/(n+j)) EXACTLY, so the exchangeable null is the
+  // lambda = 1 member of a one-parameter family whose per-run hazard is lambda/(n+j).
+  //
+  // Step 22 measured lambda on this record at 1.333, 95% CI [1.218, 1.433] day-clustered -- so
+  // he beats the exchangeable null by about a third, flat across n and across within-bout
+  // position. The measurement is solid and the multiplier STILL DOES NOT SHIP AS A DIAL,
+  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.7500:
+  // the threshold family expresses 3,130 distinct stopping schedules where the lambda family
+  // expresses 50, so the knob that already exists is strictly more expressive. See CLAUDE.md.
+  // (The rename figure is RELATIVE TO THE CURRENT THRESHOLD and moved with it at step 29: at the
+  // old 0.6 it read 0.6842 with 72 lambda schedules. The conclusion does not move with it -- the
+  // threshold family is more expressive at either setting -- and the figures are quoted from
+  // dev/hazard-lambda.json and nowhere else, which is what dev/figures.json checks.)
+  // It lives here as an option for the same reason `squash` lives in the pooling modes and
+  // `metric` in calibrateScenarios: the instrument needs a candidate to be checkable against,
+  // and a build-and-revert comparison depends on nobody erring while reverting.
+  //
+  // AT lambda = 1 THE DIRECT FORM IS USED, not the product. They are equal in exact arithmetic
+  // and NOT bit-identical in floating point, and a boundary case at `<= stagnateAt` could flip
+  // on the last bits. dev/hazard-lambda.html asserts 1,238 of 1,238 bouts agree, and that check
+  // is only meaningful because the shipped path is untouched.
+  // ---- REALM-SAFE COLLECTION TESTS ---------------------------------------------------
+  // `x instanceof Map` is FALSE for a Map built in another realm -- an iframe, a worker, a
+  // harness page -- because it compares against THIS realm's Map constructor. Every branch below
+  // that used it then fell through to a path returning a plausible EMPTY answer instead of
+  // throwing, which is the worst possible failure shape.
+  //
+  // It has already cost one whole measurement. dev/block-misassignment.html built its member map
+  // in the parent frame and handed it to `scenarioAffinity`; the check failed, `Object.keys(aMap)`
+  // is [], and all 411 stable members came back "too few cross-playlist pairs to place at all" --
+  // a total failure that reads exactly like a thin-data result, in a file that had never run.
+  // There were SIX such sites and five of them were still live.
+  //
+  // Duck-typing is realm-independent and costs nothing. A Map has get/has/forEach; a Set has
+  // has/forEach and no get, which is what separates them.
+  const isMapLike = x => !!x && typeof x.get === 'function' && typeof x.has === 'function' && typeof x.forEach === 'function';
+  const isSetLike = x => !!x && typeof x.has === 'function' && typeof x.forEach === 'function' && typeof x.get !== 'function';
+
+  function stagnateP(n, k, lambda){
+    const nn = Math.max(1, Number(n) || 1), kk = Math.max(0, Number(k) || 0);
+    const lam = Number.isFinite(Number(lambda)) ? Number(lambda) : 1;
+    if(lam === 1) return nn/(nn+kk);
+    let p = 1;
+    for(let j=1;j<=kk;j++){
+      const h = lam/(nn+j);
+      if(h >= 1) return 0;
+      p *= (1-h);
+    }
+    return p;
+  }
   function stagnation(history, bout, pbAt, opts){
-    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY }, opts||{});
+    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY, lambda: 1 }, opts||{});
     const hist = (history||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const runs = (bout||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const target = Number.isFinite(Number(pbAt)) ? Math.max(Number(pbAt), 0) : (hist.length ? Math.max(...hist) : 0);
@@ -1447,22 +1574,23 @@ const MiniEvxlEngine = (function(){
     let martingale = 1;
     for(let i=0;i<runs.length;i++){
       const k = i+1, score = runs[i];
-      if(score > target) return { done: true, why: 'pb', k, runs: runs.length, n, pExhaust: n/(n+k), martingale, gain: target>0 ? (score-target)/target : null };
+      if(score > target) return { done: true, why: 'pb', k, runs: runs.length, n, pExhaust: stagnateP(n,k,o.lambda), martingale, gain: target>0 ? (score-target)/target : null };
       if(hist.length >= o.minHistory){
         const u = (hist.filter(h=>h<=score).length + 1)/(hist.length + 1);
         for(let e=0;e<FORM_EPS.length;e++) prods[e] *= FORM_EPS[e]*Math.pow(u, FORM_EPS[e]-1);
         martingale = prods.reduce((a,b)=>a+b, 0)/FORM_EPS.length;
-        if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+        if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: stagnateP(n,k,o.lambda), martingale };
       }
-      if(n/(n+k) <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+      const pEx = stagnateP(n,k,o.lambda);
+      if(pEx <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: pEx, martingale };
     }
     // step 12 (D21): "too hard" is a THIRD EXIT, and it is tested LAST on purpose. Anything
     // the runs already decided stands -- a PB above all, but an exhaustion or form stop too --
     // so a rating can never erase an outcome the play earned. It closes an item nothing else
     // closed, which is exactly the case it exists for: the scenario you cannot make progress
     // on and would otherwise sit in front of until the exhaustion rule caught up.
-    if(o.feel === 'hard') return { done: true, why: 'too-hard', k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
-    return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
+    if(o.feel === 'hard') return { done: true, why: 'too-hard', k: runs.length, runs: runs.length, n, pExhaust: stagnateP(n,runs.length,o.lambda), martingale };
+    return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: stagnateP(n,runs.length,o.lambda), martingale };
   }
 
   // ---- The feel controller (step 12, INTENT-1 + INTENT-2 / D20 + D21) --------------
@@ -2268,7 +2396,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf, ledger){
-    const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
+    const pb = typeof pbNow==='function' ? pbNow : (isMapLike(pbNow) ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
     const isLive = x => !!(liveKey && x.day===liveKey.day && (x.seedBump||0)===(liveKey.seedBump||0));
     const entries = (log||[]).filter(e=>e && Number.isFinite(e.day));
     const doneOf = e => typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
@@ -2442,6 +2570,95 @@ const MiniEvxlEngine = (function(){
       aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
+  // ---- THE ACCEPTANCE CRITERION FOR A RANKING CHANGE (step 19, 2026-08-26) ----------
+  // Step 11 shipped on three pre-registered bars and an adversarial read then showed that TWO of
+  // them are maximised by INFORMATION DESTRUCTION: emit the block median for every member and
+  // the served single-run share hits its base rate exactly (a perfect (b)), while a ranking that
+  // is mostly block medians is MORE reproducible across halves, so the split-half correlation
+  // (c) RISES as well. The observed result was not degenerate -- but the criteria would not have
+  // caught it, which means every future ranking change was being judged by bars that reward
+  // collapse. These are the replacements.
+  //
+  // Both are pure and both are scored on ORDER, because order is what the coach acts on. A rule
+  // that moves every value and changes nothing about who gets served has changed nothing.
+
+  // Spearman's rho over paired ranks, with the average-rank tie correction. Returns null rather
+  // than a plausible number when either side is constant -- a constant ordering has no
+  // correlation with anything, and reporting 0 or 1 there would be a verdict rather than an
+  // absence of one.
+  function rankCorrelation(a, b){
+    const n = Math.min((a||[]).length, (b||[]).length);
+    if(n < 3) return null;
+    const rankOf = v => {
+      const idx = v.map((x, i)=>[Number(x), i]).sort((p, q)=> p[0]-q[0]);
+      const out = new Array(v.length);
+      let i = 0;
+      while(i < idx.length){
+        let j = i;
+        while(j+1 < idx.length && idx[j+1][0] === idx[i][0]) j++;
+        const avg = (i + j)/2 + 1;
+        for(let k=i; k<=j; k++) out[idx[k][1]] = avg;
+        i = j + 1;
+      }
+      return out;
+    };
+    const ra = rankOf(a.slice(0, n)), rb = rankOf(b.slice(0, n));
+    const mean = v => v.reduce((x, y)=>x+y, 0)/v.length;
+    const ma = mean(ra), mb = mean(rb);
+    let num = 0, da = 0, db = 0;
+    for(let i=0;i<n;i++){ const u = ra[i]-ma, v = rb[i]-mb; num += u*v; da += u*u; db += v*v; }
+    if(!(da > 0) || !(db > 0)) return null;      // one side is constant: no answer, not zero
+    return num/Math.sqrt(da*db);
+  }
+
+  // The weak end as a SET, which is what the coach actually draws from. A whole-pool rank
+  // correlation is dominated by the uninformative middle -- hundreds of scenarios whose order
+  // nobody will ever act on -- and that is exactly why the degenerate transform could raise it.
+  // Jaccard of the first k of two orderings answers the question the product asks: would these
+  // two rankings put the same handful in front of you?
+  //
+  // `orderA`/`orderB` are arrays of names, best-to-worst is irrelevant so long as both are sorted
+  // the same way; k is taken from the front of each.
+  function topKOverlap(orderA, orderB, k){
+    const kk = Math.max(1, Math.min(Number(k)||12, (orderA||[]).length, (orderB||[]).length));
+    if(!(orderA||[]).length || !(orderB||[]).length) return { jaccard: null, shared: 0, k: kk };
+    const A = new Set(orderA.slice(0, kk));
+    const B = new Set(orderB.slice(0, kk));
+    let shared = 0;
+    A.forEach(nm=>{ if(B.has(nm)) shared++; });
+    // equal-sized sets, so |union| = 2k - shared
+    return { jaccard: shared/(2*kk - shared), shared, k: kk,
+      // the share of one set found in the other, which is the number a reader expects
+      recall: shared/kk };
+  }
+
+  // How much of the ordering SURVIVES the rule. The third leg of the criterion, and the one
+  // that cannot be gamed by construction, because destroying information is precisely what it
+  // measures: a rule that compresses 541 readings onto 39 distinct values has thrown the
+  // ordering away whatever its overlap score says.
+  //
+  // It is not a hypothetical. Measured on the real pool, the degenerate block-median transform
+  // reads 541 -> 39, and that is ALSO why it scores well on a top-30 set overlap: with 39
+  // distinct values the top thirty sit in a handful of ties, the tie-break is deterministic and
+  // independent of the runs, so the two halves agree on a set that the RANKING never chose.
+  // A high overlap on a low-resolution ordering is measuring the tie-break.
+  //
+  // `effective` is exp(entropy) over the value multiset -- the number of equally-common distinct
+  // values that would give the same spread -- so a rule with one huge tie and many singletons
+  // scores worse than the raw count suggests, which is the honest reading.
+  function orderingResolution(values, opts){
+    const o = Object.assign({ tol: 1e-9 }, opts||{});
+    const v = (values||[]).map(Number).filter(Number.isFinite);
+    if(!v.length) return { n: 0, distinct: 0, share: null, effective: null };
+    const key = x => Math.round(x/o.tol);
+    const counts = new Map();
+    v.forEach(x=>{ const k = key(x); counts.set(k, (counts.get(k)||0) + 1); });
+    let h = 0;
+    counts.forEach(c=>{ const p = c/v.length; h -= p*Math.log(p); });
+    return { n: v.length, distinct: counts.size, share: counts.size/v.length,
+      effective: Math.exp(h) };
+  }
+
   // ---- INTENT-6: HOW LONG A SCENARIO TAKES (step 17, 2026-08-26) --------------------
   // The coach serves items without knowing what it is asking for: a 30-second scenario and a
   // five-minute one are not the same request. That is INTENT-6's blind spot, and the data it
@@ -2539,8 +2756,8 @@ const MiniEvxlEngine = (function(){
   function personalReturnEvents(runsByName, opts){
     const o = Object.assign({ minGap: PERSONAL_MIN_GAP_DAYS, minPrior: PERSONAL_MIN_PRIOR }, opts||{});
     const out = [];
-    (runsByName instanceof Map ? Array.from(runsByName.keys()) : Object.keys(runsByName||{})).forEach(name=>{
-      const raw = runsByName instanceof Map ? runsByName.get(name) : runsByName[name];
+    (isMapLike(runsByName) ? Array.from(runsByName.keys()) : Object.keys(runsByName||{})).forEach(name=>{
+      const raw = isMapLike(runsByName) ? runsByName.get(name) : runsByName[name];
       const list = (Array.isArray(raw) ? raw : []).map(x=>[Number(x[0]), Number(x[1])])
         .filter(x=>Number.isFinite(x[0]) && x[0]>0 && Number.isFinite(x[1]) && x[1]>0)
         .sort((a,b)=>a[0]-b[0]);
@@ -2752,10 +2969,59 @@ const MiniEvxlEngine = (function(){
   // skillProfile. opts.offsets = data/offsets.json's `offsets` block, or null: with no
   // offsets the curved rows keep their raw percentile and only the S3 map applies; with
   // neither, every row's `m` is exactly what sessionMetric returned before.
+  // ---- STEP 21: THE n-STANDARDISED METRIC (candidate, off by default) ---------------
+  // A personal best is the maximum of however many times you played, so it reads higher at the
+  // same true skill the more you have played -- step 12 measured +3.4 percentile points per
+  // DOUBLING of run count. Across a player's own scenarios the run count varies 1 to 20+, so the
+  // ranking is contaminated by a quantity that is not skill.
+  //
+  // The fix is to put every scenario on a COMMON effective run count. E[best of j] from the
+  // scenario's own runs, by the exact order-statistic weights -- P(max = the i-th smallest of k
+  // draws with replacement) = (i/k)^j - ((i-1)^j)/k^j -- which is the same law `runSampleSpread`
+  // already uses, so this borrows a rule rather than inventing one. j = 3 because step 7b's
+  // out-of-sample table put best-of-3 ahead of every other candidate at every assumed m.
+  //
+  // ONE run reveals no scatter, so it takes the profile's median CV like everything else here,
+  // scaled by the expected maximum of j standard normals (a_3 = 0.8463). That is a BORROWED
+  // number steering the order, which step 7b's ratified principle refuses -- and it is the
+  // sharpest argument against this candidate, recorded rather than hidden.
+  const A_OF_J = { 2: 0.5642, 3: 0.8463, 5: 1.1630 };
+  function expectedBestOfJ(values, j){
+    const v = (values || []).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    const k = v.length;
+    if(!k) return null;
+    if(k === 1) return v[0];
+    const jj = Math.max(1, Math.round(Number(j) || 3));
+    let acc = 0;
+    for(let i = 1; i <= k; i++) acc += v[i-1] * (Math.pow(i/k, jj) - Math.pow((i-1)/k, jj));
+    return acc;
+  }
+  // `runPcts` is [[t, pct], ...]; `sd` is the scenario's percentile-space run scatter, which is
+  // what a single-run row has to borrow. Returns null when there is nothing to standardise.
+  function standardisePct(runPcts, opts){
+    const o = Object.assign({ j: 3, sd: null, fallback: null }, opts || {});
+    const ps = (Array.isArray(runPcts) ? runPcts : []).map(x => Number(x[1])).filter(Number.isFinite);
+    if(ps.length >= 2) return expectedBestOfJ(ps, o.j);
+    const base = ps.length ? ps[0] : numOrNull(o.fallback);
+    if(base === null) return null;
+    const sd = numOrNull(o.sd);
+    if(sd === null || !(sd > 0)) return base;
+    // A_OF_J covers j in {2,3,5}. `A_OF_J[j] || A_OF_J[3]` would silently substitute a_3 for any
+    // other j -- and for j = 1, whose true a_1 is ZERO, that pushes one-run rows UP by 0.8463*sd
+    // while the multi-run rows are pulled DOWN to their mean: opposite signs inside one variant,
+    // from a fallback nobody would look at. An unknown j does not borrow at all, and says so.
+    const a = A_OF_J[Math.round(Number(o.j))];
+    if(!Number.isFinite(a)) return base;
+    return Math.max(0.001, Math.min(0.999, base + a * sd));
+  }
+
   function calibrateScenarios(scenarios, opts){
     const list = scenarios || [];
-    if(list.length && list.every(sc=>sc && Number.isFinite(sc.m))) return list;
-    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED, runsOf: null, pctOf: null }, opts||{});
+    // Idempotent: re-calibrating an already-calibrated list is a no-op. That is a PINNED
+    // property and step 19's harness was caught by it -- but a caller asking for a DIFFERENT
+    // metric is not asking for a no-op, so the shortcut only applies to the default.
+    if(list.length && list.every(sc=>sc && Number.isFinite(sc.m)) && (!opts || !opts.metric || opts.metric === 'pb')) return list;
+    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED, runsOf: null, pctOf: null, metric: 'pb', stdJ: 3, stdSingle: true }, opts||{});
     // No offsets table, or no row for this scenario, is NULL -- not 0. Number(null) is 0 and
     // Number.isFinite(0) is true, so the shorter spelling reported a calibration on every
     // uncalibrated build and silently switched off the board shrinkage it replaces.
@@ -2807,19 +3073,41 @@ const MiniEvxlEngine = (function(){
       });
       if(cvs.length){ cvs.sort((a,b)=>a-b); runCv = cvs[Math.floor(cvs.length/2)]; }
     }
+    // memoised: step 21 reads it once for the standardisation and the row loop reads it again
+    const _runSe = new Map();
     const runSeOf = name => {
       if(typeof o.runsOf !== 'function' || typeof o.pctOf !== 'function') return null;
+      if(_runSe.has(name)) return _runSe.get(name);
       const v = runSampleSpread(o.runsOf(name), score=>o.pctOf(name, score), runCv);
-      return (v && Number.isFinite(v.sd) && v.sd>=0) ? v : null;
+      const r = (v && Number.isFinite(v.sd) && v.sd>=0) ? v : null;
+      _runSe.set(name, r);
+      return r;
+    };
+    // step 21: the metric the ranking reads. 'pb' is the shipped maximum-of-n; 'std3' puts every
+    // scenario on a common effective run count first. Applied BEFORE the board offset, because
+    // the offset is a property of the leaderboard and not of how often you played.
+    const metricPct = sc => {
+      if(o.metric !== 'std3') return Number(sc.pct);
+      const rs = runSeOf(sc.name);
+      // `stdSingle: false` leaves a one-run row exactly where it was. It matters because the
+      // single-run bump is a_3 x a BORROWED scatter -- and step 7b's ratified principle is that
+      // a borrowed number does not steer the order. 53% of this pool has one run, so the
+      // variant is not a detail: it is the difference between a candidate that respects that
+      // principle and one that widens the breach step 11 already opened.
+      const nRuns = (Array.isArray(sc.runPcts) ? sc.runPcts.length : 0);
+      if(!o.stdSingle && nRuns < 2) return Number(sc.pct);
+      const v = standardisePct(sc.runPcts, { j: o.stdJ, sd: rs ? rs.sd : null, fallback: sc.pct });
+      return (v === null || !Number.isFinite(v)) ? Number(sc.pct) : v;
     };
     const hasP = sc => sc && sc.pct!==null && sc.pct!==undefined && Number.isFinite(Number(sc.pct));
     const adjOf = new Map();
     let offsetsUsed = 0;
     list.forEach(sc=>{
       if(!hasP(sc)) return;
+      const base = metricPct(sc);
       const d = deltaOf(sc.name);
-      if(d===null){ adjOf.set(sc.name, Number(sc.pct)); return; }
-      offsetsUsed++; adjOf.set(sc.name, adjustPercentile(sc.pct, d));
+      if(d===null){ adjOf.set(sc.name, base); return; }
+      offsetsUsed++; adjOf.set(sc.name, adjustPercentile(base, d));
     });
     // the reference distributions come from the PLAYED curved rows only -- an unplayed
     // scenario has no standing to contribute and its To 2nd is 0 by construction
@@ -3008,7 +3296,7 @@ const MiniEvxlEngine = (function(){
     if(!index || typeof index.edges!=='function' || !blockMembers) return [];
     const mine = new Set(o.plOf ? (o.plOf(name) || []) : []);
     const edges = index.edges(name).filter(e=>e.n >= o.minN && !(o.plOf && (o.plOf(e.name)||[]).some(k=>mine.has(k))));
-    const entries = blockMembers instanceof Map ? [...blockMembers.entries()] : Object.keys(blockMembers).map(k=>[k, blockMembers[k]]);
+    const entries = isMapLike(blockMembers) ? [...blockMembers.entries()] : Object.keys(blockMembers).map(k=>[k, blockMembers[k]]);
     const out = [];
     entries.forEach(([id, members])=>{
       if(!members || (members.has ? members.has(name) : false)) return;
@@ -3144,7 +3432,7 @@ const MiniEvxlEngine = (function(){
     // what it was, which is what keeps the v0.4/v0.5 snapshot byte-identical -- the type
     // machinery is a layer, like every other one here, and it is the identity when off.
     const rotate = !!opts.rotate;
-    const recentItems = opts.recentItems instanceof Set ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
+    const recentItems = isSetLike(opts.recentItems) ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
     let sessionType = null, sessionTypeWhy = '', typeState = null;
     // The band mix is the WEIGHT source now, not a slot vector (step 8). Without rotation --
     // the fixtures, and any caller that wants the old deterministic composition -- it is used
@@ -3383,12 +3671,44 @@ const MiniEvxlEngine = (function(){
       const t2 = blockTau2Of.get(b);
       return t2 / (t2 + s2*s2);          // 1 = trust the reading, 0 = trust the block
     };
-    pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
+    // step 19: the pooling rule is SELECTABLE, because an acceptance criterion for a ranking
+    // change needs to run the candidate against the incumbent on the same data -- and steps 11
+    // and 12 both had to build-and-revert to do that, which is how a comparison ends up
+    // depending on nobody having made a mistake while reverting. `eb` is the shipped rule and
+    // the default, so every existing caller is untouched.
+    //   none   no pooling at all: the scenario's own reading
+    //   icc    step 6: pool toward the block by its measured ICC
+    //   eb     step 11 (SHIPPED): the ICC weight composed with tau^2/(tau^2 + s^2)
+    //   block  the DEGENERATE transform -- every member reads as its block standing. It exists
+    //          so a criterion can be checked against it: any bar this can pass is not a bar.
+    //   squash the ORDER-PRESERVING attack: exactly eb's ordering, linearly compressed to a
+    //          band a fraction of its width. Every rank statistic -- Spearman, Kendall, top-k
+    //          Jaccard -- is invariant to a strictly increasing transform, so a criterion built
+    //          only from those scores it IDENTICALLY to eb. The coach is not invariant: weakKey
+    //          subtracts fixed-magnitude bonuses (EXPGAIN_CAP 0.15, GAME_BONUS 0.08, HUB_BONUS
+    //          0.03) and thompsonOrder draws at EXPLORE_SD 0.05, all constants in percentile
+    //          points. Squash the scale and those take over what is actually served while the
+    //          score does not move. It is here to prove that hole rather than argue it.
+    const poolMode = ({ none: 1, icc: 1, eb: 1, block: 1, squash: 1 })[opts.pooling] ? opts.pooling : 'eb';
+    const SQUASH = Number(opts.squashTo) > 0 ? Number(opts.squashTo) : 0.03;
+    const basePooled = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
       const standing = blockStandingOf.has(b) ? blockStandingOf.get(b) : null;
+      if(poolMode === 'none') return shrunk(sc);
+      if(poolMode === 'block') return standing===null ? shrunk(sc) : standing;
       const afterIcc = poolToward(shrunk(sc), standing, blockIccOf.has(b) ? blockIccOf.get(b) : null);
+      if(poolMode === 'icc') return afterIcc;
       const w = ebWeightOf(sc);
       if(w===null || standing===null || !Number.isFinite(Number(afterIcc))) return afterIcc;
       return w*Number(afterIcc) + (1-w)*Number(standing);
+    };
+    // The squash is applied to EVERY value, including the unblocked ones that return early --
+    // compressing only part of the pool would REORDER blocked against unblocked, and then it is
+    // not the order-preserving attack it exists to be. (It was, briefly, and the toolkit fixture
+    // caught it: the assertion is that squash keeps eb's exact ordering AND a fifth of its scale.)
+    pooledOf = sc => {
+      const v = basePooled(sc);
+      if(poolMode !== 'squash' || !Number.isFinite(Number(v))) return v;
+      return 0.5 + (Number(v) - 0.5)*SQUASH;
     };
     // The v0.4 weakest key: v0.3's metric, shrunk, POOLED, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
@@ -3789,7 +4109,7 @@ const MiniEvxlEngine = (function(){
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, levelBase, levelAdjust: levelAdj, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
-      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons };
+      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons, pooling: poolMode };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
@@ -4114,7 +4434,7 @@ const MiniEvxlEngine = (function(){
     const o = Object.assign({ maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence', standing: null, eligible: null, requireSe: false }, opts||{});
     let cands = matrix.groups.filter(g=>!o.eligible || o.eligible(g.id));
     if(o.order==='weakness'){
-      const st = id => { const s = o.standing && (o.standing instanceof Map ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
+      const st = id => { const s = o.standing && (isMapLike(o.standing) ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
       const idx = new Map(cands.map((g, i)=>[g.id, i]));
       cands = cands.slice().sort((a,b)=>{ const sa = st(a.id), sb = st(b.id); if(sa===null && sb===null) return idx.get(a.id)-idx.get(b.id); if(sa===null) return 1; if(sb===null) return -1; return sa-sb || idx.get(a.id)-idx.get(b.id); });
     }
@@ -4632,8 +4952,9 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
+    standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
-    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
@@ -4641,6 +4962,7 @@ const MiniEvxlEngine = (function(){
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
     scenarioDuration, DURATION_MIN_SAMPLES,
+    rankCorrelation, topKOverlap, orderingResolution,
     revisitHorizon, REVISIT_MIN_DAYS, HORIZON_MAX_DAYS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer

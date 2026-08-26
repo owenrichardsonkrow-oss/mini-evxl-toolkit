@@ -216,6 +216,33 @@ check(html.includes('.replace(/"/g,\'&quot;\')'), "esc() no longer escapes '\"'"
 check(!/richardsonkrow|mayogobbler/i.test(html), 'personal identity string in template');
 check(!/\bOwen\b/.test(html), "the owner's name survives in the template -- source comments ship verbatim, say \"the owner\" instead");
 check(!/7656119\d{10}/.test(html), 'steam64 id in template');
+// SECOND-PERSON CLAIMS ABOUT A RECORD THE VISITOR DOES NOT HAVE.
+// A leak is not only a NAME. Step 22 put the owner's hazard measurement into the queue's
+// P(not yet) tooltip in the second person -- "your own record does NOT match that null ...
+// measured over 1,919 runs in 1,238 sittings, your personal bests arrive about 1.33x more
+// often" -- and it shipped into the template, where the store is empty and every one of those
+// figures belongs to somebody else. The denylist above cannot see it: there is no name in it.
+//
+// The rule this enforces: page copy may quote the owner's measurements, but in the template it
+// must ATTRIBUTE them. So any second-person sentence carrying one of those figures has to sit
+// inside an IS_TOOLKIT_TEMPLATE branch. Checked structurally rather than by rendering, because
+// the branch is what makes the rendered text right.
+// Narrow deliberately: the offence is a MEASURED FIGURE of the owner's asserted as the
+// reader's, not the second person as such. The provenance ladder legitimately says
+// "Measured on your own record" when DEFINING what the personal rung would mean, and a
+// broad pattern flagged all four of those and this file's own explanatory comments too.
+const secondPersonRecord = /your personal bests arrive|your own record does NOT match/gi;
+let spm, spUnguarded = 0;
+while ((spm = secondPersonRecord.exec(html)) !== null) {
+  // the guarded form is a ternary on IS_TOOLKIT_TEMPLATE that CONTAINS this text
+  const before = html.slice(Math.max(0, spm.index - 1200), spm.index);
+  if (!/IS_TOOLKIT_TEMPLATE\s*$|IS_TOOLKIT_TEMPLATE[\s\S]{0,1200}$/.test(before)) spUnguarded++;
+}
+check(spUnguarded === 0,
+  `${spUnguarded} second-person claim(s) about the visitor's own record are NOT inside an ` +
+  'IS_TOOLKIT_TEMPLATE branch -- the template would state the owner-s measurement as a fact ' +
+  'about a stranger whose store is empty');
+
 const noPlaceholder = html.replace('https://steamcommunity.com/id/yourname/', '');
 check(!/steamcommunity\.com\/(id|profiles)\//.test(noPlaceholder), 'non-placeholder steamcommunity URL in template');
 

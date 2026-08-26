@@ -10,7 +10,7 @@ Remote: **https://github.com/owenrichardsonkrow-oss/mini-evxl-toolkit** (public,
 `template.html` from `master` / root — enabled in the repo's Settings → Pages by
 Owen. Since 2026-08-18 (`.github/workflows/deploy.yml`, written on the remote
 branch; active once merged, with the Pages source on "GitHub Actions") the live
-page only updates when all six test suites pass on the pushed master — a red
+page only updates when all eight test suites pass on the pushed master — a red
 push leaves the previous deploy up. Pushing is routine now; the personal
 tracker repo has no remote and stays that way (it embeds Owen's own scores).
 
@@ -121,7 +121,7 @@ plausible-looking 0.5.
 The rule exists in two languages and **`test/percentile.js` is the check that they agree**
 -- run against `test/pctrank-fixture.json`, which `build.ps1 -Template` copies from the
 tracker exactly as it copies `src/engine.js`, and which the tracker's
-`dev/emergence-selftest.ps1` checks its own `Get-PctRank` against. Seven suites in CI now;
+`dev/emergence-selftest.ps1` checks its own `Get-PctRank` against. Eight suites in CI now;
 `deploy.yml` gates on all of them. Before this the only parity guard compared two
 POWERSHELL copies of the rule with each other, which cannot catch a JS/PS divergence --
 and the new check found one immediately (`Get-PctRank 0` answered a percentile where
@@ -300,14 +300,20 @@ statistical findings (the percentile metric is confounded with leaderboard size;
 two-thirds of transfer routes are playlist-mates) are staged behind them and not
 started.
 
-**Tests (seven since 2026-08-25):** `test/session.js` pins the session coach's
+**Tests (eight since 2026-08-26):** `test/session.js` pins the session coach's
 output (`composeSession`, `skillProfile`) on a synthetic fixture — no dataset;
 the snapshot lives in the test source as `EXPECTED`, regenerated with
 `node test/session.js --print` (or `/test/harness.html?session=1`) only for an
 intended behaviour change; it is the gate for any refactor of the session
 engine. `test/overlap.js` checks the Overlap page's pure functions
 (`buildOverlapIndex`, `overlapOf`, `groupMatrix`, `independentGroups`, …) on a
-hand fixture. CI runs both after facets. `test/golden.js` (Node; `test/harness.html`
+hand fixture. CI runs both after facets. **`test/personal.js`** checks
+`personalReturnEvents` — the return-collect rule that decides when a scenario counts as
+revisited — against `test/personal-fixture.json`, generated from an independent third
+implementation, so the JavaScript and the PowerShell copy in the tracker cannot drift apart.
+It is the sibling of `test/percentile.js` and exists for the same reason; it ran in the browser
+harness alone until 2026-08-26, absent from the Node list and from BOTH workflows, which is why
+the coverage guard that now checks each workflow separately exists. `test/golden.js` (Node; `test/harness.html`
 runs it and the difficulty test together in a browser) checks the engine's
 standings for seeded score vectors against `test/golden-standings.json` —
 answers recorded from an engine the personal repo's differential test had
@@ -324,7 +330,7 @@ rulings executable). `test/template-integrity.js` guards the
 shipped page itself: every script block parses, the embedded engine byte-equals
 `src/engine.js`, SITE stays generic, `esc()` keeps escaping `"` — the gaps
 golden can't see because it requires `src/engine.js` directly. GitHub Actions
-runs all six on every push including `claude/**` remote branches (template-
+runs all eight on every push including `claude/**` remote branches (template-
 integrity is skipped on `dev`, whose tracked template is the last release by design)
 (`.github/workflows/test.yml`). The golden file is regenerated only from the
 personal repo (`dev\run-tests.ps1 -WriteGolden`) after an intended engine change

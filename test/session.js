@@ -730,6 +730,249 @@
       }
     };
 
+    // ---- step 19: the three scorers a ranking change is judged by ---------------------
+    // Each one exists because step 11's bars could be passed by destroying information, so each
+    // gets a case that a degenerate transform would fail.
+    R.criterion = {
+      // rank correlation: ties averaged, and a CONSTANT side is null rather than 0 or 1 --
+      // "no answer" must not read as a verdict
+      rhoPerfect: E.rankCorrelation([1, 2, 3, 4, 5], [10, 20, 30, 40, 50]),
+      rhoReversed: E.rankCorrelation([1, 2, 3, 4, 5], [50, 40, 30, 20, 10]),
+      rhoTies: E.rankCorrelation([1, 1, 2, 2, 3], [5, 5, 6, 6, 7]),
+      rhoConstant: E.rankCorrelation([1, 1, 1, 1, 1], [1, 2, 3, 4, 5]),
+      rhoTooShort: E.rankCorrelation([1, 2], [2, 1]),
+      // top-k overlap: the SET at the depth the coach serves
+      topSame: E.topKOverlap(['a','b','c','d'], ['a','b','c','d'], 3),
+      topHalf: E.topKOverlap(['a','b','c','d'], ['a','b','x','y'], 4),
+      topNone: E.topKOverlap(['a','b','c'], ['x','y','z'], 3),
+      // k is clamped to the shorter list rather than silently reading past its end
+      topClamped: E.topKOverlap(['a','b'], ['a','b','c','d'], 99),
+      // resolution: the leg that cannot be gamed, because destroying information IS the measure
+      resFull: E.orderingResolution([1, 2, 3, 4, 5, 6, 7, 8]),
+      resCollapsed: E.orderingResolution([1, 1, 1, 1, 2, 2, 2, 2]),
+      resOneValue: E.orderingResolution([3, 3, 3, 3, 3, 3, 3, 3]),
+      // one huge tie plus singletons: the raw count flatters it, exp(entropy) does not
+      resSkewed: E.orderingResolution([1, 1, 1, 1, 1, 1, 2, 3]),
+      resEmpty: E.orderingResolution([])
+    };
+
+    // ---- step 19: the selectable pooling rules, and the attack that defeated v1 -------
+    // `squash` has to be EXACTLY eb's ordering with a smaller scale, or it is not the attack it
+    // claims to be -- and the whole point of it is that every rank statistic scores it
+    // identically to eb while the coach, which prices against EXPLORE_SD, does not.
+    {
+      // WITH BLOCKS. Without `opts.blocks` every pooling mode is the identity -- `pooledOf`
+      // returns the unpooled reading when a scenario has no block -- so the fixture would have
+      // asserted nothing at all while passing. The blocks fixture from the v0.5 case above is
+      // the one that makes the modes differ.
+      const poolRows = fxBlocks;
+      const rank = mode => {
+        const r = E.composeSession(poolRows, Object.assign({}, OPTS, { blocks: BLOCKS, rank: true, pooling: mode }), FILL);
+        return (r.ranking || []).filter(x => Number.isFinite(x.pooled));
+      };
+      const eb = rank('eb'), sq = rank('squash'), bl = rank('block'), df = rank();
+      const order = rs => rs.slice().sort((a, b) => a.pooled - b.pooled).map(x => x.name);
+      const spread = rs => { const v = rs.map(x => x.pooled).sort((a, b) => a - b); return v.length ? v[v.length - 1] - v[0] : 0; };
+      R.pooling = {
+        modes: { eb: eb.length, squash: sq.length, block: bl.length },
+        defaultIsEb: JSON.stringify(order(df)) === JSON.stringify(order(eb)),
+        squashSameOrder: JSON.stringify(order(sq)) === JSON.stringify(order(eb)),
+        squashSmallerSpread: spread(sq) < spread(eb) * 0.2,
+        squashResolutionKept: E.orderingResolution(sq.map(x => x.pooled)).distinct === E.orderingResolution(eb.map(x => x.pooled)).distinct,
+        blockCollapses: E.orderingResolution(bl.map(x => x.pooled)).distinct < E.orderingResolution(eb.map(x => x.pooled)).distinct,
+        unknownFallsBackToEb: JSON.stringify(order(rank('nonsense'))) === JSON.stringify(order(eb))
+      };
+    }
+
+    // ---- CROSS-REALM COLLECTIONS: a Map from another realm must still read as a Map -------
+    // `x instanceof Map` compares against THIS realm's constructor, so a Map built in an iframe,
+    // a worker or a harness page fails it -- and every engine branch that used it fell through to
+    // a path returning a plausible EMPTY answer. It cost one entire measurement: 411 stable
+    // members came back "too few pairs to place at all" because a harness built its map in the
+    // parent frame. Six sites, five still live when it was found.
+    //
+    // A second realm cannot be created inside this fixture, but it does not need to be: what a
+    // cross-realm Map looks like from here is an object carrying Map's INTERFACE and failing
+    // `instanceof`. That is exactly what `foreign` is, so this case fails the moment anyone puts
+    // an `instanceof` back.
+    // ---- step 28: composeSession's `horizon` branch, which no test had ever entered -------
+    // The fixture exercised the pure helper `revisitHorizon` and never the BRANCH that calls it,
+    // and the page wraps that call in a catch that returned null on any throw -- so step 14's
+    // fifth temporal-dead-zone sighting lived inside it and showed only as an empty card. This
+    // enters the branch, which is the part that was untested.
+    {
+      let threw = null, hz = null;
+      try {
+        const r = E.composeSession(fixture(E), rotOpts({ horizon: 40 }), FILL);
+        hz = r.horizons || null;
+      } catch (e) { threw = (e && e.message) ? e.message : String(e); }
+      R.horizonBranch = {
+        threw,
+        built: hz !== null,
+        shaped: !!(hz && Array.isArray(hz.ripening) && typeof hz.eligible === 'number' && typeof hz.ripeNow === 'number'),
+        keys: hz ? Object.keys(hz).sort().join(',') : null,
+        // it must be the BRANCH that produced it: without the option there are no horizons at all
+        absentWithoutOption: (() => { try { return !E.composeSession(fixture(E), rotOpts(), FILL).horizons; } catch (e) { return false; } })()
+      };
+    }
+
+    {
+      const mk = pairs => {
+        const m = new Map(pairs);
+        return { get: k => m.get(k), has: k => m.has(k), forEach: f => m.forEach(f),
+                 keys: () => m.keys(), entries: () => m.entries(), get size(){ return m.size; } };
+      };
+      const foreignSet = (() => { const st = new Set(['a', 'b']);
+        return { has: k => st.has(k), forEach: f => st.forEach(f), get size(){ return st.size; } }; })();
+      const runs = [[1000, 10], [2000, 20], [1000 + 40 * 86400000, 15]];
+      const plain = { S: runs };
+      const foreign = mk([['S', runs]]);
+      const a1 = E.personalReturnEvents(plain), a2 = E.personalReturnEvents(foreign);
+      R.realm = {
+        mapLikeReal: E.isMapLike(new Map()) === true,
+        mapLikeForeign: E.isMapLike(mk([])) === true,
+        mapLikePlainObject: E.isMapLike({}) === false,
+        mapLikeNull: E.isMapLike(null) === false,
+        // the discriminator: a Set must NOT read as a Map, or a Set argument takes the Map path
+        setLikeReal: E.isSetLike(new Set()) === true,
+        setLikeForeign: E.isSetLike(foreignSet) === true,
+        setLikeRejectsMap: E.isSetLike(new Map()) === false && E.isSetLike(mk([])) === false,
+        // END TO END, which is the assertion that actually protects the measurement:
+        // a foreign Map must give the SAME answer as the plain object, not an empty one.
+        foreignMapSameAsPlain: JSON.stringify(a1) === JSON.stringify(a2),
+        foreignMapNotEmpty: a2.length > 0
+      };
+    }
+
+    // ---- step 22: the exhaustion rule's hazard multiplier (measured, default OFF) ---------
+    // n/(n+k) = PRODUCT (1 - 1/(n+j)) EXACTLY, so lambda = 1 IS the exchangeable null the rule
+    // ships with. The identity is what makes the option safe to carry, so it is pinned rather
+    // than trusted -- and the DIRECT form is what ships at lambda = 1, because the product is
+    // not bit-identical to the division and a boundary case at `<= stagnateAt` could flip.
+    {
+      const P = E.stagnateP, near = (a, b, tol) => Number.isFinite(a) && Math.abs(a - b) <= (tol || 1e-12);
+      // n = 5, and the reason is the whole of bar 2. k*(n) is an INTEGER, so at many n the
+      // shipped rule and the measured lambda stop at the SAME run -- which is the discreteness
+      // that lets a single STAGNATE_AT reproduce the whole lambda schedule. At the shipped
+      // STAGNATE_AT = 0.685 the agreeing n are 2 and 4 (both stop at k = 1 and k = 2
+      // respectively), and n = 5 differs: lambda = 1 stops at k = 3, lambda = 1.32 at k = 2.
+      //
+      // WHICH n AGREE DEPENDS ON THE THRESHOLD, and this comment was stale at birth: it was
+      // written against STAGNATE_AT = 0.6 (where n = 3 agreed at k = 2 and n = 5 read 4 against
+      // 3) in the same release that moved the constant to 0.685. At 0.685 n = 3 differs (2
+      // against 1), so the example it gave for agreement is now an example of disagreement.
+      // The assertion below is threshold-independent -- the measured lambda must stop STRICTLY
+      // SOONER -- so it kept passing while its stated reason was false. Recompute the pair from
+      // stagnateP if STAGNATE_AT moves again.
+      const hist = [100, 100, 100, 100, 100];       // n = 5, target 100
+      const bout = [90, 90, 90, 90, 90, 90];        // never beats it
+      const stopK = lam => {
+        for (let k = 1; k <= bout.length; k++) {
+          const st = E.stagnation(hist, bout.slice(0, k), 100, lam === undefined ? {} : { lambda: lam });
+          if (st.done) return { k, why: st.why };
+        }
+        return null;
+      };
+      R.hazard = {
+        // the identity, at several (n, k)
+        identityAt1: [[3,1],[3,2],[5,4],[9,6],[1,1],[20,13]].every(([n,k]) => near(P(n,k,1), n/(n+k))),
+        // lambda scales the HAZARD, so the survival falls faster and never rises
+        higherLambdaLowerP: P(3,2,1.32) < P(3,2,1) && P(9,6,1.32) < P(9,6,1),
+        lowerLambdaHigherP: P(3,2,0.8) > P(3,2,1),
+        monotoneInK: P(5,1,1.32) > P(5,2,1.32) && P(5,2,1.32) > P(5,3,1.32),
+        kZeroIsOne: near(P(5,0,1.32), 1) && near(P(5,0,1), 1),
+        // hazard >= 1 cannot leave a survival probability: it is certainty, not a negative number
+        hazardOneIsZero: P(1,1,2) === 0,
+        // through the RULE: the default must be the shipped behaviour exactly
+        defaultIsLambda1: JSON.stringify(stopK()) === JSON.stringify(stopK(1)),
+        // and a measured lambda > 1 must stop STRICTLY SOONER, or the option does nothing
+        higherLambdaStopsSooner: stopK(1.32).k < stopK(1).k,
+        stopReasonUnchanged: stopK(1.32).why === 'exhausted' && stopK(1).why === 'exhausted',
+        // the measured constant is RECORDED, not applied -- if it ever starts being applied by
+        // default this case fails, which is the point of pinning it
+        // 1.33 = the POOLED row of dev/hazard-lambda.json, which is the estimand. It read 1.32
+        // once -- the interior row, the one step 22 calls a collider diagnostic and not a correction.
+        measuredRecorded: Math.abs(E.HAZARD_LAMBDA_MEASURED - 1.33) < 1e-9,
+        measuredNotApplied: JSON.stringify(stopK()) === JSON.stringify(stopK(1))
+      };
+    }
+
+    // ---- step 21: the n-STANDARDISED metric, and the borrow it deliberately does not take --
+    // A PB is the max of however many runs, so it reads higher at the same skill the more you
+    // played. `std3` puts every scenario on a common effective run count; `stdSingle: false` is
+    // the shipped half, and it exists because correcting a ONE-run row needs a scatter that one
+    // run cannot show -- it would have to be borrowed, which step 7b ratified against.
+    {
+      const A = E.A_OF_J, eb3 = E.expectedBestOfJ, std = E.standardisePct;
+      const near = (a, b, tol) => Number.isFinite(a) && Math.abs(a - b) <= (tol || 1e-9);
+      // Exact order-statistic weights: with k = 2 the best of j draws with replacement takes the
+      // larger value with probability 1 - (1/2)^j, so E[best of 3] over {0.2, 0.6} is
+      // 0.2*(1/8) + 0.6*(7/8) = 0.55. Hand-computed, so the law is pinned rather than the code.
+      const rp = t => t.map((v, i) => [i, v]);
+      R.metric = {
+        bestOf3Exact: near(eb3([0.2, 0.6], 3), 0.55),
+        bestOf1IsMean: near(eb3([0.2, 0.6], 1), 0.4),
+        risesInJ: eb3([0.2, 0.6], 5) > eb3([0.2, 0.6], 3) && eb3([0.2, 0.6], 3) > eb3([0.2, 0.6], 2),
+        neverAboveMax: eb3([0.2, 0.6], 50) <= 0.6 && eb3([0.2, 0.6], 50) > 0.59,
+        singletonIsItself: near(eb3([0.42], 3), 0.42),
+        emptyIsNull: eb3([], 3) === null,
+        // BELOW the PB by construction: E[best of 3] over the observed runs cannot exceed their
+        // maximum, which IS the pb metric. That is the whole re-levelling -- it lowers a
+        // much-played reading toward what it would be at three runs, and lowers nothing else.
+        belowPb: std(rp([0.2, 0.5, 0.6, 0.9]), { j: 3 }) < 0.9,
+        // MORE RUNS, MORE CORRECTION: the same scatter over more runs has a higher max, so the
+        // gap E[best of 3] leaves below it grows. This is the measured +3.4 pts per doubling.
+        moreRunsMoreGap: (0.9 - std(rp([0.2, 0.5, 0.6, 0.9]), { j: 3 })) >
+                         (0.6 - std(rp([0.5, 0.6]), { j: 3 })),
+        // THE BORROW, and the fact that it is a real intervention rather than a rounding: with a
+        // scatter it moves a one-run reading UP by a_3 sd; with none available it must not move.
+        singleBorrowsWithSd: near(std(rp([0.40]), { j: 3, sd: 0.10 }), 0.40 + A[3] * 0.10, 1e-9),
+        singleUnmovedWithoutSd: near(std(rp([0.40]), { j: 3, sd: null }), 0.40),
+        singleClamped: std(rp([0.98]), { j: 3, sd: 0.50 }) <= 0.999,
+        aOf3: near(A[3], 0.8463, 1e-4),
+        // PRECEDENCE, pinned because it was NOT obvious and it voided a whole measurement column.
+        // With one observed run the reading comes from the RUN, not from the `fallback`. That is
+        // correct in production -- `sc.pct` is the all-time-PB percentile while runPcts comes from
+        // a 20-run rolling buffer, so for a scenario whose PB predates its last 20 runs the two
+        // genuinely differ and a run statistic must use the runs. It is also the exact behaviour
+        // that let step 21's injection harness feed one field and have the rule read another.
+        singlePrefersRunOverFallback: near(std(rp([0.90]), { j: 3, fallback: 0.40 }), 0.90),
+        noRunsUsesFallback: near(std([], { j: 3, fallback: 0.40 }), 0.40),
+        // and an unknown j must NOT quietly borrow a_3 -- for j = 1 that is the wrong SIGN
+        unknownJDoesNotBorrow: near(std(rp([0.40]), { j: 1, sd: 0.10 }), 0.40)
+      };
+    }
+    {
+      // Through calibrateScenarios, which is where it actually acts -- and the SHIPPED option set
+      // must leave a one-run row exactly where `pb` left it. If that ever stops holding, a
+      // borrowed number is steering the order for the ~half of the pool with one run, which is
+      // the ratified principle this variant exists to respect.
+      const mk = (name, pct, runs) => ({ name, pct, played: true, runPcts: runs.map((v, i) => [i, v]) });
+      const rows = [mk('multi', 0.90, [0.2, 0.5, 0.6, 0.9]), mk('single', 0.40, [0.40])];
+      const cal = o => { const c = E.calibrateScenarios(rows.map(r => Object.assign({}, r)), o); const m = {}; c.forEach(x => m[x.name] = x.m); return m; };
+      const pb = cal({ metric: 'pb' });
+      const nb = cal({ metric: 'std3', stdJ: 3, stdSingle: false });
+      // The borrowed path needs a source with REAL scatter -- a single flat run has none to
+      // borrow, so the variant would look identical to the shipped one and the case would pass
+      // while asserting nothing. Four spread scores mapped linearly give a genuine sd.
+      const full = cal({ metric: 'std3', stdJ: 3, stdSingle: true,
+        runsOf: () => [80, 95, 105, 120], pctOf: (n, sc) => Math.max(0.01, Math.min(0.99, sc / 200)) });
+      R.metricRows = {
+        pbIsMax: Math.abs(pb.multi - 0.90) < 1e-9 && Math.abs(pb.single - 0.40) < 1e-9,
+        std3LowersMulti: nb.multi < pb.multi - 0.01,
+        // THE LOAD-BEARING ASSERTION of the shipped variant.
+        std3LeavesSingle: Math.abs(nb.single - pb.single) < 1e-9,
+        fullMovesSingle: Math.abs(full.single - pb.single) > 1e-9,
+        // A metric switch must NOT be swallowed by the idempotence shortcut.
+        notIdempotentAcrossMetrics: (() => {
+          const once = E.calibrateScenarios(rows.map(r => Object.assign({}, r)), { metric: 'pb' });
+          const twice = E.calibrateScenarios(once, { metric: 'std3', stdJ: 3, stdSingle: false });
+          const m = {}; twice.forEach(x => m[x.name] = x.m);
+          return m.multi < once.find(x => x.name === 'multi').m - 0.01;
+        })()
+      };
+    }
+
     // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
     const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
       secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
@@ -1161,6 +1404,112 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const PL = R.pooling;
+    if(!PL) problems.push('pooling: missing');
+    else {
+      if(!PL.defaultIsEb) problems.push('pooling: the DEFAULT must be `eb`, the shipped rule -- every existing caller depends on it');
+      if(!PL.unknownFallsBackToEb) problems.push('pooling: an unrecognised mode must fall back to the shipped rule, not to something else');
+      if(!PL.squashSameOrder) problems.push('pooling: `squash` must be EXACTLY eb ordering -- if the order differs it is not the order-preserving attack it exists to be');
+      if(!PL.squashSmallerSpread) problems.push('pooling: `squash` must compress the SCALE -- that is the whole attack, and a rank statistic cannot see it');
+      if(!PL.squashResolutionKept) problems.push('pooling: `squash` must keep full resolution -- it defeats the rank legs WITHOUT collapsing, which is why the scale gate had to exist');
+      if(!PL.blockCollapses) problems.push('pooling: `block` must collapse the resolution -- that is what makes it the degenerate case');
+    }
+
+    // ---- step 21: the n-standardised metric CANDIDATE (rejected, kept as an instrument) ------
+    const MT = R.metric, MR = R.metricRows;
+    if(!MT || !MR) problems.push('metric: missing');
+    else {
+      if(!MT.bestOf3Exact) problems.push('metric: E[best of 3] over {0.2,0.6} must be 0.55 by the exact order-statistic weights -- the same law runSampleSpread uses');
+      if(!MT.bestOf1IsMean) problems.push('metric: E[best of 1] IS the mean, or the weights are not a distribution');
+      if(!MT.risesInJ) problems.push('metric: E[best of j] must rise in j');
+      if(!MT.neverAboveMax) problems.push('metric: E[best of j] must approach the maximum from BELOW and never exceed it');
+      if(!MT.singletonIsItself) problems.push('metric: one observed run has no scatter to read, so it must come back unchanged');
+      if(!MT.emptyIsNull) problems.push('metric: no runs must be null, never a number -- a plausible value for "no answer" is the Number(null) failure shape');
+      if(!MT.belowPb) problems.push('metric: the standardised value must sit BELOW the PB -- re-levelling a much-played reading downward is the whole mechanism');
+      if(!MT.moreRunsMoreGap) problems.push('metric: the correction must GROW with the run count, or it does not remove the +3.4-pts-per-doubling gradient it exists for');
+      if(!MT.singleBorrowsWithSd) problems.push('metric: with a borrowed sd a one-run row must move by exactly a_3 * sd');
+      if(!MT.singleUnmovedWithoutSd) problems.push('metric: with no scatter available a one-run row must not move at all');
+      if(!MT.singleClamped) problems.push('metric: the borrowed bump must stay inside the percentile range');
+      if(!MT.aOf3) problems.push('metric: a_3 (the expected maximum of three standard normals) must be 0.8463');
+      if(!MT.singlePrefersRunOverFallback) problems.push('metric: with one observed run the reading must come from the RUN, not the fallback -- this precedence voided an entire measurement column in step 21 and is pinned so it is a decision');
+      if(!MT.noRunsUsesFallback) problems.push('metric: with NO runs the fallback is all there is, and it must be used');
+      if(!MT.unknownJDoesNotBorrow) problems.push('metric: an unknown j must not silently borrow a_3 -- for j = 1 the true constant is ZERO, so the substitution has the wrong sign');
+    }
+    // step 21's ROW-LEVEL cases. These lived inside the `realm` else-block until step 28 --
+    // two separate patches spliced them there -- so nine checks, including the four that guard
+    // step 19's degenerate `squash`/`block` attack, ran only because R.realm happened to exist.
+    if(!MR) problems.push('metricRows: missing');
+    else {
+      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
+      if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
+      // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
+      // rule that a borrowed number does not steer the order, for the ~half of the pool with one run.
+      if(!MR.std3LeavesSingle) problems.push('metric: `stdSingle:false` must leave a ONE-RUN row exactly where pb left it -- otherwise a borrowed scatter is steering the order for half the pool');
+      if(!MR.fullMovesSingle) problems.push('metric: `stdSingle:true` must move a one-run row, or the two variants are the same thing and the distinction is fiction');
+      if(!MR.notIdempotentAcrossMetrics) problems.push('metric: calibrateScenarios is idempotent BY DESIGN, but a caller asking for a different metric is not asking for a no-op -- step 19 lost days to exactly this wall');
+    }
+
+    // ---- step 22 ----------------------------------------------------------------------
+    const HZ = R.hazard;
+    if(!HZ) problems.push('hazard: missing');
+    else {
+      if(!HZ.identityAt1) problems.push('hazard: stagnateP(n,k,1) must equal n/(n+k) EXACTLY -- lambda=1 IS the exchangeable null, and if that identity fails the option is a behaviour change wearing a default');
+      if(!HZ.higherLambdaLowerP) problems.push('hazard: a HIGHER lambda means PBs arrive more often, so the chance of not having one yet must FALL');
+      if(!HZ.lowerLambdaHigherP) problems.push('hazard: a lower lambda must raise it, or the multiplier is not acting on the hazard');
+      if(!HZ.monotoneInK) problems.push('hazard: survival must fall in k');
+      if(!HZ.kZeroIsOne) problems.push('hazard: before any run of the bout, the chance of not having beaten it is 1');
+      if(!HZ.hazardOneIsZero) problems.push('hazard: a hazard at or above 1 is certainty -- it must give 0, never a negative survival');
+      if(!HZ.defaultIsLambda1) problems.push('hazard: the DEFAULT must be lambda = 1, byte for byte the shipped rule');
+      if(!HZ.higherLambdaStopsSooner) problems.push('hazard: the measured lambda > 1 must stop STRICTLY sooner, or there is nothing to decide about');
+      if(!HZ.stopReasonUnchanged) problems.push('hazard: lambda changes WHEN exhaustion fires, never WHETHER it is exhaustion');
+      if(!HZ.measuredRecorded) problems.push('hazard: HAZARD_LAMBDA_MEASURED must record step 22 POOLED measurement (1.33) -- not the interior row, which is the collider diagnostic');
+      if(!HZ.measuredNotApplied) problems.push('hazard: the measured lambda is RECORDED, NOT APPLIED -- step 22 refused it as a stopping parameter under bar 2, and this case fails the day it starts steering by default');
+
+    }
+
+    // ---- cross-realm collections ------------------------------------------------------
+    const HB = R.horizonBranch;
+    if(!HB) problems.push('horizonBranch: missing');
+    else {
+      if(HB.threw) problems.push('horizon: composeSession THREW with opts.horizon set: ' + HB.threw + ' -- the page catches this and shows an empty card, which is how the fifth TDZ sighting hid');
+      if(!HB.built) problems.push('horizon: opts.horizon produced no `horizons` at all');
+      if(!HB.shaped) problems.push('horizon: `horizons` came back without ripening/eligible/ripeNow (' + HB.keys + '), so the card has nothing to draw');
+      if(!HB.absentWithoutOption) problems.push('horizon: `horizons` appears WITHOUT opts.horizon, so this case is not testing the branch');
+    }
+
+    const RL = R.realm;
+    if(!RL) problems.push('realm: missing');
+    else {
+      if(!RL.mapLikeReal || !RL.mapLikeForeign) problems.push('realm: a Map -- from ANY realm -- must read as map-like; `instanceof Map` is realm-local and silently sends a foreign Map down the empty path');
+      if(!RL.mapLikePlainObject) problems.push('realm: a plain object must NOT read as map-like, or the object path is never taken');
+      if(!RL.mapLikeNull) problems.push('realm: null must not read as map-like');
+      if(!RL.setLikeReal || !RL.setLikeForeign) problems.push('realm: a Set from any realm must read as set-like');
+      if(!RL.setLikeRejectsMap) problems.push('realm: a Map must NOT read as set-like -- get() is the discriminator and without it a Map argument takes the Set path');
+      if(!RL.foreignMapSameAsPlain) problems.push('realm: a foreign Map must give the SAME result as the equivalent plain object -- this is the assertion that would have caught the 411-members-unjudged failure');
+      if(!RL.foreignMapNotEmpty) problems.push('realm: the foreign-Map case produced NO events, so it is asserting nothing');
+    }
+
+    const CR = R.criterion;
+    if(!CR) problems.push('criterion: missing');
+    else {
+      if(!near(CR.rhoPerfect, 1, 1e-9)) problems.push('rankCorrelation: a monotone pair is 1, got '+J(CR.rhoPerfect));
+      if(!near(CR.rhoReversed, -1, 1e-9)) problems.push('rankCorrelation: a reversed pair is -1, got '+J(CR.rhoReversed));
+      if(!near(CR.rhoTies, 1, 1e-9)) problems.push('rankCorrelation: matched ties are still a perfect correlation, got '+J(CR.rhoTies));
+      if(CR.rhoConstant !== null) problems.push('rankCorrelation: a CONSTANT side has no correlation and must be null, not a number, got '+J(CR.rhoConstant));
+      if(CR.rhoTooShort !== null) problems.push('rankCorrelation: under three pairs there is no answer, got '+J(CR.rhoTooShort));
+
+      if(!near(CR.topSame.jaccard, 1, 1e-9) || CR.topSame.k !== 3) problems.push('topKOverlap: identical heads are 1, got '+J(CR.topSame));
+      if(!near(CR.topHalf.jaccard, 1/3, 1e-9)) problems.push('topKOverlap: two shared of four each is 2/6, got '+J(CR.topHalf));
+      if(CR.topNone.jaccard !== 0) problems.push('topKOverlap: disjoint heads are 0, got '+J(CR.topNone));
+      if(CR.topClamped.k !== 2) problems.push('topKOverlap: k must clamp to the shorter list, got '+J(CR.topClamped));
+
+      if(CR.resFull.distinct !== 8 || !near(CR.resFull.effective, 8, 1e-6)) problems.push('orderingResolution: eight distinct values is full resolution, got '+J(CR.resFull));
+      if(CR.resCollapsed.distinct !== 2 || !near(CR.resCollapsed.effective, 2, 1e-6)) problems.push('orderingResolution: two values over eight rows is a resolution of 2, got '+J(CR.resCollapsed));
+      if(CR.resOneValue.distinct !== 1 || !near(CR.resOneValue.effective, 1, 1e-6)) problems.push('orderingResolution: one value is the degenerate case and must read 1, got '+J(CR.resOneValue));
+      if(!(CR.resSkewed.effective < CR.resSkewed.distinct)) problems.push('orderingResolution: exp(entropy) must penalise one huge tie below the raw distinct count -- that is the whole reason it is reported, got '+J(CR.resSkewed));
+      if(CR.resEmpty.distinct !== 0 || CR.resEmpty.effective !== null) problems.push('orderingResolution: nothing in, no answer out, got '+J(CR.resEmpty));
+    }
+
     const DU = R.duration;
     if(!DU) problems.push('duration: missing');
     else {
