@@ -2718,7 +2718,7 @@ const MiniEvxlEngine = (function(){
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
   function composeSession(scenarios, opts, playlistFill){
-    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null, runsOf: null, pctOf: null, exclude: null }, opts||{});
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null, runsOf: null, pctOf: null, exclude: null, rank: false }, opts||{});
     playlistFill = playlistFill || {};
     // Calibrate ONCE, at the boundary (Review Ledger III A1/S3): every comparison below --
     // the weakest key, routeCheck's "you stand higher here", skillProfile's medians, the
@@ -2846,7 +2846,10 @@ const MiniEvxlEngine = (function(){
     // and the crash reached the dev branch, because Microsoft Edge broke the same afternoon
     // and dev/run-tests.ps1 (which catches it in the toolkit's empty-profile golden test)
     // could not be run. The declaration order is the fix; the guard in `take` is the belt.
-    let pooledOf = null, spreadOf = null;
+    // ...and `ebWeightOf` with them, for the same reason and at the fourth sighting of this
+    // exact family: `take` reads it for `mTrust`, and a `const` declared further down is in its
+    // temporal dead zone when the thin regime composes. Anything `take` touches is declared here.
+    let pooledOf = null, spreadOf = null, ebWeightOf = null;
     const take = (list, why, reason, n, via) => { for(const sc of list){ if(items.length>=opts.size || n<=0) break; if(chosen.has(sc.name)) continue; chosen.add(sc.name);
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
@@ -2860,10 +2863,15 @@ const MiniEvxlEngine = (function(){
         mSpread: (()=>{ if(!spreadOf) return null; return numOrNull(spreadOf(sc)); })(),
         mSe: numOrNull(sc.mSe),
         mRunSe: numOrNull(sc.mRunSe),
-        mRunSeSrc: sc.mRunSeSrc || null,
-        // what the page PRINTS: the same interval with the imputed run scatter folded in,
-        // so a scenario played once stops reading as if it were pinned down
+        // what the page PRINTS: the same interval with the borrowed run scatter folded in, so
+        // a scenario played once stops reading as if it were pinned down. D19 measured whether
+        // this should also steer the draw; it should not.
         mSpreadShown: (()=>{ if(!spreadOf) return null; return numOrNull(spreadOf(sc, true)); })(),
+        mRunSeSrc: sc.mRunSeSrc || null,
+        // step 11: how much of the ranked value is this scenario's own reading (1) rather
+        // than its block's standing (0)
+        mTrust: (()=>{ if(!ebWeightOf) return null; return numOrNull(ebWeightOf(sc)); })(),
+
         // THE SIXTH TIME (BUG-4's family). `Number(sc.att && sc.att.n)` is Number(null) = 0
         // for a row with no attempt record, Number.isFinite(0) is true, and the next
         // expression then reads .n off null and throws. Guard the OBJECT, then the number.
@@ -2913,16 +2921,31 @@ const MiniEvxlEngine = (function(){
     // its run-sample error and its board-calibration error, the two things step 7 and 7b
     // measured. This is the `s` in the empirical-Bayes weight further down, and the block
     // standings need it too, so it is declared ABOVE them (step 6's temporal-dead-zone bug).
-    const ownError = sc => {
-      const v = metricSpread(sessionMetric(sc), sc.mSe, null, null, sc.mRunSe);
+    // Two readings of the same quantity, and step 11 needs both for different jobs.
+    //   ownError      what this scenario's OWN runs measured. Null run term where there is
+    //                 only one run, so this is the error we can defend per scenario.
+    //   ownErrorFull  the same, with the borrowed run scatter folded in where a scenario has
+    //                 one run. It is an estimate rather than evidence about that scenario.
+    // The EB WEIGHT uses the full one -- 53% of the pool has a single run, and a weight that
+    // ignored their uncertainty would leave the winner's curse exactly where it is, which is
+    // the whole target. TAU^2 is estimated from the measured one only: feeding the borrowed
+    // errors into `Var(x) - mean(s^2)` is what drove c:4's tau^2 to zero and flattened its
+    // whole block when this was first attempted.
+    const errOf = (sc, full) => {
+      const v = metricSpread(sessionMetric(sc), sc.mSe, null, null, full ? sc.mRunSeShown : sc.mRunSe);
       return (v===null || !Number.isFinite(v) || v<0) ? null : v;
     };
+    const ownError = sc => errOf(sc, false);
+    const ownErrorFull = sc => errOf(sc, true);
     let blockStats = [];
     const blockStandingOf = new Map(), blockIccOf = new Map(), blockSeOf = new Map(), blockTau2Of = new Map();
     if(blocks){
       const per = new Map();
       played.forEach(sc=>{ const b = blockOf(sc); if(!b) return; if(!per.has(b)) per.set(b, { pcts: [], errs: [], lastT: 0, n: 0 }); const e = per.get(b); e.n++;
-        if(hasPct(sc)){ e.pcts.push(sc.pct); const v = ownError(sc); if(v!==null) e.errs.push(v*v); }
+        if(hasPct(sc)){ e.pcts.push(sc.pct);
+          // MEASURED errors only -- a borrowed one is not evidence about this scenario, and
+          // averaging borrowed errors into the noise term is what collapses tau^2.
+          if(sc.mRunSeSrc !== 'imputed'){ const v = ownError(sc); if(v!==null) e.errs.push(v*v); } }
         if(sc.att && sc.att.lastT>e.lastT) e.lastT = sc.att.lastT; });
       blockStats = blockList.map(b=>{
         const e = per.get(b.id)||{ pcts: [], lastT: 0, n: 0 };
@@ -2936,25 +2959,26 @@ const MiniEvxlEngine = (function(){
           const varr = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
           medianSe = 1.2533*Math.sqrt(varr)/Math.sqrt(e.pcts.length);
         }
-        // step 7b: tau^2, the spread of TRUE standings inside this block -- the observed
-        // spread of its members minus the mean measurement error among them. REPORTED ONLY.
-        // It is what a precision-aware pooling weight would shrink against (see CLAUDE.md's
-        // step 7b open question); nothing ranks on it, because that would revise the pooling
-        // weight step 6 ratified, and because with the imputed single-run errors in the mean
-        // it collapses to ~0 for c:4 and takes every member of that block with it.
-        let tau2 = null;
+        // step 11: tau^2, the spread of TRUE standings inside this block -- the observed
+        // spread of its members minus the mean measurement error among them. It is the prior
+        // width every member is shrunk against, and both halves are measured on this profile.
+        // `observedVar` rides along on the SAME set so the acceptance criterion (tau^2 must
+        // not fall under a tenth of the observed spread) is checkable rather than asserted.
+        let tau2 = null, observedVar = null, tauFrom = 0;
         if(e.pcts.length > 1){
           const mean = e.pcts.reduce((a,x)=>a+x, 0)/e.pcts.length;
-          const obs = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
+          observedVar = e.pcts.reduce((a,x)=>a+(x-mean)*(x-mean), 0)/(e.pcts.length-1);
           const meanErr = e.errs.length ? e.errs.reduce((a,x)=>a+x, 0)/e.errs.length : 0;
-          tau2 = Math.max(obs - meanErr, 1e-6);
+          tauFrom = e.errs.length;
+          tau2 = Math.max(observedVar - meanErr, 1e-6);
         }
         if(median!==null) blockStandingOf.set(b.id, median);
         if(icc!==null) blockIccOf.set(b.id, icc);
         if(medianSe!==null) blockSeOf.set(b.id, medianSe);
         if(tau2!==null) blockTau2Of.set(b.id, tau2);
         return { id: b.id, name: b.name, played: e.n, rated: e.pcts.length, median, lastT: e.lastT||null,
-          icc, reliability: standingReliability(e.pcts.length, icc), medianSe, tau2 };
+          icc, reliability: standingReliability(e.pcts.length, icc), medianSe, tau2, observedVar, tauFrom,
+          tauRatio: (tau2!==null && observedVar>0) ? tau2/observedVar : null };
       });
     }
     // MET-6: PARTIAL POOLING, and it moves the RANKING only. A scenario's percentile is
@@ -2966,16 +2990,57 @@ const MiniEvxlEngine = (function(){
     // RATIFIED: pool the ranking, DISPLAY the unpooled number. The percentile you see is the
     // one you can check against the KovaaK's leaderboard; the pooled value is what decided
     // the order, and it is carried on the item and named in the reason rather than hidden.
+    // ---- step 11: PRECISION-AWARE POOLING (D18) ------------------------------------
+    // Step 6 pools by the block's ICC, which says how much of a WELL MEASURED standing is the
+    // block's skill. It says nothing about how well measured THIS one is -- and 53% of the
+    // eligible pool rests on a single run, whose standing carries a +-20 point interval. The
+    // argmin over readings like that is the winner's curse: it picks whichever scenario's one
+    // run happened to go badly and calls it the weakest skill. Measured before this change,
+    // the weakest END of the ranking was 78-80% single-run against a 53% base rate.
+    //
+    // The second weight is the same empirical-Bayes form the board-offset fitter already uses
+    // on boards: shrink a reading toward the prior by its own error, tau^2/(tau^2 + s^2). A
+    // twenty-run standing keeps almost all of itself; a one-run standing is mostly its block.
+    // Neither constant is chosen -- tau^2 is the block's measured between-scenario spread and
+    // s is this scenario's measured error.
+    //
+    // THE TWO WEIGHTS COMMUTE, which is why composing them is not double-shrinking. Shrink for
+    // noise then pool for estimand, or pool then shrink: both put weight (1-icc)*w on the
+    // scenario's own reading and the rest on the block. The limits are right at both ends --
+    // at w = 1 (perfectly measured) it is exactly step 6, and at w = 0 (nothing known) it is
+    // the block standing, which is the only honest answer when the reading carries no signal.
+    ebWeightOf = sc => {
+      const b = blockOf(sc);
+      if(!b || !blockTau2Of.has(b)) return null;
+      const s2 = ownErrorFull(sc);
+      if(s2===null) return null;
+      const t2 = blockTau2Of.get(b);
+      return t2 / (t2 + s2*s2);          // 1 = trust the reading, 0 = trust the block
+    };
     pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
-      return poolToward(shrunk(sc), blockStandingOf.has(b) ? blockStandingOf.get(b) : null, blockIccOf.has(b) ? blockIccOf.get(b) : null); };
+      const standing = blockStandingOf.has(b) ? blockStandingOf.get(b) : null;
+      const afterIcc = poolToward(shrunk(sc), standing, blockIccOf.has(b) ? blockIccOf.get(b) : null);
+      const w = ebWeightOf(sc);
+      if(w===null || standing===null || !Number.isFinite(Number(afterIcc))) return afterIcc;
+      return w*Number(afterIcc) + (1-w)*Number(standing);
+    };
     // The v0.4 weakest key: v0.3's metric, shrunk, POOLED, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
     const weakKey = sc => pooledOf(sc) - expectedGain(sc) - gameBonus(sc) - hubBonus(sc);
     // step 7 (Q7): how uncertain that key is. The subtracted terms are policy bonuses rather
     // than estimates of the standing, so this is the spread of the pooled value itself.
-    // `shown` = the interval the page prints, which uses the imputed run scatter as well.
-    // Without the flag it is the interval the DAY'S ORDER is drawn from, which uses only the
-    // part this scenario's own runs measured.
+    // ---- D19: MEASURED AND REJECTED, and the split stays -----------------------------
+    // `shown` = the interval the page prints, which uses the borrowed run scatter as well.
+    // Without the flag it is the interval the ORDER is drawn from, which uses only the part
+    // this scenario's own runs measured.
+    //
+    // Step 11 tried to unify them and the measurement said no. The pre-registered condition
+    // for unifying was that the single-run share of served weakest slots land within ten points
+    // of the 53% pool base rate once D18 was in -- it landed at 61.2%, so the condition fired.
+    // A second bar, also fixed before measuring: unifying must not push that share back above
+    // the 74.2% it sat at BEFORE D18, or it would have undone the whole gain. **It went to
+    // 80.9%.** Drawing from a borrowed number costs more than the honest centre buys, so the
+    // page prints the full interval and the order is steered only by measured evidence.
     spreadOf = (sc, shown) => {
       const b = blockOf(sc);
       const run = shown ? (Number.isFinite(Number(sc.mRunSeShown)) ? Number(sc.mRunSeShown) : sc.mRunSe) : sc.mRunSe;
@@ -2987,6 +3052,17 @@ const MiniEvxlEngine = (function(){
     };
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
       .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
+    // step 11: the WHOLE ranked pool, on request. A composition returns `size` items, which is
+    // not enough to ask whether the ORDER is reliable -- and "does this change make the ranking
+    // more reliable" is the question a change to the ranking has to answer. Reported, never
+    // acted on; `opts.rank` is off by default so every other caller is untouched.
+    const ranking = opts.rank ? weakPool.map((sc, i)=>({
+      name: sc.name, i, m: numOrNull(sessionMetric(sc)), pooled: numOrNull(pooledOf(sc)),
+      key: numOrNull(weakKey(sc)), spread: numOrNull(spreadOf(sc)), spreadShown: numOrNull(spreadOf(sc, true)),
+      own: numOrNull(ownError(sc)), ownFull: numOrNull(ownErrorFull(sc)), trust: numOrNull(ebWeightOf(sc)),
+      block: blockOf(sc), sink: !!sinks(sc),
+      runs: sc.att ? numOrNull(sc.att.n) : null, runSeSrc: sc.mRunSeSrc || null
+    })) : null;
     const respNote = sc => { const r = sc.resp; if(!r) return '';
       if(r.state==='responsive' && r.gain>0) return ' — responsive: +'+(r.gain*100).toFixed(1)+' pts/run over '+r.n+' runs'+(r.src==='history' ? ' (from PB raises)' : '');
       if(r.state==='plateaued') return ' — plateaued: '+r.n+' runs, no gain, best recent '+(r.nearPct!==null ? Math.round(r.nearPct*100)+' pts' : 'well')+' under PB';
@@ -2998,6 +3074,14 @@ const MiniEvxlEngine = (function(){
       const raw = shrunk(sc), pooled = pooledOf(sc);
       if(!Number.isFinite(raw) || !Number.isFinite(pooled) || Math.abs(pooled - raw) < 0.005) return '';
       const icc = blockIccOf.get(b);
+      const w = ebWeightOf(sc);
+      // where the EB weight is doing most of the pulling, say THAT rather than the ICC -- the
+      // reason has to name the term that actually moved the number
+      if(w!==null && w < 0.5){
+        const runs = Number((sc.att && sc.att.n) || 0);
+        return ' — ranked as '+percentileLabel(pooled)+': '+(runs<=1 ? 'one run on record' : runs+' runs on record')
+          + ', so this standing is only '+Math.round(w*100)+'% signal and the order reads it mostly as its block ('+percentileLabel(blockStandingOf.get(b))+')';
+      }
       return ' — ranked as '+percentileLabel(pooled)+': only '+Math.round(icc*100)+'% of a single scenario standing is the block skill, so the order pulls it that far toward the block ('+percentileLabel(blockStandingOf.get(b))+')';
     };
     // step 7: named where the interval is at least as wide as the invented temperature it
@@ -3275,7 +3359,7 @@ const MiniEvxlEngine = (function(){
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
-      type: sessionType, typeWhy: sessionTypeWhy, typeState };
+      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
