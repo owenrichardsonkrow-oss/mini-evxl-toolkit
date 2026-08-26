@@ -452,6 +452,42 @@
       weightsNamed: !!sRot.purposeWeights,
       offType: E.composeSession(fixture(E), Object.assign({}, OPTS, { blocks: BLOCKS }), FILL).type,
       slots: slotsOf(sRot) };
+
+    // ---- BUG-2 (Review Ledger IV, fixed at step 10): the Transfer trigger ---------------
+    // "the weakest block's weakest are sinks" was implemented as slice(0, 3) of members taken
+    // from `weakPool`, which is sorted with SINKS LAST -- so it tested the three LEAST stuck
+    // members and could only fire when nearly every member of the block was a sink.
+    //
+    // The discriminating fixture: a block whose three WEAKEST are sinks and whose stronger
+    // members are not. Under the old code the slice picked the three strongest-of-the-non-sinks
+    // and `.every(sinks)` was false; under the fix the three weakest are exactly the sinks.
+    // Marking the three STRONGEST instead must stay false, or the fix would have replaced one
+    // unreachable condition with an indiscriminate one.
+    {
+      const sink = sc => Object.assign({}, sc, { att: { n: 8, nearness: 0.5, lastT: OPTS.now - 3*86400000 } });
+      const blockOfName = n => (BLOCKS && typeof BLOCKS.of === 'function') ? BLOCKS.of(n) : null;
+      const rowsFor = which => {
+        const rows = fixture(E);
+        // the eligible pool the engine ranks: played, not maxed, at or under the level it derives
+        const pool = rows.filter(sc=>sc.played && !sc.maxed && sc.rung<=4 && blockOfName(sc.name));
+        const byBlock = {};
+        pool.forEach(sc=>{ const b = blockOfName(sc.name); (byBlock[b] = byBlock[b] || []).push(sc); });
+        // the block the engine will call weakest is the one with the lowest median pct; take
+        // the biggest instead, and assert on that block's own trigger rather than the type
+        const big = Object.keys(byBlock).sort((a,b)=>byBlock[b].length-byBlock[a].length)[0];
+        const members = byBlock[big].slice().sort((a,b)=>a.pct-b.pct);
+        const mark = new Set((which==='weakest' ? members.slice(0,3) : members.slice(-3)).map(sc=>sc.name));
+        return { rows: rows.map(sc=>mark.has(sc.name) ? sink(sc) : sc), block: big, members: members.length };
+      };
+      const runFor = which => {
+        const f = rowsFor(which);
+        const res = E.composeSession(f.rows, rotOpts({ blocks: BLOCKS }), FILL);
+        const st = res.typeState || {};
+        return { block: f.block, members: f.members, weakBlockId: st.weakBlockId || null,
+          sinks: st.weakBlockSinks === true, share: st.weakBlockSinkShare };
+      };
+      R.transferTrigger = { weakestAreSinks: runFor('weakest'), strongestAreSinks: runFor('strongest') };
+    }
     // Sampling: the same rules, different scenarios day to day. Across twenty day-seeds the
     // weakest slice must not be the same list every time (that was the complaint) while the
     // scenarios it draws from stay the weak end of the pool.
@@ -889,6 +925,21 @@
       if(!RO.weightsNamed) problems.push('rotation: composeSession with rotate must expose the purpose WEIGHTS it drew from');
       if(RO.drawnSum!==RO.size) problems.push('rotation: the drawn purposes must sum to the size, got '+RO.drawnSum+' for '+RO.size+' items');
       if(RO.drawnOffMix && RO.drawnOffMix.length) problems.push('rotation: drew a purpose the type gives no weight to: '+J(RO.drawnOffMix));
+    }
+    // BUG-2: the trigger must read the block's WEAKEST members, not its least stuck ones
+    const TT = R.transferTrigger;
+    if(!TT) problems.push('transferTrigger: missing');
+    else {
+      if(TT.weakestAreSinks.weakBlockId !== TT.weakestAreSinks.block)
+        problems.push('transferTrigger: the fixture marked block '+J(TT.weakestAreSinks.block)+' but the engine ranked '+J(TT.weakestAreSinks.weakBlockId)+' weakest -- the case does not exercise the trigger');
+      else {
+        if(TT.weakestAreSinks.sinks !== true)
+          problems.push('BUG-2: a block whose three WEAKEST members are sinks must set weakBlockSinks, got '+J(TT.weakestAreSinks));
+        if(TT.strongestAreSinks.weakBlockId === TT.strongestAreSinks.block && TT.strongestAreSinks.sinks !== false)
+          problems.push('BUG-2: a block whose three STRONGEST are sinks must NOT set weakBlockSinks, got '+J(TT.strongestAreSinks));
+        if(!(Number(TT.weakestAreSinks.share) > 0))
+          problems.push('transferTrigger: the sink share must be reported as a diagnostic, got '+J(TT.weakestAreSinks.share));
+      }
       if(RO.offType!==null) problems.push('rotation: WITHOUT opts.rotate there is no type and the pre-A3 behaviour stands, got '+J(RO.offType));
     }
     const SA = R.sampling;

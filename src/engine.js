@@ -2809,7 +2809,7 @@ const MiniEvxlEngine = (function(){
     // machinery is a layer, like every other one here, and it is the identity when off.
     const rotate = !!opts.rotate;
     const recentItems = opts.recentItems instanceof Set ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
-    let sessionType = null, sessionTypeWhy = '';
+    let sessionType = null, sessionTypeWhy = '', typeState = null;
     // The band mix is the WEIGHT source now, not a slot vector (step 8). Without rotation --
     // the fixtures, and any caller that wants the old deterministic composition -- it is used
     // exactly as before, so `sessionTemplate` keeps its meaning where it still applies.
@@ -3029,14 +3029,30 @@ const MiniEvxlEngine = (function(){
       const helpers0 = { historySince: opts.historySince, pairsIndex: opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null };
       let collectReady = 0;
       revPool.forEach(sc=>{ const f = revisitForecast(sc, byName, helpers0); if(f && f.odds > 0) collectReady++; });
-      const decision = chooseSessionType({
+      // step 10: the inputs the type decision was taken on, returned beside the decision.
+      // The page has always printed the WHY; this makes the trigger itself auditable, which is
+      // what let BUG-2 be measured -- on this profile both transfer triggers point the same way,
+      // so a broken one changed the reason printed and nothing else, and no outcome could have
+      // revealed it.
+      typeState = {
         confidence: opts.confidence || null,
         collectReady,
         weakBlockTouchedDays: weakBlock && weakBlock.lastT ? (opts.now - weakBlock.lastT)/DAY_MS : null,
-        weakBlockSinks: weakBlockMembers.length > 0 && weakBlockMembers.slice(0, 3).every(sinks),
+        // BUG-2, fixed at step 10. `weakPool` is sorted with SINKS LAST, so `slice(0, 3)` of
+        // members taken from it were the three LEAST stuck in the block -- and the condition
+        // therefore only fired when essentially every member was a sink. The documented
+        // trigger is "the weakest block's weakest are sinks", so the three are taken by
+        // `weakKey` and nothing else. No threshold: this is the code doing what the document
+        // already said, not a new rule.
+        weakBlockSinks: weakBlockMembers.length > 0
+          && weakBlockMembers.slice().sort((a, b)=> weakKey(a)-weakKey(b)).slice(0, 3).every(sinks),
         blocksWithoutStanding: blockStats.filter(b=>b.played>0 && b.median===null).length,
-        recentTypes: Array.isArray(opts.recentTypes) ? opts.recentTypes : []
-      });
+        recentTypes: Array.isArray(opts.recentTypes) ? opts.recentTypes : [],
+        weakBlockId: weakBlock ? weakBlock.id : null,
+        weakBlockMembers: weakBlockMembers.length,
+        weakBlockSinkShare: weakBlockMembers.length ? weakBlockMembers.filter(sinks).length/weakBlockMembers.length : null
+      };
+      const decision = chooseSessionType(typeState);
       sessionType = decision.type; sessionTypeWhy = decision.why;
       // COVERAGE is a purpose in its own right now. It used to be carved out of the weakest
       // slots, which only worked because there were six of them; a queue serving one item at
@@ -3259,7 +3275,7 @@ const MiniEvxlEngine = (function(){
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
-      type: sessionType, typeWhy: sessionTypeWhy };
+      type: sessionType, typeWhy: sessionTypeWhy, typeState };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
