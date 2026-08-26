@@ -442,6 +442,14 @@
     R.rotation = { type: sRot.type, hasWhy: !!(sRot.typeWhy && sRot.typeWhy.length > 20), size: sRot.items.length,
       template: sRot.template ? [sRot.template.weakest, sRot.template.route, sRot.template.fillout, sRot.template.quickwin, sRot.template.revisit] : null,
       wanted: (()=>{ const t = E.SESSION_TYPES[sRot.type]; return t ? [t.weakest, t.route, t.fillout, t.quickwin, t.revisit] : null; })(),
+      // step 8: with rotation the slot vector is DRAWN from the type's weights, one purpose
+      // per item, so it is no longer equal to that vector -- it is a sample from it. What
+      // must still hold: it sums to the size, and nothing is served from a purpose the type
+      // gives no weight to.
+      drawnSum: sRot.template ? E.PURPOSES.reduce((a,k)=>a+(Number(sRot.template[k])||0), 0) : null,
+      drawnOffMix: (()=>{ const w = sRot.purposeWeights; if(!w || !sRot.template) return null;
+        return E.PURPOSES.filter(k=>(Number(sRot.template[k])||0) > 0 && !(Number(w[k])||0) > 0); })(),
+      weightsNamed: !!sRot.purposeWeights,
       offType: E.composeSession(fixture(E), Object.assign({}, OPTS, { blocks: BLOCKS }), FILL).type,
       slots: slotsOf(sRot) };
     // Sampling: the same rules, different scenarios day to day. Across twenty day-seeds the
@@ -876,7 +884,11 @@
       if(!RO.type || !E_SESSION_TYPES_HAS(RO.type)) problems.push('rotation: composeSession with rotate must name a type, got '+J(RO.type));
       if(!RO.hasWhy) problems.push('rotation: the type must come with a reason the page can print, got '+J(RO.hasWhy));
       if(RO.size!==10) problems.push('rotation: the session is still ten items, got '+RO.size);
-      if(J(RO.template)!==J(RO.wanted)) problems.push('rotation: the template must be the slots of that type, got '+J(RO.template)+' wanted '+J(RO.wanted));
+      // step 8 retires the fixed slot vector: with rotation the composition is a DRAW from
+      // the type's weights (one purpose per item), so `template` is a sample, not the vector.
+      if(!RO.weightsNamed) problems.push('rotation: composeSession with rotate must expose the purpose WEIGHTS it drew from');
+      if(RO.drawnSum!==RO.size) problems.push('rotation: the drawn purposes must sum to the size, got '+RO.drawnSum+' for '+RO.size+' items');
+      if(RO.drawnOffMix && RO.drawnOffMix.length) problems.push('rotation: drew a purpose the type gives no weight to: '+J(RO.drawnOffMix));
       if(RO.offType!==null) problems.push('rotation: WITHOUT opts.rotate there is no type and the pre-A3 behaviour stands, got '+J(RO.offType));
     }
     const SA = R.sampling;

@@ -1586,6 +1586,33 @@ const MiniEvxlEngine = (function(){
   // measured interval is at least a full 5 points wide -- 13 distinct scenarios the old
   // sampler had no reason to prefer. That is the whole of NEXT-2's intent, and it arrives
   // through the term that is measured rather than through the one that was chosen.
+  // ---- step 8: THE FIXED TEN IS GONE ------------------------------------------------
+  // SESSION_TEMPLATES and SESSION_TYPES used to name a fixed slot vector -- six weakest, one
+  // route, one quick win, two revisits -- filled from the head of five lists, once a day. The
+  // continuous queue serves ONE scenario, so there is no vector to fill: the same two tables
+  // now name WEIGHTS, and every item draws its purpose from them. Over ten items that is the
+  // old mix in expectation; over one it IS the queue, and the mix survives as a rate instead
+  // of a shape. The playlist of ten was a template to get started; the purposes were not.
+  //
+  // Where there is room for the whole mix (size >= its total, which is how the fixtures call
+  // it) the draw is skipped and the exact old vector is returned -- nothing that used to be
+  // deterministic became random, and the session snapshot is unchanged by this step.
+  const PURPOSES = ['weakest', 'route', 'fillout', 'quickwin', 'revisit', 'coverage'];
+  function drawPurposes(size, weights, rnd){
+    const n = Math.max(0, Math.round(Number(size)) || 0);
+    const w = PURPOSES.map(k=>Math.max(0, Number(weights && weights[k]) || 0));
+    const total = w.reduce((a,b)=>a+b, 0);
+    const out = {}; PURPOSES.forEach(k=>{ out[k] = 0; });
+    if(!(total > 0) || !n){ out.weakest = n; return out; }
+    if(n >= total){ PURPOSES.forEach((k,i)=>{ out[k] = w[i]; }); return out; }
+    const roll = typeof rnd === 'function' ? rnd : Math.random;
+    for(let s=0; s<n; s++){
+      let r = roll()*total, pick = 0;
+      for(let i=0;i<PURPOSES.length;i++){ r -= w[i]; if(r <= 0){ pick = i; break; } }
+      out[PURPOSES[pick]]++;
+    }
+    return out;
+  }
   const EXPLORE_SD = 0.05;
   const SAMPLE_TEMP = EXPLORE_SD;   // the old name, kept for the note threshold below
   // How hard a scenario served in the last few sessions is damped. It was a weight
@@ -2490,6 +2517,21 @@ const MiniEvxlEngine = (function(){
     out.curved = refAdj.length;
     return out;
   }
+  // ---- The continuous queue (Review Ledger IV step 8) --------------------------------
+  // ONE scenario at a time, evaluated on demand. Not a list composed in advance: a high score
+  // in a historically weak block has to be able to change what comes next, so the queue is a
+  // function of the state at the moment it is asked (Q14). `exclude` is whatever is already
+  // open, so asking again while you are mid-scenario cannot hand you the same one.
+  //
+  // It is composeSession at size 1 and nothing else -- one implementation of what a
+  // recommendation IS, which is PERF-5's rule and the reason the coach and the map agree.
+  function queueNext(scenarios, opts, playlistFill){
+    const s = composeSession(scenarios, Object.assign({}, opts||{}, { size: 1 }), playlistFill);
+    const item = (s.items && s.items.length) ? s.items[0] : null;
+    return { item, purpose: item ? item.why : null, regime: s.regime, level: s.level, popLevel: s.popLevel,
+      confidence: s.confidence, blocks: s.blocks || null, weakLabels: s.weakLabels || [],
+      bias: s.type || null, biasWhy: s.typeWhy || '', weights: s.purposeWeights || null };
+  }
   function seededRandom(seed){ let s = (seed>>>0) || 1; return () => { s |= 0; s = s + 0x6D2B79F5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
   function medianOf(arr){ const s = arr.slice().sort((a,b)=>a-b); const n=s.length; if(!n) return null; return n%2 ? s[(n-1)/2] : (s[n/2-1]+s[n/2])/2; }
   // The competency number for one scenario. `m` is calibrateScenarios' comparable value
@@ -2676,7 +2718,7 @@ const MiniEvxlEngine = (function(){
     return out.sort((a,b)=> a.median - b.median || b.n - a.n);
   }
   function composeSession(scenarios, opts, playlistFill){
-    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null, runsOf: null, pctOf: null }, opts||{});
+    opts = Object.assign({ size: 10, seed: 1, now: Date.now(), gameWeight: 0, gameFacets: GAME_FACETS_DEFAULT, confidence: null, template: null, offsets: null, runsOf: null, pctOf: null, exclude: null }, opts||{});
     playlistFill = playlistFill || {};
     // Calibrate ONCE, at the boundary (Review Ledger III A1/S3): every comparison below --
     // the weakest key, routeCheck's "you stand higher here", skillProfile's medians, the
@@ -2732,6 +2774,9 @@ const MiniEvxlEngine = (function(){
     const rated = scenarios.filter(sc=>sc.rung>=0);
     const played = rated.filter(sc=>sc.played);
     const chosen = new Set();
+    // step 8: whatever the queue already has open, so an on-demand evaluation cannot hand
+    // back the scenario you are sitting on.
+    (opts.exclude || []).forEach(nm=>{ if(nm) chosen.add(String(nm)); });
     const items = [];
     const pct = x => Math.round((x||0)*100)+'%';
     const label = sc => (sc.rung>=0 ? DIFF_LABELS[sc.rung] : 'Unrated');
@@ -2765,7 +2810,11 @@ const MiniEvxlEngine = (function(){
     const rotate = !!opts.rotate;
     const recentItems = opts.recentItems instanceof Set ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
     let sessionType = null, sessionTypeWhy = '';
+    // The band mix is the WEIGHT source now, not a slot vector (step 8). Without rotation --
+    // the fixtures, and any caller that wants the old deterministic composition -- it is used
+    // exactly as before, so `sessionTemplate` keeps its meaning where it still applies.
     let template = opts.template || sessionTemplate(opts.confidence && opts.confidence.c!==undefined ? opts.confidence.c : null, opts.size);
+    let purposeWeights = null;
     const gameNote = sc => { const s = gameShare(sc); return s<=0 ? '' : (isHit(sc) ? ' · game-relevant (cs/val or tac-fps)' : ' · co-varies with game-relevant scenarios (r '+s.toFixed(2)+')'); };
     // ---- v0.5: the overlap map steers the session (DESIGN_INTENT: the map exists
     // to prescribe practice). opts.blocks = { of(name) -> block id | null,
@@ -2989,14 +3038,23 @@ const MiniEvxlEngine = (function(){
         recentTypes: Array.isArray(opts.recentTypes) ? opts.recentTypes : []
       });
       sessionType = decision.type; sessionTypeWhy = decision.why;
-      template = Object.assign({ band: (template && template.band) || 'mid' }, SESSION_TYPES[sessionType]);
-      if(opts.size !== 10) template = Object.assign({ band: template.band }, sessionTemplate(null, opts.size), SESSION_TYPES[sessionType]);
+      // COVERAGE is a purpose in its own right now. It used to be carved out of the weakest
+      // slots, which only worked because there were six of them; a queue serving one item at
+      // a time would never have reached it. Weight 1, and only where a block is measurably
+      // cold -- the same rule, priced instead of carved.
+      const coldBlocks = blockStats.filter(b=>b.played>0 && b.lastT!==null && (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS).length;
+      purposeWeights = Object.assign({ band: (template && template.band) || 'mid' },
+        SESSION_TYPES[sessionType], { coverage: coldBlocks > 0 ? 1 : 0 });
+      template = Object.assign({ band: purposeWeights.band }, drawPurposes(opts.size, purposeWeights, rnd));
     }
     const blockNote = sc => { if(!blocks) return ''; const id = blockOf(sc); const bs = blockStats.find(b=>b.id===id); if(!bs || bs.median===null) return ''; const ranked = blockStats.filter(b=>b.median!==null).sort((a,b)=>a.median-b.median); const pos = ranked.findIndex(b=>b.id===id)+1; return ' — '+bs.name+' block: your standing '+percentileLabel(bs.median)+(ranked.length>1 ? ' ('+(pos===1 ? 'your weakest' : ordinal(pos)+' weakest')+' of '+ranked.length+' blocks)' : '')+(hubDegree(sc)>=HUB_FULL ? '; a hub — moves with '+hubDegree(sc)+' others' : ''); };
     // The weakest ordering, and the candidate pool built from it. Sinks stay last however
     // the list is ordered -- "more of the same isn't the move" outranks any sampling.
     // Built AFTER the type is chosen, because the type sets template.weakest and the pool
     // is sized off it.
+    // step 8: the candidate pool is sized off the MIX, not off what this one draw asked for --
+    // a queue of one item still has to choose between real alternatives.
+    const spreadTarget = Math.max(2, ((purposeWeights ? purposeWeights.weakest : template.weakest) || 0)*2);
     const nonSinkPool = weakPool.filter(sc=>!sinks(sc)), sinkPool = weakPool.filter(sinks);
     const weakOrdered = rotate ? thompsonOrder(nonSinkPool, weakKey, spreadOf, sc=>recentItems.has(sc.name)).concat(sinkPool) : weakPool;
     const perLabel = new Map(), perPl = new Set();
@@ -3006,7 +3064,7 @@ const MiniEvxlEngine = (function(){
       if(l && (perLabel.get(l)||0) >= 2) continue;
       if((sc.plKeys||[]).some(k=>perPl.has(k))) continue;
       spread.push(sc); if(l) perLabel.set(l, (perLabel.get(l)||0)+1); (sc.plKeys||[]).forEach(k=>perPl.add(k));
-      if(spread.length >= template.weakest*2) break;
+      if(spread.length >= spreadTarget) break;
     }
     const weakReasonB = sc => weakReason(sc)+blockNote(sc);
     if(blocks && blockStats.some(b=>b.median!==null)){
@@ -3023,8 +3081,10 @@ const MiniEvxlEngine = (function(){
       // On the owner's page that was the block he stood strongest in, in a reason that
       // said so ("your standing top 9% (8th weakest of 8 blocks)").
       const isCold = b => b.played>0 && b.lastT!==null && (opts.now - b.lastT) > BLOCK_UNTOUCHED_DAYS*DAY_MS;
-      const coverageSlot = template.weakest>1 && blockStats.some(isCold) ? 1 : 0;
-      const slots = template.weakest - coverageSlot;
+      // step 8: coverage is drawn, not carved. Without a draw (the fixtures) it keeps the
+      // old rule, so the composition those pin is unchanged.
+      const coverageSlot = purposeWeights ? (template.coverage||0) : (template.weakest>1 && blockStats.some(isCold) ? 1 : 0);
+      const slots = purposeWeights ? (template.weakest||0) : template.weakest - coverageSlot;
       const ws = ranked.map(b=>Math.max(0.05, 1-b.median)); const wsum = ws.reduce((a,b)=>a+b, 0) || 1;
       const raw = ws.map(w=>w*slots/wsum); const alloc = raw.map(Math.floor); let used = alloc.reduce((a,b)=>a+b, 0);
       const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
@@ -3197,7 +3257,7 @@ const MiniEvxlEngine = (function(){
     take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
-    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, items, blocks: blocks ? blockStats : null,
+    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
       type: sessionType, typeWhy: sessionTypeWhy };
   }
@@ -4022,7 +4082,7 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
-    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
