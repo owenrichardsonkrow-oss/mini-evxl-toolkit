@@ -1408,14 +1408,26 @@ const MiniEvxlEngine = (function(){
   //    an average of martingales is a martingale -- so there is no exponent to choose.
   //
   // AGGRESSIVE, and what that cost when it was replayed over his 1,238 real bouts that had a
-  // PB to beat (median history 3 runs). At STAGNATE_AT 0.6 the coach closes 249 items on
+  // PB to beat (median history 3 runs). At STAGNATE_AT 0.6 the coach closes 244 items on
   // stagnation against 550 on a PB, at a median of ONE run before a stop, and 6.1% of all
-  // items are closed before a PB that his actual play went on to get. That cost is smaller
-  // than it looks, because of where his PBs land and how big they are:
+  // items (75) are closed before a PB that his actual play went on to get.
   //
-  //     PB arrived on run 1 of the bout   468 items (74.9%)   median +6.23% over the old PB
+  // TWO NUMBERS IN THIS COMMENT WERE WRONG UNTIL STEP 22 COMMITTED THE REPLAY. It said 249
+  // stops and "7 of 249" form stops; the file's own step 8 section said 244 (243 exhaustion,
+  // 1 form), and `dev/hazard-lambda.html` -- which reproduces the shipped rule on 1,238 of
+  // 1,238 bouts -- says 243 + 1 = 244. The section was right and this comment was not, which
+  // is what happens to a figure that lives in two places and re-runs in neither.
+  //
+  // AND THE ARRIVAL TABLE BELOW IS OVER A DIFFERENT POPULATION THAN THE SENTENCE ABOVE IT.
+  // It counts every PB EVENT in the record (625), not the 550 the rule actually reaches. The
+  // difference is exactly the 75 early-closes, and by construction those are all LATE PBs --
+  // which is why the run-3+ row is 58 here and only 14 among the PBs the rule reaches. Both
+  // are true and they answer different questions; printed together they read as one.
+  //
+  //     PB arrived on run 1 of the bout   468 events (74.9%)  median +6.23% over the old PB
   //                          run 2         99       (15.8%)          +4.17%
   //                          run 3+        58        (9.3%)          +2.36%
+  //     of which the RULE reaches:        468 / 68 / 14 (550), gains +6.23% / +3.33% / +1.59%
   //
   // Three quarters of his PBs come on the FIRST run, and one that takes three or more runs is
   // worth a third as much. His "grinding produces an outlier" turns out to be exactly right
@@ -1423,19 +1435,53 @@ const MiniEvxlEngine = (function(){
   // over a bar that repeated sampling was always going to clear eventually. The PBs an
   // aggressive rule gives up are the small ones.
   //
-  // The form test almost never fires TODAY -- 7 of 249 stops -- because his median history is
+  // The form test almost never fires TODAY -- 1 of 244 stops -- because his median history is
   // three runs and the exhaustion rule gets there first. It is not decoration: it is the rule
   // that acts once a scenario has real history, which is exactly when exhaustion turns
   // patient, and the step 7b seed fix is what lets those counts accumulate at last.
   const STAGNATE_AT = 0.6;        // exhaustion: stop once P(no PB by now) has fallen to here
+  // Step 22's measurement, recorded so the page can say what the exchangeable reading is worth.
+  // It is NOT applied: the default lambda is 1. 1.32 [1.113, 1.515], day-clustered, 1,919
+  // at-risk runs over 1,238 bouts -- dev/hazard-lambda.html, re-runnable.
+  const HAZARD_LAMBDA_MEASURED = 1.32;
   const FORM_ALPHA = 0.1;         // form: stop once the martingale reaches 1/FORM_ALPHA
   const FORM_MIN_HISTORY = 3;     // fewer ranks than this and u is too coarse to bet on
   const FORM_EPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
   // history: run scores before this bout. bout: run scores in it, in order. pbAt: the PB when
   // the item was served (it can exceed the history's max -- a leaderboard PB whose run was
   // never logged), which is what a run has to beat.
+  // ---- step 22: the hazard multiplier, MEASURED and available, default OFF ------------
+  // n/(n+k) = PRODUCT over j=1..k of (1 - 1/(n+j)) EXACTLY, so the exchangeable null is the
+  // lambda = 1 member of a one-parameter family whose per-run hazard is lambda/(n+j).
+  //
+  // Step 22 measured lambda on this record at 1.32, 95% CI [1.113, 1.515] day-clustered -- so
+  // he beats the exchangeable null by about a third, flat across n and across within-bout
+  // position. The measurement is solid and the multiplier STILL DOES NOT SHIP AS A DIAL,
+  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.6818:
+  // the threshold family expresses 2,013 distinct stopping schedules where the lambda family
+  // expresses 71, so the knob that already exists is strictly more expressive. See CLAUDE.md.
+  // It lives here as an option for the same reason `squash` lives in the pooling modes and
+  // `metric` in calibrateScenarios: the instrument needs a candidate to be checkable against,
+  // and a build-and-revert comparison depends on nobody erring while reverting.
+  //
+  // AT lambda = 1 THE DIRECT FORM IS USED, not the product. They are equal in exact arithmetic
+  // and NOT bit-identical in floating point, and a boundary case at `<= stagnateAt` could flip
+  // on the last bits. dev/hazard-lambda.html asserts 1,238 of 1,238 bouts agree, and that check
+  // is only meaningful because the shipped path is untouched.
+  function stagnateP(n, k, lambda){
+    const nn = Math.max(1, Number(n) || 1), kk = Math.max(0, Number(k) || 0);
+    const lam = Number.isFinite(Number(lambda)) ? Number(lambda) : 1;
+    if(lam === 1) return nn/(nn+kk);
+    let p = 1;
+    for(let j=1;j<=kk;j++){
+      const h = lam/(nn+j);
+      if(h >= 1) return 0;
+      p *= (1-h);
+    }
+    return p;
+  }
   function stagnation(history, bout, pbAt, opts){
-    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY }, opts||{});
+    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY, lambda: 1 }, opts||{});
     const hist = (history||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const runs = (bout||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const target = Number.isFinite(Number(pbAt)) ? Math.max(Number(pbAt), 0) : (hist.length ? Math.max(...hist) : 0);
@@ -1447,22 +1493,23 @@ const MiniEvxlEngine = (function(){
     let martingale = 1;
     for(let i=0;i<runs.length;i++){
       const k = i+1, score = runs[i];
-      if(score > target) return { done: true, why: 'pb', k, runs: runs.length, n, pExhaust: n/(n+k), martingale, gain: target>0 ? (score-target)/target : null };
+      if(score > target) return { done: true, why: 'pb', k, runs: runs.length, n, pExhaust: stagnateP(n,k,o.lambda), martingale, gain: target>0 ? (score-target)/target : null };
       if(hist.length >= o.minHistory){
         const u = (hist.filter(h=>h<=score).length + 1)/(hist.length + 1);
         for(let e=0;e<FORM_EPS.length;e++) prods[e] *= FORM_EPS[e]*Math.pow(u, FORM_EPS[e]-1);
         martingale = prods.reduce((a,b)=>a+b, 0)/FORM_EPS.length;
-        if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+        if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: stagnateP(n,k,o.lambda), martingale };
       }
-      if(n/(n+k) <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
+      const pEx = stagnateP(n,k,o.lambda);
+      if(pEx <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: pEx, martingale };
     }
     // step 12 (D21): "too hard" is a THIRD EXIT, and it is tested LAST on purpose. Anything
     // the runs already decided stands -- a PB above all, but an exhaustion or form stop too --
     // so a rating can never erase an outcome the play earned. It closes an item nothing else
     // closed, which is exactly the case it exists for: the scenario you cannot make progress
     // on and would otherwise sit in front of until the exhaustion rule caught up.
-    if(o.feel === 'hard') return { done: true, why: 'too-hard', k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
-    return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
+    if(o.feel === 'hard') return { done: true, why: 'too-hard', k: runs.length, runs: runs.length, n, pExhaust: stagnateP(n,runs.length,o.lambda), martingale };
+    return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: stagnateP(n,runs.length,o.lambda), martingale };
   }
 
   // ---- The feel controller (step 12, INTENT-1 + INTENT-2 / D20 + D21) --------------
@@ -4826,7 +4873,7 @@ const MiniEvxlEngine = (function(){
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
     standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
-    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,

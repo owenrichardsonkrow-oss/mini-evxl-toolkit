@@ -784,6 +784,49 @@
       };
     }
 
+    // ---- step 22: the exhaustion rule's hazard multiplier (measured, default OFF) ---------
+    // n/(n+k) = PRODUCT (1 - 1/(n+j)) EXACTLY, so lambda = 1 IS the exchangeable null the rule
+    // ships with. The identity is what makes the option safe to carry, so it is pinned rather
+    // than trusted -- and the DIRECT form is what ships at lambda = 1, because the product is
+    // not bit-identical to the division and a boundary case at `<= stagnateAt` could flip.
+    {
+      const P = E.stagnateP, near = (a, b, tol) => Number.isFinite(a) && Math.abs(a - b) <= (tol || 1e-12);
+      // n = 5, NOT 3, and the reason is the whole of bar 2. k*(n) is an INTEGER, so at many n
+      // the shipped rule and the measured lambda stop at the SAME run: at n = 3 both stop at
+      // k = 2. The first draft of this case used n = 3 and failed, which is the discreteness
+      // that lets a single STAGNATE_AT reproduce the whole lambda schedule. At n = 5 they
+      // differ (4 against 3), so the case actually exercises the option.
+      const hist = [100, 100, 100, 100, 100];       // n = 5, target 100
+      const bout = [90, 90, 90, 90, 90, 90];        // never beats it
+      const stopK = lam => {
+        for (let k = 1; k <= bout.length; k++) {
+          const st = E.stagnation(hist, bout.slice(0, k), 100, lam === undefined ? {} : { lambda: lam });
+          if (st.done) return { k, why: st.why };
+        }
+        return null;
+      };
+      R.hazard = {
+        // the identity, at several (n, k)
+        identityAt1: [[3,1],[3,2],[5,4],[9,6],[1,1],[20,13]].every(([n,k]) => near(P(n,k,1), n/(n+k))),
+        // lambda scales the HAZARD, so the survival falls faster and never rises
+        higherLambdaLowerP: P(3,2,1.32) < P(3,2,1) && P(9,6,1.32) < P(9,6,1),
+        lowerLambdaHigherP: P(3,2,0.8) > P(3,2,1),
+        monotoneInK: P(5,1,1.32) > P(5,2,1.32) && P(5,2,1.32) > P(5,3,1.32),
+        kZeroIsOne: near(P(5,0,1.32), 1) && near(P(5,0,1), 1),
+        // hazard >= 1 cannot leave a survival probability: it is certainty, not a negative number
+        hazardOneIsZero: P(1,1,2) === 0,
+        // through the RULE: the default must be the shipped behaviour exactly
+        defaultIsLambda1: JSON.stringify(stopK()) === JSON.stringify(stopK(1)),
+        // and a measured lambda > 1 must stop STRICTLY SOONER, or the option does nothing
+        higherLambdaStopsSooner: stopK(1.32).k < stopK(1).k,
+        stopReasonUnchanged: stopK(1.32).why === 'exhausted' && stopK(1).why === 'exhausted',
+        // the measured constant is RECORDED, not applied -- if it ever starts being applied by
+        // default this case fails, which is the point of pinning it
+        measuredRecorded: Math.abs(E.HAZARD_LAMBDA_MEASURED - 1.32) < 1e-9,
+        measuredNotApplied: JSON.stringify(stopK()) === JSON.stringify(stopK(1))
+      };
+    }
+
     // ---- step 21: the n-STANDARDISED metric, and the borrow it deliberately does not take --
     // A PB is the max of however many runs, so it reads higher at the same skill the more you
     // played. `std3` puts every scenario on a common effective run count; `stdSingle: false` is
@@ -1317,6 +1360,23 @@
       if(!MT.singlePrefersRunOverFallback) problems.push('metric: with one observed run the reading must come from the RUN, not the fallback -- this precedence voided an entire measurement column in step 21 and is pinned so it is a decision');
       if(!MT.noRunsUsesFallback) problems.push('metric: with NO runs the fallback is all there is, and it must be used');
       if(!MT.unknownJDoesNotBorrow) problems.push('metric: an unknown j must not silently borrow a_3 -- for j = 1 the true constant is ZERO, so the substitution has the wrong sign');
+    }
+
+    // ---- step 22 ----------------------------------------------------------------------
+    const HZ = R.hazard;
+    if(!HZ) problems.push('hazard: missing');
+    else {
+      if(!HZ.identityAt1) problems.push('hazard: stagnateP(n,k,1) must equal n/(n+k) EXACTLY -- lambda=1 IS the exchangeable null, and if that identity fails the option is a behaviour change wearing a default');
+      if(!HZ.higherLambdaLowerP) problems.push('hazard: a HIGHER lambda means PBs arrive more often, so the chance of not having one yet must FALL');
+      if(!HZ.lowerLambdaHigherP) problems.push('hazard: a lower lambda must raise it, or the multiplier is not acting on the hazard');
+      if(!HZ.monotoneInK) problems.push('hazard: survival must fall in k');
+      if(!HZ.kZeroIsOne) problems.push('hazard: before any run of the bout, the chance of not having beaten it is 1');
+      if(!HZ.hazardOneIsZero) problems.push('hazard: a hazard at or above 1 is certainty -- it must give 0, never a negative survival');
+      if(!HZ.defaultIsLambda1) problems.push('hazard: the DEFAULT must be lambda = 1, byte for byte the shipped rule');
+      if(!HZ.higherLambdaStopsSooner) problems.push('hazard: the measured lambda > 1 must stop STRICTLY sooner, or there is nothing to decide about');
+      if(!HZ.stopReasonUnchanged) problems.push('hazard: lambda changes WHEN exhaustion fires, never WHETHER it is exhaustion');
+      if(!HZ.measuredRecorded) problems.push('hazard: HAZARD_LAMBDA_MEASURED must record step 22 measurement (1.32)');
+      if(!HZ.measuredNotApplied) problems.push('hazard: the measured lambda is RECORDED, NOT APPLIED -- step 22 refused it as a stopping parameter under bar 2, and this case fails the day it starts steering by default');
       if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
       if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
       // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
