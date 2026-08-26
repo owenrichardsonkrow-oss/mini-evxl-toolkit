@@ -756,6 +756,34 @@
       resEmpty: E.orderingResolution([])
     };
 
+    // ---- step 19: the selectable pooling rules, and the attack that defeated v1 -------
+    // `squash` has to be EXACTLY eb's ordering with a smaller scale, or it is not the attack it
+    // claims to be -- and the whole point of it is that every rank statistic scores it
+    // identically to eb while the coach, which prices against EXPLORE_SD, does not.
+    {
+      // WITH BLOCKS. Without `opts.blocks` every pooling mode is the identity -- `pooledOf`
+      // returns the unpooled reading when a scenario has no block -- so the fixture would have
+      // asserted nothing at all while passing. The blocks fixture from the v0.5 case above is
+      // the one that makes the modes differ.
+      const poolRows = fxBlocks;
+      const rank = mode => {
+        const r = E.composeSession(poolRows, Object.assign({}, OPTS, { blocks: BLOCKS, rank: true, pooling: mode }), FILL);
+        return (r.ranking || []).filter(x => Number.isFinite(x.pooled));
+      };
+      const eb = rank('eb'), sq = rank('squash'), bl = rank('block'), df = rank();
+      const order = rs => rs.slice().sort((a, b) => a.pooled - b.pooled).map(x => x.name);
+      const spread = rs => { const v = rs.map(x => x.pooled).sort((a, b) => a - b); return v.length ? v[v.length - 1] - v[0] : 0; };
+      R.pooling = {
+        modes: { eb: eb.length, squash: sq.length, block: bl.length },
+        defaultIsEb: JSON.stringify(order(df)) === JSON.stringify(order(eb)),
+        squashSameOrder: JSON.stringify(order(sq)) === JSON.stringify(order(eb)),
+        squashSmallerSpread: spread(sq) < spread(eb) * 0.2,
+        squashResolutionKept: E.orderingResolution(sq.map(x => x.pooled)).distinct === E.orderingResolution(eb.map(x => x.pooled)).distinct,
+        blockCollapses: E.orderingResolution(bl.map(x => x.pooled)).distinct < E.orderingResolution(eb.map(x => x.pooled)).distinct,
+        unknownFallsBackToEb: JSON.stringify(order(rank('nonsense'))) === JSON.stringify(order(eb))
+      };
+    }
+
     // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
     const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
       secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
@@ -1187,6 +1215,17 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const PL = R.pooling;
+    if(!PL) problems.push('pooling: missing');
+    else {
+      if(!PL.defaultIsEb) problems.push('pooling: the DEFAULT must be `eb`, the shipped rule -- every existing caller depends on it');
+      if(!PL.unknownFallsBackToEb) problems.push('pooling: an unrecognised mode must fall back to the shipped rule, not to something else');
+      if(!PL.squashSameOrder) problems.push('pooling: `squash` must be EXACTLY eb ordering -- if the order differs it is not the order-preserving attack it exists to be');
+      if(!PL.squashSmallerSpread) problems.push('pooling: `squash` must compress the SCALE -- that is the whole attack, and a rank statistic cannot see it');
+      if(!PL.squashResolutionKept) problems.push('pooling: `squash` must keep full resolution -- it defeats the rank legs WITHOUT collapsing, which is why the scale gate had to exist');
+      if(!PL.blockCollapses) problems.push('pooling: `block` must collapse the resolution -- that is what makes it the degenerate case');
+    }
+
     const CR = R.criterion;
     if(!CR) problems.push('criterion: missing');
     else {

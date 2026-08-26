@@ -3482,8 +3482,17 @@ const MiniEvxlEngine = (function(){
     //   eb     step 11 (SHIPPED): the ICC weight composed with tau^2/(tau^2 + s^2)
     //   block  the DEGENERATE transform -- every member reads as its block standing. It exists
     //          so a criterion can be checked against it: any bar this can pass is not a bar.
-    const poolMode = ({ none: 1, icc: 1, eb: 1, block: 1 })[opts.pooling] ? opts.pooling : 'eb';
-    pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
+    //   squash the ORDER-PRESERVING attack: exactly eb's ordering, linearly compressed to a
+    //          band a fraction of its width. Every rank statistic -- Spearman, Kendall, top-k
+    //          Jaccard -- is invariant to a strictly increasing transform, so a criterion built
+    //          only from those scores it IDENTICALLY to eb. The coach is not invariant: weakKey
+    //          subtracts fixed-magnitude bonuses (EXPGAIN_CAP 0.15, GAME_BONUS 0.08, HUB_BONUS
+    //          0.03) and thompsonOrder draws at EXPLORE_SD 0.05, all constants in percentile
+    //          points. Squash the scale and those take over what is actually served while the
+    //          score does not move. It is here to prove that hole rather than argue it.
+    const poolMode = ({ none: 1, icc: 1, eb: 1, block: 1, squash: 1 })[opts.pooling] ? opts.pooling : 'eb';
+    const SQUASH = Number(opts.squashTo) > 0 ? Number(opts.squashTo) : 0.03;
+    const basePooled = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
       const standing = blockStandingOf.has(b) ? blockStandingOf.get(b) : null;
       if(poolMode === 'none') return shrunk(sc);
       if(poolMode === 'block') return standing===null ? shrunk(sc) : standing;
@@ -3492,6 +3501,15 @@ const MiniEvxlEngine = (function(){
       const w = ebWeightOf(sc);
       if(w===null || standing===null || !Number.isFinite(Number(afterIcc))) return afterIcc;
       return w*Number(afterIcc) + (1-w)*Number(standing);
+    };
+    // The squash is applied to EVERY value, including the unblocked ones that return early --
+    // compressing only part of the pool would REORDER blocked against unblocked, and then it is
+    // not the order-preserving attack it exists to be. (It was, briefly, and the toolkit fixture
+    // caught it: the assertion is that squash keeps eb's exact ordering AND a fifth of its scale.)
+    pooledOf = sc => {
+      const v = basePooled(sc);
+      if(poolMode !== 'squash' || !Number.isFinite(Number(v))) return v;
+      return 0.5 + (Number(v) - 0.5)*SQUASH;
     };
     // The v0.4 weakest key: v0.3's metric, shrunk, POOLED, minus the gain a session can
     // expect here, minus the game-relevance bonus -- every term 0 without evidence.
