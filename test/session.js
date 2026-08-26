@@ -861,7 +861,9 @@
         stopReasonUnchanged: stopK(1.32).why === 'exhausted' && stopK(1).why === 'exhausted',
         // the measured constant is RECORDED, not applied -- if it ever starts being applied by
         // default this case fails, which is the point of pinning it
-        measuredRecorded: Math.abs(E.HAZARD_LAMBDA_MEASURED - 1.32) < 1e-9,
+        // 1.33 = the POOLED row of dev/hazard-lambda.json, which is the estimand. It read 1.32
+        // once -- the interior row, the one step 22 calls a collider diagnostic and not a correction.
+        measuredRecorded: Math.abs(E.HAZARD_LAMBDA_MEASURED - 1.33) < 1e-9,
         measuredNotApplied: JSON.stringify(stopK()) === JSON.stringify(stopK(1))
       };
     }
@@ -1414,7 +1416,7 @@
       if(!HZ.defaultIsLambda1) problems.push('hazard: the DEFAULT must be lambda = 1, byte for byte the shipped rule');
       if(!HZ.higherLambdaStopsSooner) problems.push('hazard: the measured lambda > 1 must stop STRICTLY sooner, or there is nothing to decide about');
       if(!HZ.stopReasonUnchanged) problems.push('hazard: lambda changes WHEN exhaustion fires, never WHETHER it is exhaustion');
-      if(!HZ.measuredRecorded) problems.push('hazard: HAZARD_LAMBDA_MEASURED must record step 22 measurement (1.32)');
+      if(!HZ.measuredRecorded) problems.push('hazard: HAZARD_LAMBDA_MEASURED must record step 22 POOLED measurement (1.33) -- not the interior row, which is the collider diagnostic');
       if(!HZ.measuredNotApplied) problems.push('hazard: the measured lambda is RECORDED, NOT APPLIED -- step 22 refused it as a stopping parameter under bar 2, and this case fails the day it starts steering by default');
 
     }

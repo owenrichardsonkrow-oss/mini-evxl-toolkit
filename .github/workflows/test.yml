@@ -42,6 +42,7 @@ jobs:
       - run: node test/session.js
       - run: node test/overlap.js
       - run: node test/percentile.js
+      - run: node test/personal.js
       # On `dev` the tracked template.html is the last RELEASED build by design
       # (dev builds write template.dev.html, gitignored), so "embedded engine ==
       # src/engine.js" is stale there until the next release. master and claude/*

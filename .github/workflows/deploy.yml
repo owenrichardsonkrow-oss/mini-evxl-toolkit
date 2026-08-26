@@ -37,6 +37,7 @@ jobs:
       - run: node test/session.js
       - run: node test/overlap.js
       - run: node test/percentile.js
+      - run: node test/personal.js
       - run: node test/template-integrity.js
   deploy:
     needs: test

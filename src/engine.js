@@ -1441,9 +1441,17 @@ const MiniEvxlEngine = (function(){
   // patient, and the step 7b seed fix is what lets those counts accumulate at last.
   const STAGNATE_AT = 0.6;        // exhaustion: stop once P(no PB by now) has fallen to here
   // Step 22's measurement, recorded so the page can say what the exchangeable reading is worth.
-  // It is NOT applied: the default lambda is 1. 1.32 [1.113, 1.515], day-clustered, 1,919
-  // at-risk runs over 1,238 bouts -- dev/hazard-lambda.html, re-runnable.
-  const HAZARD_LAMBDA_MEASURED = 1.32;
+  // It is NOT applied: the default lambda is 1.
+  //
+  // THE POOLED ROW, and the first version of this line took the wrong one. It shipped 1.32 with
+  // an interval of [1.113, 1.515] -- those are the INTERIOR (j >= 2) figures, the row step 22
+  // labels a collider diagnostic and explicitly not a correction -- while quoting the POOLED
+  // sample size beside them. Three rows in one sentence. The estimand is the pooled hazard,
+  // because the rule acts at every j starting at j = 1:
+  //   pooled     1.3326  95% [1.2177, 1.4334]  day-clustered, 1,919 at-risk runs / 1,238 bouts
+  //   corrected  1.3946  95% [1.1864, 1.5821]  the record's first run dropped (step 12 selection)
+  // dev/hazard-lambda.json is the artifact; it re-runs with run-tests.ps1 -Hazard.
+  const HAZARD_LAMBDA_MEASURED = 1.33;
   const FORM_ALPHA = 0.1;         // form: stop once the martingale reaches 1/FORM_ALPHA
   const FORM_MIN_HISTORY = 3;     // fewer ranks than this and u is too coarse to bet on
   const FORM_EPS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
@@ -1454,12 +1462,15 @@ const MiniEvxlEngine = (function(){
   // n/(n+k) = PRODUCT over j=1..k of (1 - 1/(n+j)) EXACTLY, so the exchangeable null is the
   // lambda = 1 member of a one-parameter family whose per-run hazard is lambda/(n+j).
   //
-  // Step 22 measured lambda on this record at 1.32, 95% CI [1.113, 1.515] day-clustered -- so
+  // Step 22 measured lambda on this record at 1.333, 95% CI [1.218, 1.433] day-clustered -- so
   // he beats the exchangeable null by about a third, flat across n and across within-bout
   // position. The measurement is solid and the multiplier STILL DOES NOT SHIP AS A DIAL,
-  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.6818:
-  // the threshold family expresses 2,013 distinct stopping schedules where the lambda family
-  // expresses 71, so the knob that already exists is strictly more expressive. See CLAUDE.md.
+  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.6842:
+  // the threshold family expresses 3,130 distinct stopping schedules where the lambda family
+  // expresses 72, so the knob that already exists is strictly more expressive. See CLAUDE.md.
+  // (Those three figures were 0.6818 / 2,013 / 71 when first written here: they came from an
+  // ad-hoc candidate list, and making the enumeration exhaustive corrected them. They are quoted
+  // from dev/hazard-lambda.json and nowhere else now.)
   // It lives here as an option for the same reason `squash` lives in the pooling modes and
   // `metric` in calibrateScenarios: the instrument needs a candidate to be checkable against,
   // and a build-and-revert comparison depends on nobody erring while reverting.
