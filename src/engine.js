@@ -2841,10 +2841,54 @@ const MiniEvxlEngine = (function(){
   // skillProfile. opts.offsets = data/offsets.json's `offsets` block, or null: with no
   // offsets the curved rows keep their raw percentile and only the S3 map applies; with
   // neither, every row's `m` is exactly what sessionMetric returned before.
+  // ---- STEP 21: THE n-STANDARDISED METRIC (candidate, off by default) ---------------
+  // A personal best is the maximum of however many times you played, so it reads higher at the
+  // same true skill the more you have played -- step 12 measured +3.4 percentile points per
+  // DOUBLING of run count. Across a player's own scenarios the run count varies 1 to 20+, so the
+  // ranking is contaminated by a quantity that is not skill.
+  //
+  // The fix is to put every scenario on a COMMON effective run count. E[best of j] from the
+  // scenario's own runs, by the exact order-statistic weights -- P(max = the i-th smallest of k
+  // draws with replacement) = (i/k)^j - ((i-1)^j)/k^j -- which is the same law `runSampleSpread`
+  // already uses, so this borrows a rule rather than inventing one. j = 3 because step 7b's
+  // out-of-sample table put best-of-3 ahead of every other candidate at every assumed m.
+  //
+  // ONE run reveals no scatter, so it takes the profile's median CV like everything else here,
+  // scaled by the expected maximum of j standard normals (a_3 = 0.8463). That is a BORROWED
+  // number steering the order, which step 7b's ratified principle refuses -- and it is the
+  // sharpest argument against this candidate, recorded rather than hidden.
+  const A_OF_J = { 2: 0.5642, 3: 0.8463, 5: 1.1630 };
+  function expectedBestOfJ(values, j){
+    const v = (values || []).map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+    const k = v.length;
+    if(!k) return null;
+    if(k === 1) return v[0];
+    const jj = Math.max(1, Math.round(Number(j) || 3));
+    let acc = 0;
+    for(let i = 1; i <= k; i++) acc += v[i-1] * (Math.pow(i/k, jj) - Math.pow((i-1)/k, jj));
+    return acc;
+  }
+  // `runPcts` is [[t, pct], ...]; `sd` is the scenario's percentile-space run scatter, which is
+  // what a single-run row has to borrow. Returns null when there is nothing to standardise.
+  function standardisePct(runPcts, opts){
+    const o = Object.assign({ j: 3, sd: null, fallback: null }, opts || {});
+    const ps = (Array.isArray(runPcts) ? runPcts : []).map(x => Number(x[1])).filter(Number.isFinite);
+    if(ps.length >= 2) return expectedBestOfJ(ps, o.j);
+    const base = ps.length ? ps[0] : numOrNull(o.fallback);
+    if(base === null) return null;
+    const sd = numOrNull(o.sd);
+    if(sd === null || !(sd > 0)) return base;
+    const a = A_OF_J[Math.round(Number(o.j) || 3)] || A_OF_J[3];
+    return Math.max(0.001, Math.min(0.999, base + a * sd));
+  }
+
   function calibrateScenarios(scenarios, opts){
     const list = scenarios || [];
-    if(list.length && list.every(sc=>sc && Number.isFinite(sc.m))) return list;
-    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED, runsOf: null, pctOf: null }, opts||{});
+    // Idempotent: re-calibrating an already-calibrated list is a no-op. That is a PINNED
+    // property and step 19's harness was caught by it -- but a caller asking for a DIFFERENT
+    // metric is not asking for a no-op, so the shortcut only applies to the default.
+    if(list.length && list.every(sc=>sc && Number.isFinite(sc.m)) && (!opts || !opts.metric || opts.metric === 'pb')) return list;
+    const o = Object.assign({ offsets: null, minCurved: METRIC_MIN_CURVED, runsOf: null, pctOf: null, metric: 'pb', stdJ: 3, stdSingle: true }, opts||{});
     // No offsets table, or no row for this scenario, is NULL -- not 0. Number(null) is 0 and
     // Number.isFinite(0) is true, so the shorter spelling reported a calibration on every
     // uncalibrated build and silently switched off the board shrinkage it replaces.
@@ -2896,19 +2940,41 @@ const MiniEvxlEngine = (function(){
       });
       if(cvs.length){ cvs.sort((a,b)=>a-b); runCv = cvs[Math.floor(cvs.length/2)]; }
     }
+    // memoised: step 21 reads it once for the standardisation and the row loop reads it again
+    const _runSe = new Map();
     const runSeOf = name => {
       if(typeof o.runsOf !== 'function' || typeof o.pctOf !== 'function') return null;
+      if(_runSe.has(name)) return _runSe.get(name);
       const v = runSampleSpread(o.runsOf(name), score=>o.pctOf(name, score), runCv);
-      return (v && Number.isFinite(v.sd) && v.sd>=0) ? v : null;
+      const r = (v && Number.isFinite(v.sd) && v.sd>=0) ? v : null;
+      _runSe.set(name, r);
+      return r;
+    };
+    // step 21: the metric the ranking reads. 'pb' is the shipped maximum-of-n; 'std3' puts every
+    // scenario on a common effective run count first. Applied BEFORE the board offset, because
+    // the offset is a property of the leaderboard and not of how often you played.
+    const metricPct = sc => {
+      if(o.metric !== 'std3') return Number(sc.pct);
+      const rs = runSeOf(sc.name);
+      // `stdSingle: false` leaves a one-run row exactly where it was. It matters because the
+      // single-run bump is a_3 x a BORROWED scatter -- and step 7b's ratified principle is that
+      // a borrowed number does not steer the order. 53% of this pool has one run, so the
+      // variant is not a detail: it is the difference between a candidate that respects that
+      // principle and one that widens the breach step 11 already opened.
+      const nRuns = (Array.isArray(sc.runPcts) ? sc.runPcts.length : 0);
+      if(!o.stdSingle && nRuns < 2) return Number(sc.pct);
+      const v = standardisePct(sc.runPcts, { j: o.stdJ, sd: rs ? rs.sd : null, fallback: sc.pct });
+      return (v === null || !Number.isFinite(v)) ? Number(sc.pct) : v;
     };
     const hasP = sc => sc && sc.pct!==null && sc.pct!==undefined && Number.isFinite(Number(sc.pct));
     const adjOf = new Map();
     let offsetsUsed = 0;
     list.forEach(sc=>{
       if(!hasP(sc)) return;
+      const base = metricPct(sc);
       const d = deltaOf(sc.name);
-      if(d===null){ adjOf.set(sc.name, Number(sc.pct)); return; }
-      offsetsUsed++; adjOf.set(sc.name, adjustPercentile(sc.pct, d));
+      if(d===null){ adjOf.set(sc.name, base); return; }
+      offsetsUsed++; adjOf.set(sc.name, adjustPercentile(base, d));
     });
     // the reference distributions come from the PLAYED curved rows only -- an unplayed
     // scenario has no standing to contribute and its To 2nd is 0 by construction
@@ -4753,6 +4819,7 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
+    standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
     boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,

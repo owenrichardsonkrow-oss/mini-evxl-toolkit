@@ -784,6 +784,72 @@
       };
     }
 
+    // ---- step 21: the n-STANDARDISED metric, and the borrow it deliberately does not take --
+    // A PB is the max of however many runs, so it reads higher at the same skill the more you
+    // played. `std3` puts every scenario on a common effective run count; `stdSingle: false` is
+    // the shipped half, and it exists because correcting a ONE-run row needs a scatter that one
+    // run cannot show -- it would have to be borrowed, which step 7b ratified against.
+    {
+      const A = E.A_OF_J, eb3 = E.expectedBestOfJ, std = E.standardisePct;
+      const near = (a, b, tol) => Number.isFinite(a) && Math.abs(a - b) <= (tol || 1e-9);
+      // Exact order-statistic weights: with k = 2 the best of j draws with replacement takes the
+      // larger value with probability 1 - (1/2)^j, so E[best of 3] over {0.2, 0.6} is
+      // 0.2*(1/8) + 0.6*(7/8) = 0.55. Hand-computed, so the law is pinned rather than the code.
+      const rp = t => t.map((v, i) => [i, v]);
+      R.metric = {
+        bestOf3Exact: near(eb3([0.2, 0.6], 3), 0.55),
+        bestOf1IsMean: near(eb3([0.2, 0.6], 1), 0.4),
+        risesInJ: eb3([0.2, 0.6], 5) > eb3([0.2, 0.6], 3) && eb3([0.2, 0.6], 3) > eb3([0.2, 0.6], 2),
+        neverAboveMax: eb3([0.2, 0.6], 50) <= 0.6 && eb3([0.2, 0.6], 50) > 0.59,
+        singletonIsItself: near(eb3([0.42], 3), 0.42),
+        emptyIsNull: eb3([], 3) === null,
+        // BELOW the PB by construction: E[best of 3] over the observed runs cannot exceed their
+        // maximum, which IS the pb metric. That is the whole re-levelling -- it lowers a
+        // much-played reading toward what it would be at three runs, and lowers nothing else.
+        belowPb: std(rp([0.2, 0.5, 0.6, 0.9]), { j: 3 }) < 0.9,
+        // MORE RUNS, MORE CORRECTION: the same scatter over more runs has a higher max, so the
+        // gap E[best of 3] leaves below it grows. This is the measured +3.4 pts per doubling.
+        moreRunsMoreGap: (0.9 - std(rp([0.2, 0.5, 0.6, 0.9]), { j: 3 })) >
+                         (0.6 - std(rp([0.5, 0.6]), { j: 3 })),
+        // THE BORROW, and the fact that it is a real intervention rather than a rounding: with a
+        // scatter it moves a one-run reading UP by a_3 sd; with none available it must not move.
+        singleBorrowsWithSd: near(std(rp([0.40]), { j: 3, sd: 0.10 }), 0.40 + A[3] * 0.10, 1e-9),
+        singleUnmovedWithoutSd: near(std(rp([0.40]), { j: 3, sd: null }), 0.40),
+        singleClamped: std(rp([0.98]), { j: 3, sd: 0.50 }) <= 0.999,
+        aOf3: near(A[3], 0.8463, 1e-4)
+      };
+    }
+    {
+      // Through calibrateScenarios, which is where it actually acts -- and the SHIPPED option set
+      // must leave a one-run row exactly where `pb` left it. If that ever stops holding, a
+      // borrowed number is steering the order for the ~half of the pool with one run, which is
+      // the ratified principle this variant exists to respect.
+      const mk = (name, pct, runs) => ({ name, pct, played: true, runPcts: runs.map((v, i) => [i, v]) });
+      const rows = [mk('multi', 0.90, [0.2, 0.5, 0.6, 0.9]), mk('single', 0.40, [0.40])];
+      const cal = o => { const c = E.calibrateScenarios(rows.map(r => Object.assign({}, r)), o); const m = {}; c.forEach(x => m[x.name] = x.m); return m; };
+      const pb = cal({ metric: 'pb' });
+      const nb = cal({ metric: 'std3', stdJ: 3, stdSingle: false });
+      // The borrowed path needs a source with REAL scatter -- a single flat run has none to
+      // borrow, so the variant would look identical to the shipped one and the case would pass
+      // while asserting nothing. Four spread scores mapped linearly give a genuine sd.
+      const full = cal({ metric: 'std3', stdJ: 3, stdSingle: true,
+        runsOf: () => [80, 95, 105, 120], pctOf: (n, sc) => Math.max(0.01, Math.min(0.99, sc / 200)) });
+      R.metricRows = {
+        pbIsMax: Math.abs(pb.multi - 0.90) < 1e-9 && Math.abs(pb.single - 0.40) < 1e-9,
+        std3LowersMulti: nb.multi < pb.multi - 0.01,
+        // THE LOAD-BEARING ASSERTION of the shipped variant.
+        std3LeavesSingle: Math.abs(nb.single - pb.single) < 1e-9,
+        fullMovesSingle: Math.abs(full.single - pb.single) > 1e-9,
+        // A metric switch must NOT be swallowed by the idempotence shortcut.
+        notIdempotentAcrossMetrics: (() => {
+          const once = E.calibrateScenarios(rows.map(r => Object.assign({}, r)), { metric: 'pb' });
+          const twice = E.calibrateScenarios(once, { metric: 'std3', stdJ: 3, stdSingle: false });
+          const m = {}; twice.forEach(x => m[x.name] = x.m);
+          return m.multi < once.find(x => x.name === 'multi').m - 0.01;
+        })()
+      };
+    }
+
     // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
     const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
       secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
@@ -1220,6 +1286,31 @@
     else {
       if(!PL.defaultIsEb) problems.push('pooling: the DEFAULT must be `eb`, the shipped rule -- every existing caller depends on it');
       if(!PL.unknownFallsBackToEb) problems.push('pooling: an unrecognised mode must fall back to the shipped rule, not to something else');
+    }
+
+    // ---- step 21: the n-standardised metric CANDIDATE (rejected, kept as an instrument) ------
+    const MT = R.metric, MR = R.metricRows;
+    if(!MT || !MR) problems.push('metric: missing');
+    else {
+      if(!MT.bestOf3Exact) problems.push('metric: E[best of 3] over {0.2,0.6} must be 0.55 by the exact order-statistic weights -- the same law runSampleSpread uses');
+      if(!MT.bestOf1IsMean) problems.push('metric: E[best of 1] IS the mean, or the weights are not a distribution');
+      if(!MT.risesInJ) problems.push('metric: E[best of j] must rise in j');
+      if(!MT.neverAboveMax) problems.push('metric: E[best of j] must approach the maximum from BELOW and never exceed it');
+      if(!MT.singletonIsItself) problems.push('metric: one observed run has no scatter to read, so it must come back unchanged');
+      if(!MT.emptyIsNull) problems.push('metric: no runs must be null, never a number -- a plausible value for "no answer" is the Number(null) failure shape');
+      if(!MT.belowPb) problems.push('metric: the standardised value must sit BELOW the PB -- re-levelling a much-played reading downward is the whole mechanism');
+      if(!MT.moreRunsMoreGap) problems.push('metric: the correction must GROW with the run count, or it does not remove the +3.4-pts-per-doubling gradient it exists for');
+      if(!MT.singleBorrowsWithSd) problems.push('metric: with a borrowed sd a one-run row must move by exactly a_3 * sd');
+      if(!MT.singleUnmovedWithoutSd) problems.push('metric: with no scatter available a one-run row must not move at all');
+      if(!MT.singleClamped) problems.push('metric: the borrowed bump must stay inside the percentile range');
+      if(!MT.aOf3) problems.push('metric: a_3 (the expected maximum of three standard normals) must be 0.8463');
+      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
+      if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
+      // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
+      // rule that a borrowed number does not steer the order, for the ~half of the pool with one run.
+      if(!MR.std3LeavesSingle) problems.push('metric: `stdSingle:false` must leave a ONE-RUN row exactly where pb left it -- otherwise a borrowed scatter is steering the order for half the pool');
+      if(!MR.fullMovesSingle) problems.push('metric: `stdSingle:true` must move a one-run row, or the two variants are the same thing and the distinction is fiction');
+      if(!MR.notIdempotentAcrossMetrics) problems.push('metric: calibrateScenarios is idempotent BY DESIGN, but a caller asking for a different metric is not asking for a no-op -- step 19 lost days to exactly this wall');
       if(!PL.squashSameOrder) problems.push('pooling: `squash` must be EXACTLY eb ordering -- if the order differs it is not the order-preserving attack it exists to be');
       if(!PL.squashSmallerSpread) problems.push('pooling: `squash` must compress the SCALE -- that is the whole attack, and a rank statistic cannot see it');
       if(!PL.squashResolutionKept) problems.push('pooling: `squash` must keep full resolution -- it defeats the rank legs WITHOUT collapsing, which is why the scale gate had to exist');
