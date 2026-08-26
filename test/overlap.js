@@ -142,6 +142,34 @@
     eq('overlapOf(C1) weak', names(o1.weak), []);
     eq('overlapOf(C1) unrelated (r 0 at n 500: band 0.088 < 0.3)', names(o1.unrelated), [T2]);
     eq('overlapOf(C1) inconclusive', o1.inconclusive, 0); eq('overlapOf(C1) complete', o1.complete, true);
+    // ---- NEXT-5 (step 15): the playlist control on the PER-SCENARIO lists -------------
+    // 5c put it behind the blocks; NEXT-5 puts it behind every population claim, so the
+    // question "is this a skill, or a benchmark people grind together?" can be asked of one
+    // scenario's neighbours and not only of a block. C1 and C3 share Pack A in this fixture.
+    const plOfFix = n => (n===C1 || n===C3) ? ['packA'] : (n===C2 ? ['packB'] : []);
+    const o1x = E.overlapOf(C1, P, { crossPlaylist: true, plOf: plOfFix });
+    ok('overlapOf cross-playlist drops the playlist-mate from `with`', names(o1x.with).indexOf(C3) < 0);
+    eq('overlapOf cross-playlist with', names(o1x.with), [C2, M1]);
+    eq('overlapOf cross-playlist tested', o1x.tested, o1.tested - 1);
+    eq('overlapOf reports what the control removed', o1x.mates, 1);
+    eq('overlapOf reports the uncontrolled total beside it', o1x.testedAll, o1.tested);
+    ok('overlapOf flags which mode it ran in', o1x.crossPlaylist === true && o1.crossPlaylist === false);
+    // OFF is the identity -- every pre-NEXT-5 caller must be untouched
+    const o1off = E.overlapOf(C1, P, { crossPlaylist: false, plOf: plOfFix });
+    eq('overlapOf with the control OFF is the identity (with)', names(o1off.with), names(o1.with));
+    eq('overlapOf with the control OFF is the identity (tested)', o1off.tested, o1.tested);
+    // and no plOf means nothing to share, whatever the flag says
+    const o1noPl = E.overlapOf(C1, P, { crossPlaylist: true, plOf: null });
+    eq('overlapOf cross-playlist without a plOf removes nothing', o1noPl.tested, o1.tested);
+    // one sharing rule, exported, and it is symmetric
+    {
+      const sh = E.playlistSharing(plOfFix);
+      ok('playlistSharing finds a shared key', sh(C1, C3) === true);
+      ok('playlistSharing is symmetric', sh(C3, C1) === true);
+      ok('playlistSharing separates different packs', sh(C1, C2) === false);
+      ok('playlistSharing treats an unlisted scenario as sharing nothing', sh(C1, T1) === false);
+    }
+
     const o3 = E.overlapOf(C3, P);
     eq('overlapOf(C3) with', names(o3.with), [C1, C2]);
     eq('overlapOf(C3) unrelated: 0.10 at n=100 -> 0.10 + 0.199 = 0.299 < 0.3', names(o3.unrelated), [T3]);

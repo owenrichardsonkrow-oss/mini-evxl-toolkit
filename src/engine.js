@@ -3841,12 +3841,37 @@ const MiniEvxlEngine = (function(){
   //   inconclusive  count of |r| < unrelatedR rows whose band reaches minR --
   //               "too thin to call", never "unrelated".
   // tested = rows at n >= minN; complete = the source holds every tested pair.
+  // NEXT-5: ONE definition of "these two share a playlist", used by every population claim on
+  // the page. It was a closure inside `groupMatrix` when only the blocks needed it (5c); the
+  // moment a second caller wanted it, a second copy would have been a rule that could drift --
+  // and this is the rule that decides whether a number is about a SKILL or about a benchmark
+  // people grind as a unit. `plOf` is resolved once per NAME because the callers walk ~124k
+  // pairs, and the cache is per-call so it cannot outlive a change to the pool.
+  function playlistSharing(plOf){
+    const cache = new Map();
+    const keys = name => { let v = cache.get(name); if(v===undefined){ v = plOf ? (plOf(name) || []) : []; cache.set(name, v); } return v; };
+    return (x, y) => {
+      if(!plOf) return false;
+      const px = keys(x); if(!px.length) return false;
+      const py = keys(y); if(!py.length) return false;
+      for(let i=0; i<px.length; i++){ if(py.indexOf(px[i]) >= 0) return true; }
+      return false;
+    };
+  }
   function overlapOf(name, index, opts){
-    const o = Object.assign({ minN: 100, minR: 0.3, unrelatedR: 0.15 }, opts||{});
+    const o = Object.assign({ minN: 100, minR: 0.3, unrelatedR: 0.15, plOf: null, crossPlaylist: false }, opts||{});
     const legacy = index.source!=='pairs';
     // `lo`/`hi` are the exact interval edges; `band` is its half-width, kept because the
     // page prints a +/- and because a symmetric number is what a reader expects there.
-    const rows = index.edges(name).filter(e=>e.n>=o.minN).map(e=>{
+    // NEXT-5: the playlist control, on the per-scenario lists as well as on the blocks. A
+    // playlist-mate co-varies partly because the same people train the two together, so a
+    // "moves with" list full of them answers a different question than the one being asked.
+    // Off by default so every pre-NEXT-5 caller is untouched; the page turns it on and the
+    // `xp` knob turns it back off, exactly as 5c did for the matrix.
+    const shares = o.crossPlaylist ? playlistSharing(o.plOf) : null;
+    const all = index.edges(name).filter(e=>e.n>=o.minN);
+    const kept = shares ? all.filter(e=>!shares(name, e.name)) : all;
+    const rows = kept.map(e=>{
       const ci = rInterval(e.r, e.n);
       return { name: e.name, r: e.r, n: e.n, lo: ci.lo, hi: ci.hi, band: (ci.hi - ci.lo)/2 };
     });
@@ -3866,7 +3891,10 @@ const MiniEvxlEngine = (function(){
     against.sort((x,y)=> x.hi-y.hi || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     weak.sort((x,y)=> Math.abs(y.r)-Math.abs(x.r) || y.n-x.n || (x.name<y.name?-1:x.name>y.name?1:0));
     unrelated.sort((x,y)=> y.n-x.n || Math.abs(x.r)-Math.abs(y.r) || (x.name<y.name?-1:x.name>y.name?1:0));
-    return { tested: rows.length, with: withR, against, weak, unrelated: legacy ? null : unrelated, inconclusive: legacy ? 0 : inconclusive, complete: !legacy };
+    return { tested: rows.length, with: withR, against, weak, unrelated: legacy ? null : unrelated,
+      inconclusive: legacy ? 0 : inconclusive, complete: !legacy,
+      // what the control removed, so the page can say it rather than quietly showing less
+      crossPlaylist: !!shares, testedAll: all.length, mates: all.length - kept.length };
   }
   // The group x group matrix (curator labels, folded labels, emergent clusters --
   // any groupsOf(name) -> [group id, ...]). A scenario pair (x, y) at n >= minN
@@ -3905,15 +3933,7 @@ const MiniEvxlEngine = (function(){
     const o = Object.assign({ minN: 100, strongR: 0.3, minSize: 1, minCohesion: 0.05, plOf: null, crossPlaylist: false }, opts||{});
     const gid = x => String(x);
     // forEachPair runs over ~124k pairs, so the playlist keys are resolved once per NAME
-    const plCache = new Map();
-    const plKeys = name => { let v = plCache.get(name); if(v===undefined){ v = o.plOf ? (o.plOf(name) || []) : []; plCache.set(name, v); } return v; };
-    const sharesPlaylist = (x, y) => {
-      if(!o.plOf) return false;
-      const px = plKeys(x); if(!px.length) return false;
-      const py = plKeys(y); if(!py.length) return false;
-      for(let i=0; i<px.length; i++){ if(py.indexOf(px[i]) >= 0) return true; }
-      return false;
-    };
+    const sharesPlaylist = playlistSharing(o.plOf);
     const skipPair = (x, y) => o.crossPlaylist && sharesPlaylist(x, y);
     const memberOf = new Map();   // name -> [ids]
     const sizes = new Map();
@@ -4553,6 +4573,7 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
+    playlistSharing,
     boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
