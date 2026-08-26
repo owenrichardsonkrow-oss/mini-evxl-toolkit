@@ -462,6 +462,38 @@ run-history import; both transfer analyses.
   reading of `dev/emergence-comparison.json` — reading order: agreement tables
   with their pack baseline and p-values, then the divergence list, then
   (separately, as a proposal) candidate names.
+- **D13 amended** (2026-08-26, Review Ledger V step 18) — **the naming rule stays
+  data-derived and UNRATIFIED, and that is now a decision rather than a backlog
+  item.** A block's displayed name is its members' two most frequent curator
+  labels plus its id (`tracking · control (c5)`), computed from the data every
+  time the freeze changes. It is deliberately not a name: a name asserts what a
+  cluster *is*, and the only thing that has been measured is what its members
+  are *called* by curators who never saw the map. Three things follow.
+  **(1)** The freeze D13 was written against is superseded — `ed89927b…` was
+  re-run on 2026-08-25 as `c9026a95…` (7,703 players × 1,158 scenarios, γ 1.0
+  → 8 communities), and putting the residual on the logit moved the shipped
+  lens's ARI against the mechanic taxonomy **0.221 → 0.393** while its ARI
+  against pack fell 0.141 → 0.067. The community lens is more defensible than
+  it was when the decision was taken, not less.
+  **(2)** Ids are freeze-local and every served item now carries `blockEpoch`,
+  so a ratified name could not survive a re-freeze anyway without the record
+  saying which epoch it belonged to.
+  **(3) Where a name would go, the evidence goes instead.** Step 5d's
+  mis-assignment diagnostic is the closest thing to a naming argument the data
+  has produced, and it is recorded here rather than resolved: of 380 judgeable
+  stable members, **18 (4.7%) would move** under the project's own placement
+  rule, and the residual is not scatter — **ten of the eighteen leave `c:1`
+  (*tracking · reactive*) and every one of them prefers `c:4`
+  (*switching · speed*)**. Named, they are all target-switching scenarios:
+  `psalmTS Voltaic` (+0.096), `VT evaTS Novice` (+0.086), `VT psalmTS Novice`
+  (+0.073), `VT psalmTS Intermediate` (+0.062), `VT psalmTS Advanced` (+0.054),
+  `VT bounceTS Novice` (+0.040). The largest single mover, `VT DotTS Novice
+  S5`, has a home affinity of **−0.006 over 14 pairs** — essentially no
+  measured relationship to its own community at all. **That is a checkable
+  statement about a boundary, and it is what a name would have to survive.**
+  4.7% is too few to re-run the protocol over and the misplacement is
+  concentrated in one interpretable place, so the freeze stands and the naming
+  question stays open with its evidence attached.
 - **D14** — no range-restriction correction on the transfer map (the W6
   diagnostic above); the sample caveat is the measured median, printed from
   the data, never a literal.
