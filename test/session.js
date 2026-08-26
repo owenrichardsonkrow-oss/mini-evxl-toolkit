@@ -784,6 +784,45 @@
       };
     }
 
+    // ---- CROSS-REALM COLLECTIONS: a Map from another realm must still read as a Map -------
+    // `x instanceof Map` compares against THIS realm's constructor, so a Map built in an iframe,
+    // a worker or a harness page fails it -- and every engine branch that used it fell through to
+    // a path returning a plausible EMPTY answer. It cost one entire measurement: 411 stable
+    // members came back "too few pairs to place at all" because a harness built its map in the
+    // parent frame. Six sites, five still live when it was found.
+    //
+    // A second realm cannot be created inside this fixture, but it does not need to be: what a
+    // cross-realm Map looks like from here is an object carrying Map's INTERFACE and failing
+    // `instanceof`. That is exactly what `foreign` is, so this case fails the moment anyone puts
+    // an `instanceof` back.
+    {
+      const mk = pairs => {
+        const m = new Map(pairs);
+        return { get: k => m.get(k), has: k => m.has(k), forEach: f => m.forEach(f),
+                 keys: () => m.keys(), entries: () => m.entries(), get size(){ return m.size; } };
+      };
+      const foreignSet = (() => { const st = new Set(['a', 'b']);
+        return { has: k => st.has(k), forEach: f => st.forEach(f), get size(){ return st.size; } }; })();
+      const runs = [[1000, 10], [2000, 20], [1000 + 40 * 86400000, 15]];
+      const plain = { S: runs };
+      const foreign = mk([['S', runs]]);
+      const a1 = E.personalReturnEvents(plain), a2 = E.personalReturnEvents(foreign);
+      R.realm = {
+        mapLikeReal: E.isMapLike(new Map()) === true,
+        mapLikeForeign: E.isMapLike(mk([])) === true,
+        mapLikePlainObject: E.isMapLike({}) === false,
+        mapLikeNull: E.isMapLike(null) === false,
+        // the discriminator: a Set must NOT read as a Map, or a Set argument takes the Map path
+        setLikeReal: E.isSetLike(new Set()) === true,
+        setLikeForeign: E.isSetLike(foreignSet) === true,
+        setLikeRejectsMap: E.isSetLike(new Map()) === false && E.isSetLike(mk([])) === false,
+        // END TO END, which is the assertion that actually protects the measurement:
+        // a foreign Map must give the SAME answer as the plain object, not an empty one.
+        foreignMapSameAsPlain: JSON.stringify(a1) === JSON.stringify(a2),
+        foreignMapNotEmpty: a2.length > 0
+      };
+    }
+
     // ---- step 22: the exhaustion rule's hazard multiplier (measured, default OFF) ---------
     // n/(n+k) = PRODUCT (1 - 1/(n+j)) EXACTLY, so lambda = 1 IS the exchangeable null the rule
     // ships with. The identity is what makes the option safe to carry, so it is pinned rather
@@ -1377,7 +1416,20 @@
       if(!HZ.stopReasonUnchanged) problems.push('hazard: lambda changes WHEN exhaustion fires, never WHETHER it is exhaustion');
       if(!HZ.measuredRecorded) problems.push('hazard: HAZARD_LAMBDA_MEASURED must record step 22 measurement (1.32)');
       if(!HZ.measuredNotApplied) problems.push('hazard: the measured lambda is RECORDED, NOT APPLIED -- step 22 refused it as a stopping parameter under bar 2, and this case fails the day it starts steering by default');
-      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
+
+    }
+
+    // ---- cross-realm collections ------------------------------------------------------
+    const RL = R.realm;
+    if(!RL) problems.push('realm: missing');
+    else {
+      if(!RL.mapLikeReal || !RL.mapLikeForeign) problems.push('realm: a Map -- from ANY realm -- must read as map-like; `instanceof Map` is realm-local and silently sends a foreign Map down the empty path');
+      if(!RL.mapLikePlainObject) problems.push('realm: a plain object must NOT read as map-like, or the object path is never taken');
+      if(!RL.mapLikeNull) problems.push('realm: null must not read as map-like');
+      if(!RL.setLikeReal || !RL.setLikeForeign) problems.push('realm: a Set from any realm must read as set-like');
+      if(!RL.setLikeRejectsMap) problems.push('realm: a Map must NOT read as set-like -- get() is the discriminator and without it a Map argument takes the Set path');
+      if(!RL.foreignMapSameAsPlain) problems.push('realm: a foreign Map must give the SAME result as the equivalent plain object -- this is the assertion that would have caught the 411-members-unjudged failure');
+      if(!RL.foreignMapNotEmpty) problems.push('realm: the foreign-Map case produced NO events, so it is asserting nothing');      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
       if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
       // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
       // rule that a borrowed number does not steer the order, for the ~half of the pool with one run.

@@ -1468,6 +1468,23 @@ const MiniEvxlEngine = (function(){
   // and NOT bit-identical in floating point, and a boundary case at `<= stagnateAt` could flip
   // on the last bits. dev/hazard-lambda.html asserts 1,238 of 1,238 bouts agree, and that check
   // is only meaningful because the shipped path is untouched.
+  // ---- REALM-SAFE COLLECTION TESTS ---------------------------------------------------
+  // `x instanceof Map` is FALSE for a Map built in another realm -- an iframe, a worker, a
+  // harness page -- because it compares against THIS realm's Map constructor. Every branch below
+  // that used it then fell through to a path returning a plausible EMPTY answer instead of
+  // throwing, which is the worst possible failure shape.
+  //
+  // It has already cost one whole measurement. dev/block-misassignment.html built its member map
+  // in the parent frame and handed it to `scenarioAffinity`; the check failed, `Object.keys(aMap)`
+  // is [], and all 411 stable members came back "too few cross-playlist pairs to place at all" --
+  // a total failure that reads exactly like a thin-data result, in a file that had never run.
+  // There were SIX such sites and five of them were still live.
+  //
+  // Duck-typing is realm-independent and costs nothing. A Map has get/has/forEach; a Set has
+  // has/forEach and no get, which is what separates them.
+  const isMapLike = x => !!x && typeof x.get === 'function' && typeof x.has === 'function' && typeof x.forEach === 'function';
+  const isSetLike = x => !!x && typeof x.has === 'function' && typeof x.forEach === 'function' && typeof x.get !== 'function';
+
   function stagnateP(n, k, lambda){
     const nn = Math.max(1, Number(n) || 1), kk = Math.max(0, Number(k) || 0);
     const lam = Number.isFinite(Number(lambda)) ? Number(lambda) : 1;
@@ -2315,7 +2332,7 @@ const MiniEvxlEngine = (function(){
     return out;
   }
   function sessionHistoryStats(log, pbNow, nowMs, liveKey, runsOf, ledger){
-    const pb = typeof pbNow==='function' ? pbNow : (pbNow instanceof Map ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
+    const pb = typeof pbNow==='function' ? pbNow : (isMapLike(pbNow) ? (n=>pbNow.get(n)) : (n=>(pbNow||{})[n]));
     const isLive = x => !!(liveKey && x.day===liveKey.day && (x.seedBump||0)===(liveKey.seedBump||0));
     const entries = (log||[]).filter(e=>e && Number.isFinite(e.day));
     const doneOf = e => typeof e.done==='number' ? e.done : (e.done && typeof e.done==='object' ? Object.keys(e.done).length : 0);
@@ -2675,8 +2692,8 @@ const MiniEvxlEngine = (function(){
   function personalReturnEvents(runsByName, opts){
     const o = Object.assign({ minGap: PERSONAL_MIN_GAP_DAYS, minPrior: PERSONAL_MIN_PRIOR }, opts||{});
     const out = [];
-    (runsByName instanceof Map ? Array.from(runsByName.keys()) : Object.keys(runsByName||{})).forEach(name=>{
-      const raw = runsByName instanceof Map ? runsByName.get(name) : runsByName[name];
+    (isMapLike(runsByName) ? Array.from(runsByName.keys()) : Object.keys(runsByName||{})).forEach(name=>{
+      const raw = isMapLike(runsByName) ? runsByName.get(name) : runsByName[name];
       const list = (Array.isArray(raw) ? raw : []).map(x=>[Number(x[0]), Number(x[1])])
         .filter(x=>Number.isFinite(x[0]) && x[0]>0 && Number.isFinite(x[1]) && x[1]>0)
         .sort((a,b)=>a[0]-b[0]);
@@ -3215,7 +3232,7 @@ const MiniEvxlEngine = (function(){
     if(!index || typeof index.edges!=='function' || !blockMembers) return [];
     const mine = new Set(o.plOf ? (o.plOf(name) || []) : []);
     const edges = index.edges(name).filter(e=>e.n >= o.minN && !(o.plOf && (o.plOf(e.name)||[]).some(k=>mine.has(k))));
-    const entries = blockMembers instanceof Map ? [...blockMembers.entries()] : Object.keys(blockMembers).map(k=>[k, blockMembers[k]]);
+    const entries = isMapLike(blockMembers) ? [...blockMembers.entries()] : Object.keys(blockMembers).map(k=>[k, blockMembers[k]]);
     const out = [];
     entries.forEach(([id, members])=>{
       if(!members || (members.has ? members.has(name) : false)) return;
@@ -3351,7 +3368,7 @@ const MiniEvxlEngine = (function(){
     // what it was, which is what keeps the v0.4/v0.5 snapshot byte-identical -- the type
     // machinery is a layer, like every other one here, and it is the identity when off.
     const rotate = !!opts.rotate;
-    const recentItems = opts.recentItems instanceof Set ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
+    const recentItems = isSetLike(opts.recentItems) ? opts.recentItems : new Set(Array.isArray(opts.recentItems) ? opts.recentItems : []);
     let sessionType = null, sessionTypeWhy = '', typeState = null;
     // The band mix is the WEIGHT source now, not a slot vector (step 8). Without rotation --
     // the fixtures, and any caller that wants the old deterministic composition -- it is used
@@ -4353,7 +4370,7 @@ const MiniEvxlEngine = (function(){
     const o = Object.assign({ maxOverlap: 0.25, minCohesion: 0.10, minTested: 30, order: 'evidence', standing: null, eligible: null, requireSe: false }, opts||{});
     let cands = matrix.groups.filter(g=>!o.eligible || o.eligible(g.id));
     if(o.order==='weakness'){
-      const st = id => { const s = o.standing && (o.standing instanceof Map ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
+      const st = id => { const s = o.standing && (isMapLike(o.standing) ? o.standing.get(id) : o.standing[id]); return s && s.median!==null && s.median!==undefined && Number.isFinite(Number(s.median)) ? Number(s.median) : null; };
       const idx = new Map(cands.map((g, i)=>[g.id, i]));
       cands = cands.slice().sort((a,b)=>{ const sa = st(a.id), sb = st(b.id); if(sa===null && sb===null) return idx.get(a.id)-idx.get(b.id); if(sa===null) return 1; if(sb===null) return -1; return sa-sb || idx.get(a.id)-idx.get(b.id); });
     }
@@ -4873,7 +4890,7 @@ const MiniEvxlEngine = (function(){
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
     standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
-    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
