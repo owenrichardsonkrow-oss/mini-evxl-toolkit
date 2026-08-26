@@ -654,6 +654,45 @@
       m1: (() => { const st = E.stuckness(mkRunsC3([90, 91, 89, 92, 90, 60]), 100, 5); return { older: st.older, se: st.se, seBinomial: st.seBinomial }; })()
     };
 
+    // ---- step 12 (INTENT-1 + INTENT-2): the feel controller --------------------------
+    // Four rules, and each one is a decision that could have gone the other way, so each
+    // gets a case that fails if it is reversed.
+    const fa = f => { const r = E.feelAdjust(f); return { adj: r.adj, raw: r.raw, moves: r.moves, streak: r.streak, kind: r.kind, atLimit: r.atLimit }; };
+    R.feel = {
+      // pinned here so changing a constant fails the fixture rather than silently
+      // redefining what "three in a row" means
+      consts: { run: E.FEEL_RUN, max: E.FEEL_ADJ_MAX, values: E.FEEL_VALUES.slice() },
+      none: fa([]),
+      two: fa(['easy', 'easy']),
+      three: fa(['easy', 'easy', 'easy']),
+      threeHard: fa(['hard', 'hard', 'hard']),
+      // "about right" is an answer, and it BREAKS a run
+      brokenByGood: fa(['easy', 'easy', 'good', 'easy']),
+      // an unrated exposure is a question never asked -- it must NOT break a run
+      unratedDoesNotBreak: fa(['easy', 'easy', null, 'easy']),
+      // a fired streak is SPENT: the fourth identical rating must not move it again
+      spent: fa(['easy', 'easy', 'easy', 'easy']),
+      sixth: fa(['easy', 'easy', 'easy', 'easy', 'easy', 'easy']),
+      // and the clamp holds however long the run
+      clamped: fa(Array.from({ length: 12 }, () => 'easy')),
+      // opposite ratings cancel
+      cancel: fa(['easy', 'easy', 'easy', 'hard', 'hard', 'hard']),
+      // junk values are ignored entirely
+      junk: fa(['easy', 'nonsense', 'easy', 7, 'easy'])
+    };
+    // the THIRD EXIT, and its precedence. A rating must never erase an outcome the runs earned.
+    const bout = (hist, runs, pb, feel) => { const st = E.stagnation(hist, runs, pb, feel ? { feel } : null); return { done: st.done, why: st.why, k: st.k }; };
+    R.thirdExit = {
+      openNoFeel: bout([100, 101], [], 101, null),
+      hardCloses: bout([100, 101], [], 101, 'hard'),
+      easyDoesNot: bout([100, 101], [], 101, 'easy'),
+      goodDoesNot: bout([100, 101], [], 101, 'good'),
+      // a PB in the bout wins over the rating
+      pbBeatsHard: bout([100, 101], [120], 101, 'hard'),
+      // and so does a stagnation stop that already fired
+      exhaustBeatsHard: bout([100], [90, 90, 90, 90, 90, 90], 100, 'hard')
+    };
+
     // ---- NEXT-4: the randomised arm -------------------------------------------------------
     // Three things have to hold or the experiment measures nothing:
     //   1. OFF is the identity -- every pre-NEXT-4 path is untouched.
@@ -1034,6 +1073,29 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const FE = R.feel, TE = R.thirdExit;
+    if(!FE || !TE) problems.push('feel: missing');
+    else {
+      if(FE.consts.run !== 3 || FE.consts.max !== 2) problems.push('feel: the controller is three in a row and a +-2 rung clamp, got '+J(FE.consts));
+      if(J(FE.consts.values) !== J(['easy','good','hard'])) problems.push('feel: the rating vocabulary is easy/good/hard, got '+J(FE.consts.values));
+      if(FE.none.adj !== 0 || FE.two.adj !== 0) problems.push('feel: fewer than three in a row must not move the window, got '+J([FE.none, FE.two]));
+      if(FE.three.adj !== 1 || FE.three.moves !== 1) problems.push('feel: three "too easy" must move the window UP one rung, got '+J(FE.three));
+      if(FE.threeHard.adj !== -1) problems.push('feel: three "too hard" must move the window DOWN one rung, got '+J(FE.threeHard));
+      if(FE.brokenByGood.adj !== 0 || FE.brokenByGood.streak !== 1) problems.push('feel: "about right" must BREAK a run -- it is an answer, not an absence -- got '+J(FE.brokenByGood));
+      if(FE.unratedDoesNotBreak.adj !== 1) problems.push('feel: an UNRATED exposure is a question never asked and must not break a run (COACH-2 s rule), got '+J(FE.unratedDoesNotBreak));
+      if(FE.spent.adj !== 1 || FE.spent.streak !== 1) problems.push('feel: a fired streak is SPENT -- the fourth identical rating must start a new one, not move the window again -- got '+J(FE.spent));
+      if(FE.sixth.adj !== 2) problems.push('feel: six in a row is two moves, got '+J(FE.sixth));
+      if(FE.clamped.adj !== 2 || !FE.clamped.atLimit || FE.clamped.raw <= 2) problems.push('feel: the adjustment must clamp at +-2 and SAY it is clamped, got '+J(FE.clamped));
+      if(FE.cancel.adj !== 0) problems.push('feel: three easy then three hard must cancel, got '+J(FE.cancel));
+      if(FE.junk.adj !== 1) problems.push('feel: values outside the vocabulary must be ignored, not treated as breaks, got '+J(FE.junk));
+
+      if(TE.openNoFeel.done) problems.push('thirdExit: an unrated item with no runs must stay open, got '+J(TE.openNoFeel));
+      if(!TE.hardCloses.done || TE.hardCloses.why !== 'too-hard') problems.push('thirdExit: "too hard" must close the item as its own exit, got '+J(TE.hardCloses));
+      if(TE.easyDoesNot.done || TE.goodDoesNot.done) problems.push('thirdExit: only "too hard" closes an item, got '+J([TE.easyDoesNot, TE.goodDoesNot]));
+      if(TE.pbBeatsHard.why !== 'pb') problems.push('thirdExit: a PB in the bout must WIN over the rating -- a rating cannot erase an outcome the runs earned -- got '+J(TE.pbBeatsHard));
+      if(TE.exhaustBeatsHard.why !== 'exhausted') problems.push('thirdExit: a stagnation stop that already fired must win over the rating, got '+J(TE.exhaustBeatsHard));
+    }
+
     const SN = R.stuckNull;
     if(!SN) problems.push('stuckNull: missing');
     else {

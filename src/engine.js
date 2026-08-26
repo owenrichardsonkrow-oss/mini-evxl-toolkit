@@ -1456,7 +1456,65 @@ const MiniEvxlEngine = (function(){
       }
       if(n/(n+k) <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: n/(n+k), martingale };
     }
+    // step 12 (D21): "too hard" is a THIRD EXIT, and it is tested LAST on purpose. Anything
+    // the runs already decided stands -- a PB above all, but an exhaustion or form stop too --
+    // so a rating can never erase an outcome the play earned. It closes an item nothing else
+    // closed, which is exactly the case it exists for: the scenario you cannot make progress
+    // on and would otherwise sit in front of until the exhaustion rule caught up.
+    if(o.feel === 'hard') return { done: true, why: 'too-hard', k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
     return { done: false, why: null, k: runs.length, runs: runs.length, n, pExhaust: n/(n+runs.length), martingale };
+  }
+
+  // ---- The feel controller (step 12, INTENT-1 + INTENT-2 / D20 + D21) --------------
+  // INTENT-2 asked for the feel rating to actually feed something, and INTENT-1 names the
+  // consumer: the difficulty window. They are ONE controller, so they ship together.
+  //
+  // Three ratings of the same kind in a row move the rung target by one. The rules and why
+  // each is what it is:
+  //   * an UNRATED exposure does not break a streak. It is a question that was never asked,
+  //     and COACH-2 already settled that a question never asked is not an answer -- the same
+  //     reasoning that stopped an unattempted revisit scoring as a miss.
+  //   * "about right" DOES break it. That is a positive statement that the window is where it
+  //     should be, not an absence of one.
+  //   * a streak that fires is SPENT. Without that the fourth identical rating moves the
+  //     target again, and the fifth, so one stubborn stretch walks the window off the scale.
+  //   * the adjustment is clamped to +-2 rungs. This is a POLICY bound, not a measured one:
+  //     the scale is nine rungs read as three families of three (Easy- Easy Easy+ | ...), and
+  //     two rungs is the width that can move you a whole family and no further. An earlier
+  //     draft of this comment justified it by saying the step-12 measurement had found the
+  //     difficulty effect to be a STEP at the family boundary. THAT FINDING DID NOT SURVIVE --
+  //     see the step 12 section of CLAUDE.md: the whole effect was selection into the replayed
+  //     sample, and the in-domain estimate is +0.006. The bound is here to stop a stubborn run
+  //     of ratings walking the window off the scale, and for no other reason. Persistent drift
+  //     belongs in `level` itself, which is re-derived from what you actually play.
+  // It is a fold over the record, not a stored setting: nothing persists the adjustment, so it
+  // is always exactly what the ratings say and an imported backup recomputes it.
+  //
+  // THE WINDOW IS A FIXED POINT OF THE FILTER IT FEEDS. `level` is the median rung of what you
+  // have played, and what you play is what the window admits -- so a rating that moves the
+  // window changes the population `level` is computed from. It is the intended loop (that is
+  // what a controller IS), but the played set is bimodal (modes at rungs 1 and 7, only ~30% in
+  // 3-5), so `level` can flip on a modest change in what gets logged and move every offset at
+  // once. That is the second reason for the clamp, and the reason the ledger stamps `levelBase`
+  // and `levelAdj` on every serving: the drift has to be auditable after the fact.
+  const FEEL_RUN = 3;                 // ratings of one kind in a row that move the target
+  const FEEL_ADJ_MAX = 2;             // rungs, either way
+  const FEEL_VALUES = ['easy', 'good', 'hard'];
+  function feelAdjust(feels, opts){
+    const o = Object.assign({ run: FEEL_RUN, max: FEEL_ADJ_MAX }, opts||{});
+    let adj = 0, streak = 0, kind = null, moves = 0;
+    (feels||[]).forEach(f=>{
+      if(FEEL_VALUES.indexOf(f) < 0) return;            // unrated: not an answer, not a break
+      if(f === 'good'){ streak = 0; kind = null; return; }
+      if(f === kind) streak++; else { kind = f; streak = 1; }
+      if(streak >= o.run){
+        adj += (f === 'easy') ? 1 : -1;
+        moves++;
+        streak = 0; kind = null;                        // spent
+      }
+    });
+    const clamped = Math.max(-o.max, Math.min(o.max, adj));
+    return { adj: clamped, raw: adj, moves, streak, kind, atLimit: clamped !== adj };
   }
 
   // ---- Session engine v0.3 (2026-08-22: percentile metric + transfer routes) ------
@@ -2528,7 +2586,8 @@ const MiniEvxlEngine = (function(){
   function queueNext(scenarios, opts, playlistFill){
     const s = composeSession(scenarios, Object.assign({}, opts||{}, { size: 1 }), playlistFill);
     const item = (s.items && s.items.length) ? s.items[0] : null;
-    return { item, purpose: item ? item.why : null, regime: s.regime, level: s.level, popLevel: s.popLevel,
+    return { item, purpose: item ? item.why : null, regime: s.regime, level: s.level,
+      levelBase: s.levelBase===undefined ? null : s.levelBase, levelAdjust: s.levelAdjust||0, popLevel: s.popLevel,
       confidence: s.confidence, blocks: s.blocks || null, weakLabels: s.weakLabels || [],
       bias: s.type || null, biasWhy: s.typeWhy || '', weights: s.purposeWeights || null };
   }
@@ -2893,7 +2952,12 @@ const MiniEvxlEngine = (function(){
       }
       return { regime: 'thin', level: null, popLevel: null, weakLabels: [], confidence: opts.confidence||null, template: null, items };
     }
-    const level = sessionLevel(played);
+    // step 12: the difficulty window is a TARGET, not a fixed reading of what you play.
+    // `levelAdjust` is where the feel controller's fold arrives; clamped to the rung scale so
+    // a run of ratings cannot walk the window off either end.
+    const levelBase = sessionLevel(played);
+    const levelAdj = numOrNull(opts.levelAdjust)===null ? 0 : Math.round(Number(opts.levelAdjust));
+    const level = levelBase===null ? null : Math.max(0, Math.min(8, levelBase + levelAdj));
     const curved = played.filter(hasPct);
     popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
     const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
@@ -3382,7 +3446,7 @@ const MiniEvxlEngine = (function(){
     take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
-    return { regime: 'normal', level, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
+    return { regime: 'normal', level, levelBase, levelAdjust: levelAdj, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
       type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking };
   }
@@ -4207,7 +4271,8 @@ const MiniEvxlEngine = (function(){
   }
   return { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, ATTEMPT_KEEP, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, boardConfidence, profileConfidence, sessionTemplate, revisitForecast, forecastBucket, sessionHistoryStats, SESSION_TEMPLATES, GAME_FACETS_DEFAULT, RESP_MIN_RUNS,
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
-    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
+    boutsOf, stagnation, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
