@@ -241,6 +241,25 @@
       return sc;
     });
     const sD = E.composeSession(fxD, OPTS, FILL);
+    // ---- step 5a (MET-4): the slope is applied where YOU stand ---------------------------
+    // The map's r correlates LOGIT residuals, so it is a slope in logit space. Before 5a the
+    // code multiplied it by a percentile difference, which gives the same answer wherever the
+    // candidate stands. It should not: a 12-point move at the middle of a board is a much
+    // bigger change in log-odds than the same 12 points near either end, so the SAME evidence
+    // has to predict less for someone at the 10th or 92nd percentile than at the 50th.
+    // One neighbour, one movement (0.40 -> 0.52 at r 0.5 / n 400), three candidates.
+    const placementGain = ownPct => {
+      const NB = 'Nb Mover';
+      const sc = { name: 'Cand', played: true, pct: ownPct, att: { n: 4, lastT: T(20), nearness: 1 },
+        neighbours: [[NB, 0.5, 400]], resp: { n: 5, gain: 0, nearPct: 0.02, state: 'responsive' } };
+      const nb = { name: NB, played: true, pct: 0.52, att: { n: 3, lastT: T(10), nearness: 1 },
+        raises: [[T(10), 0.40, 0.52]] };
+      const f = E.revisitForecast(sc, new Map([[NB, nb], ['Cand', sc]]), { historySince: T(90) });
+      return f ? f.gain : null;
+    };
+    R.forecastPlacement = { low: placementGain(0.10), mid: placementGain(0.50), high: placementGain(0.92),
+      // a candidate with no curve has no percentile, so the movement has nowhere to be placed
+      noCurve: placementGain(null) };
     R.forecastOrder = sD.items.filter(it=>it.why==='revisit').map(it=>[it.name, it.forecast ? Math.round(it.forecast.p*100)/100 : null]);
     // template + profile confidence
     R.templates = {};
@@ -423,8 +442,52 @@
     R.rotation = { type: sRot.type, hasWhy: !!(sRot.typeWhy && sRot.typeWhy.length > 20), size: sRot.items.length,
       template: sRot.template ? [sRot.template.weakest, sRot.template.route, sRot.template.fillout, sRot.template.quickwin, sRot.template.revisit] : null,
       wanted: (()=>{ const t = E.SESSION_TYPES[sRot.type]; return t ? [t.weakest, t.route, t.fillout, t.quickwin, t.revisit] : null; })(),
+      // step 8: with rotation the slot vector is DRAWN from the type's weights, one purpose
+      // per item, so it is no longer equal to that vector -- it is a sample from it. What
+      // must still hold: it sums to the size, and nothing is served from a purpose the type
+      // gives no weight to.
+      drawnSum: sRot.template ? E.PURPOSES.reduce((a,k)=>a+(Number(sRot.template[k])||0), 0) : null,
+      drawnOffMix: (()=>{ const w = sRot.purposeWeights; if(!w || !sRot.template) return null;
+        return E.PURPOSES.filter(k=>(Number(sRot.template[k])||0) > 0 && !(Number(w[k])||0) > 0); })(),
+      weightsNamed: !!sRot.purposeWeights,
       offType: E.composeSession(fixture(E), Object.assign({}, OPTS, { blocks: BLOCKS }), FILL).type,
       slots: slotsOf(sRot) };
+
+    // ---- BUG-2 (Review Ledger IV, fixed at step 10): the Transfer trigger ---------------
+    // "the weakest block's weakest are sinks" was implemented as slice(0, 3) of members taken
+    // from `weakPool`, which is sorted with SINKS LAST -- so it tested the three LEAST stuck
+    // members and could only fire when nearly every member of the block was a sink.
+    //
+    // The discriminating fixture: a block whose three WEAKEST are sinks and whose stronger
+    // members are not. Under the old code the slice picked the three strongest-of-the-non-sinks
+    // and `.every(sinks)` was false; under the fix the three weakest are exactly the sinks.
+    // Marking the three STRONGEST instead must stay false, or the fix would have replaced one
+    // unreachable condition with an indiscriminate one.
+    {
+      const sink = sc => Object.assign({}, sc, { att: { n: 8, nearness: 0.5, lastT: OPTS.now - 3*86400000 } });
+      const blockOfName = n => (BLOCKS && typeof BLOCKS.of === 'function') ? BLOCKS.of(n) : null;
+      const rowsFor = which => {
+        const rows = fixture(E);
+        // the eligible pool the engine ranks: played, not maxed, at or under the level it derives
+        const pool = rows.filter(sc=>sc.played && !sc.maxed && sc.rung<=4 && blockOfName(sc.name));
+        const byBlock = {};
+        pool.forEach(sc=>{ const b = blockOfName(sc.name); (byBlock[b] = byBlock[b] || []).push(sc); });
+        // the block the engine will call weakest is the one with the lowest median pct; take
+        // the biggest instead, and assert on that block's own trigger rather than the type
+        const big = Object.keys(byBlock).sort((a,b)=>byBlock[b].length-byBlock[a].length)[0];
+        const members = byBlock[big].slice().sort((a,b)=>a.pct-b.pct);
+        const mark = new Set((which==='weakest' ? members.slice(0,3) : members.slice(-3)).map(sc=>sc.name));
+        return { rows: rows.map(sc=>mark.has(sc.name) ? sink(sc) : sc), block: big, members: members.length };
+      };
+      const runFor = which => {
+        const f = rowsFor(which);
+        const res = E.composeSession(f.rows, rotOpts({ blocks: BLOCKS }), FILL);
+        const st = res.typeState || {};
+        return { block: f.block, members: f.members, weakBlockId: st.weakBlockId || null,
+          sinks: st.weakBlockSinks === true, share: st.weakBlockSinkShare };
+      };
+      R.transferTrigger = { weakestAreSinks: runFor('weakest'), strongestAreSinks: runFor('strongest') };
+    }
     // Sampling: the same rules, different scenarios day to day. Across twenty day-seeds the
     // weakest slice must not be the same list every time (that was the complaint) while the
     // scenarios it draws from stay the weak end of the pool.
@@ -857,7 +920,26 @@
       if(!RO.type || !E_SESSION_TYPES_HAS(RO.type)) problems.push('rotation: composeSession with rotate must name a type, got '+J(RO.type));
       if(!RO.hasWhy) problems.push('rotation: the type must come with a reason the page can print, got '+J(RO.hasWhy));
       if(RO.size!==10) problems.push('rotation: the session is still ten items, got '+RO.size);
-      if(J(RO.template)!==J(RO.wanted)) problems.push('rotation: the template must be the slots of that type, got '+J(RO.template)+' wanted '+J(RO.wanted));
+      // step 8 retires the fixed slot vector: with rotation the composition is a DRAW from
+      // the type's weights (one purpose per item), so `template` is a sample, not the vector.
+      if(!RO.weightsNamed) problems.push('rotation: composeSession with rotate must expose the purpose WEIGHTS it drew from');
+      if(RO.drawnSum!==RO.size) problems.push('rotation: the drawn purposes must sum to the size, got '+RO.drawnSum+' for '+RO.size+' items');
+      if(RO.drawnOffMix && RO.drawnOffMix.length) problems.push('rotation: drew a purpose the type gives no weight to: '+J(RO.drawnOffMix));
+    }
+    // BUG-2: the trigger must read the block's WEAKEST members, not its least stuck ones
+    const TT = R.transferTrigger;
+    if(!TT) problems.push('transferTrigger: missing');
+    else {
+      if(TT.weakestAreSinks.weakBlockId !== TT.weakestAreSinks.block)
+        problems.push('transferTrigger: the fixture marked block '+J(TT.weakestAreSinks.block)+' but the engine ranked '+J(TT.weakestAreSinks.weakBlockId)+' weakest -- the case does not exercise the trigger');
+      else {
+        if(TT.weakestAreSinks.sinks !== true)
+          problems.push('BUG-2: a block whose three WEAKEST members are sinks must set weakBlockSinks, got '+J(TT.weakestAreSinks));
+        if(TT.strongestAreSinks.weakBlockId === TT.strongestAreSinks.block && TT.strongestAreSinks.sinks !== false)
+          problems.push('BUG-2: a block whose three STRONGEST are sinks must NOT set weakBlockSinks, got '+J(TT.strongestAreSinks));
+        if(!(Number(TT.weakestAreSinks.share) > 0))
+          problems.push('transferTrigger: the sink share must be reported as a diagnostic, got '+J(TT.weakestAreSinks.share));
+      }
       if(RO.offType!==null) problems.push('rotation: WITHOUT opts.rotate there is no type and the pre-A3 behaviour stands, got '+J(RO.offType));
     }
     const SA = R.sampling;
@@ -1058,10 +1140,21 @@
       // The old r-weighted MEAN OF MOVEMENTS gave 0.066667 -- it read a neighbour's 12-point
       // gain as 12 of your own points. Worth stating as an inequality too, because that is
       // the property that must hold whatever the numbers are.
+      // STEP 5a (MET-4): the slope is applied in LOGIT space. The map's r correlates logit
+      // residuals, so r times a PERCENTILE difference mixes units. `pred` carries the
+      // neighbour's movement through the logit and places it at the candidate's OWN
+      // percentile. Derived from the fixture's own numbers rather than pasted: Sw Old Switch
+      // stands at 0.48 and Cl Wide Pasu moved 0.40 -> 0.52. The correction is SMALL here
+      // because those percentiles are close; features.forecastPlacement makes it bite.
+      const LG = v => { const c = Math.min(Math.max(v, 0.005), 1-0.005); return Math.log(c/(1-c)); };
+      const IL = z => 1/(1+Math.exp(-z));
       const wA = 0.5*400/450, wB = 0.4*300/350;
-      const gainAttenuated = (wA*(wA*0.12) + wB*(wB*0)) / (wA + wB);
+      const predA = IL(LG(0.48) + wA*(LG(0.52) - LG(0.40))) - 0.48;
+      const gainAttenuated = (wA*predA + wB*0) / (wA + wB);
+      const gainPctSpace = (wA*(wA*0.12) + wB*0) / (wA + wB);      // the pre-5a form, for contrast
       const gainOldForm = (0.5*0.12 + 0.4*0) / (0.5 + 0.4);
       if(!near(f.gain, gainAttenuated, 1e-9) || !near(f.margin, 0.02, 1e-9) || !near(f.odds, gainAttenuated-0.02, 1e-9)) problems.push('forecast: gain must attenuate by the shrunk r (w*delta), not average the neighbours\' movements, got '+J(f));
+      if(near(f.gain, gainPctSpace, 1e-9)) problems.push('forecast: gain equals the pre-5a percentile-space product exactly -- the logit conversion is not being applied');
       if(!(f.gain < gainOldForm*0.6)) problems.push('forecast: the attenuated gain must be materially below the old r-weighted mean of movements ('+gainOldForm.toFixed(4)+'), got '+f.gain);
       if(!f.evidence.every(e=>e[1] !== undefined)) problems.push('forecast: every evidence row keeps its raw r for display');
       if(!near(f.p, 1/(1+Math.exp(-(gainAttenuated-0.02)/0.04)), 1e-9)) problems.push('forecast: p must be logistic(odds/0.04), got '+f.p);
@@ -1083,8 +1176,16 @@
     // 0.53 rather than 0.78 since COACH-1: one neighbour at r 0.6 on n 500 that moved
     // +0.10 gives w = 0.6*500/550 = 0.5455 and gain = 0.5455*0.10 = 0.05455 against the old
     // form's 0.10. What the case is FOR is the ordering, so assert that as well as the value.
+    const FP = R.forecastPlacement;
+    if(!FP) problems.push('forecastPlacement: missing');
+    else {
+      if(!(FP.mid > FP.low && FP.mid > FP.high)) problems.push('forecastPlacement: the same movement must predict MOST for a candidate at the middle of the board, got '+J(FP));
+      if(!(FP.low < FP.mid*0.6 && FP.high < FP.mid*0.6)) problems.push('forecastPlacement: the ends must be materially damped against the middle -- if all three are equal the slope is being applied in percentile space, got '+J(FP));
+      if(!(FP.high < FP.low)) problems.push('forecastPlacement: 0.92 is nearer the ceiling than 0.10 is to the floor, so it must be damped harder, got '+J(FP));
+      if(FP.noCurve !== null) problems.push('forecastPlacement: a candidate with no percentile has nowhere to place the movement and must get NO forecast, got '+J(FP.noCurve));
+    }
     if(!R.forecastOrder.length || R.forecastOrder[0][0]!=='Tr Old Smooth') problems.push('forecast order: the forecast candidate (Tr Old Smooth, 20 d) must come before the longest-unplayed one, got '+J(R.forecastOrder));
-    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.53]])) problems.push('forecast order: p moved with the attenuation and is pinned at 0.53, got '+J(R.forecastOrder));
+    else if(J(R.forecastOrder)!==J([['Tr Old Smooth', 0.54]])) problems.push('forecast order: p moved with the attenuation and the step-5a logit slope, pinned at 0.54, got '+J(R.forecastOrder));
     // v0.5 blocks
     const B = R.blocks;
     if(!B || B.standings.length!==3 || B.standings.some(s=>s[2]===null)) problems.push('blocks: three block standings expected, got '+J(B && B.standings));
