@@ -2442,6 +2442,45 @@ const MiniEvxlEngine = (function(){
       aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
+  // ---- INTENT-6: HOW LONG A SCENARIO TAKES (step 17, 2026-08-26) --------------------
+  // The coach serves items without knowing what it is asking for: a 30-second scenario and a
+  // five-minute one are not the same request. That is INTENT-6's blind spot, and the data it
+  // needs turned out NOT to be in the harvest.
+  //
+  // PROBED, and it is not there: KovaaK's `scenario/popular` returns only {aimType, authors,
+  // description}, and a leaderboard row's `attributes.challengeStart` is a TIME-OF-DAY string
+  // ("00:02:07.210", "21:13:56.216") rather than an epoch, so `epoch - challengeStart` is not a
+  // duration. There is no duration field to carry.
+  //
+  // What works instead costs no requests at all. Two consecutive runs of the same scenario in
+  // one sitting are separated by the run itself plus the time to restart it, so the SHORT tail
+  // of that distribution is the run length plus a floor of overhead. It is a LOWER BOUND and is
+  // reported as one -- a run quit early makes a gap shorter than the scenario, never longer.
+  // The 10th percentile rather than the minimum, so one quit does not define the answer.
+  const DURATION_MIN_GAP_S = 5;      // below this the two rows are one run seen twice
+  const DURATION_MAX_GAP_S = 900;    // above it he got up; not a restart
+  const DURATION_MIN_SAMPLES = 4;
+  function scenarioDuration(runs, opts){
+    const o = Object.assign({ minGap: DURATION_MIN_GAP_S, maxGap: DURATION_MAX_GAP_S,
+      minSamples: DURATION_MIN_SAMPLES, q: 0.1 }, opts||{});
+    const ts = (Array.isArray(runs) ? runs : []).map(x=>Number(x[0])).filter(t=>Number.isFinite(t) && t>0).sort((a,b)=>a-b);
+    const tight = [];
+    for(let i=1;i<ts.length;i++){
+      const g = (ts[i]-ts[i-1])/1000;
+      if(g >= o.minGap && g <= o.maxGap) tight.push(g);
+    }
+    if(tight.length < o.minSamples) return { seconds: null, samples: tight.length, src: null };
+    tight.sort((a,b)=>a-b);
+    // NEVER the strict minimum. A quantile alone does not protect you: at seven samples
+    // floor(0.1 * 7) is 0, so the 10th percentile IS the minimum and one quit-early run defines
+    // the answer -- which the fixture caught by planting exactly that. The floor of 1 means the
+    // shortest gap can never be the reported duration once there are enough gaps to have an
+    // opinion, and the raw `min` rides along so the difference stays visible.
+    const idx = Math.min(tight.length-1, Math.max(1, Math.floor(o.q*tight.length)));
+    return { seconds: tight[idx], samples: tight.length, src: 'runs', min: tight[0],
+      median: tight[Math.floor(tight.length/2)] };
+  }
+
   // ---- INTENT-4: THE PROVENANCE LADDER (step 14, 2026-08-26) ------------------------
   // Every claim this tool makes about "practising X moves Y" rests on evidence of one of
   // three kinds, and until now the data model could not tell them apart -- every shipped edge
@@ -4601,6 +4640,7 @@ const MiniEvxlEngine = (function(){
     coach4Readiness, COACH4_EPV,
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
+    scenarioDuration, DURATION_MIN_SAMPLES,
     revisitHorizon, REVISIT_MIN_DAYS, HORIZON_MAX_DAYS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer

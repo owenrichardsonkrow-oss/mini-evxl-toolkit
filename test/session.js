@@ -730,6 +730,24 @@
       }
     };
 
+    // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
+    const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
+      secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
+    R.duration = {
+      // six 60-second gaps: a clean read
+      clean: E.scenarioDuration(mkRuns([62, 61, 63, 62, 64, 61])),
+      // one quit-early run must NOT define the answer -- that is why it is a low quantile
+      // rather than the minimum
+      withQuit: E.scenarioDuration(mkRuns([62, 61, 8, 63, 62, 64, 61])),
+      // gaps that are breaks, not restarts, are excluded
+      withBreak: E.scenarioDuration(mkRuns([62, 61, 4000, 63, 62, 61])),
+      // and two rows of one run seen twice are not a gap at all
+      dupes: E.scenarioDuration(mkRuns([1, 1, 62, 61, 63, 62])),
+      tooFew: E.scenarioDuration(mkRuns([62, 61])),
+      none: E.scenarioDuration([]),
+      short: E.scenarioDuration(mkRuns([25, 26, 24, 25, 27]))
+    };
+
     // ---- step 13: COACH-4's readiness gate ------------------------------------------
     // A gate you can see is a gate; a gate you have to remember is a hope. So the thing that
     // must not break is that it can say NO for each distinct reason, and YES when they clear.
@@ -1143,6 +1161,19 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const DU = R.duration;
+    if(!DU) problems.push('duration: missing');
+    else {
+      if(!(DU.clean.seconds >= 60 && DU.clean.seconds <= 64) || DU.clean.src !== 'runs') problems.push('duration: six ~62s gaps must read as about a minute, got '+J(DU.clean));
+      if(!(DU.withQuit.seconds >= 60)) problems.push('duration: a single quit-early gap must not define the answer -- that is what the low quantile is for, got '+J(DU.withQuit));
+      if(DU.withBreak.samples !== 5) problems.push('duration: a 4,000s gap is a BREAK and must be excluded, got '+J(DU.withBreak));
+      if(DU.dupes.samples !== 4) problems.push('duration: a 1s gap is one run seen twice, not a restart, got '+J(DU.dupes));
+      if(DU.tooFew.seconds !== null || DU.tooFew.src !== null) problems.push('duration: under the sample floor there is no answer, got '+J(DU.tooFew));
+      if(DU.none.seconds !== null) problems.push('duration: no runs, no answer, got '+J(DU.none));
+      if(!(DU.short.seconds >= 24 && DU.short.seconds <= 26)) problems.push('duration: a genuinely short scenario must read short, got '+J(DU.short));
+      if(!(DU.clean.min <= DU.clean.seconds && DU.clean.seconds <= DU.clean.median)) problems.push('duration: the reported value must sit between the min and the median, got '+J(DU.clean));
+    }
+
     const S14 = R.step14;
     if(!S14) problems.push('step14: missing');
     else {
