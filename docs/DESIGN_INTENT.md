@@ -685,11 +685,19 @@ decisions and do not belong in this sequence.
   NUMERATOR of every block member's weight. So a number borrowed from one scenario moves the rank
   of a **well-measured** block-mate that borrowed nothing. That is a strictly stronger breach than
   the one on record, and no entry had it.
-  **What survives of the closure, and what would actually close this.** At a fixed `c`, most
-  cross-scenario variation really is the curve — only 3.84% of pairs invert under a 2× perturbation
-  — so the conclusion may well be defensible. But it would have to be established as a **measured
-  sensitivity bound** (*over the plausible range of `runCv`, the served weakest set does not
-  change*), which step 32 did not measure. A mechanical claim was offered instead because it was
+  **THE SENSITIVITY BOUND WAS MEASURED AT STEP 33, ON A BAR COMMITTED FIRST, AND IT FAILED.**
+  Sweeping the borrowed CV across the full per-scenario plausible range [0.0383, 0.2031] and
+  comparing the served weakest set over 40 seeded days against the shipped value: **worst Jaccard by
+  CV 0.279, worst by SEED 0.393.** The comparator is seed variation because that is randomness the
+  design already ships deliberately (D1). **So the borrowed constant moves what the coach serves MORE
+  than the sampler does, and the breach is MATERIAL.**
+  The structure matters more than the verdict: the effect is monotone in distance from the measured
+  value, and within about ±50% (0.05–0.10) the CV channel reads 0.379–0.400 — *level with* seed
+  variation. It exceeds it only at 2–3×. So the honest statement is not that the ranking is being
+  wrecked, but that **one constant is a poor stand-in for a quantity that varies 5.3× across
+  scenarios**, and at the edges of that spread it decides more than the draw does.
+  **The bar was written to be harsh and was applied as written** — reinterpreting a failed
+  pre-registered bar is exactly what the retracted step-32 closure did in the other direction. A mechanical claim was offered instead because it was
   checkable, and it did not check out. **The general form first proposed to the owner — "a borrowed
   number may set the weight, not the value" — is still the wrong shape**: it is a category future
   decisions would be argued into.

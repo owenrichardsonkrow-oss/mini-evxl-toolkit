@@ -3080,6 +3080,16 @@ const MiniEvxlEngine = (function(){
       });
       if(cvs.length){ cvs.sort((a,b)=>a-b); runCv = cvs[Math.floor(cvs.length/2)]; }
     }
+    // `cvOverride` replaces the borrowed constant, for step 33's sensitivity sweep and nothing
+    // else. Default null = the measured value, so the shipped path is untouched (the unchanged
+    // session snapshot is the evidence). Same shape as `metric` and `pooling`, for step 19's
+    // reason: a criterion needs candidates to be checkable against, and steps 11 and 12 both had
+    // to build-and-revert to compare -- which makes a comparison depend on nobody having erred
+    // while reverting. D26's breach is about THIS constant, so it has to be movable to be judged.
+    if(o.cvOverride !== null && o.cvOverride !== undefined){
+      const ov = Number(o.cvOverride);
+      if(Number.isFinite(ov) && ov > 0) runCv = ov;
+    }
     // memoised: step 21 reads it once for the standardisation and the row loop reads it again
     const _runSe = new Map();
     const runSeOf = name => {
@@ -3355,7 +3365,7 @@ const MiniEvxlEngine = (function(){
     // the weakest key, routeCheck's "you stand higher here", skillProfile's medians, the
     // block standings -- then operates on one comparable scale without knowing about it.
     // Idempotent, so an app that already calibrated for its own strip pays nothing.
-    scenarios = calibrateScenarios(scenarios, { offsets: opts.offsets, runsOf: opts.runsOf, pctOf: opts.pctOf });
+    scenarios = calibrateScenarios(scenarios, { offsets: opts.offsets, runsOf: opts.runsOf, pctOf: opts.pctOf, cvOverride: opts.cvOverride });
     const calibrated = !!scenarios.calibrated;
     const rnd = seededRandom(opts.seed);
     const shuffle = arr => { const a = arr.slice(); for(let i=a.length-1;i>0;i--){ const j=Math.floor(rnd()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; };
@@ -3564,9 +3574,17 @@ const MiniEvxlEngine = (function(){
     //                 one run. It is an estimate rather than evidence about that scenario.
     // The EB WEIGHT uses the full one -- 53% of the pool has a single run, and a weight that
     // ignored their uncertainty would leave the winner's curse exactly where it is, which is
-    // the whole target. TAU^2 is estimated from the measured one only: feeding the borrowed
-    // errors into `Var(x) - mean(s^2)` is what drove c:4's tau^2 to zero and flattened its
-    // whole block when this was first attempted.
+    // the whole target.
+    //
+    // TAU^2 SEES THE BORROWED ERRORS TOO, and this comment said the opposite until step 33.
+    // It described the FIRST attempt, where a moment estimator `Var(x) - mean(s^2)` was fed the
+    // borrowed errors and drove c:4's tau^2 to zero, flattening its whole block. Step 11 replaced
+    // that with Paule-Mandel, which WEIGHTS by 1/(tau^2 + s^2) instead of averaging -- so a
+    // borrowed error is downweighted rather than excluded, and every member goes in (the comment
+    // twenty lines below says so, and the code has agreed with that one, not this one, since).
+    // The consequence is real and is D26's strongest open channel: tau^2 is the NUMERATOR of
+    // every member's weight, so a borrowed error moves the rank of a block-mate that borrowed
+    // nothing. Attenuated by the weighting, not eliminated by it.
     const errOf = (sc, full) => {
       const v = metricSpread(sessionMetric(sc), sc.mSe, null, null, full ? sc.mRunSeShown : sc.mRunSe);
       return (v===null || !Number.isFinite(v) || v<0) ? null : v;
