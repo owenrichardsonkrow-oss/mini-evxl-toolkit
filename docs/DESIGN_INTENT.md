@@ -494,6 +494,31 @@ run-history import; both transfer analyses.
   4.7% is too few to re-run the protocol over and the misplacement is
   concentrated in one interpretable place, so the freeze stands and the naming
   question stays open with its evidence attached.
+- **D13 amended again** (2026-08-26, Review Ledger V step 23) — **names stay
+  data-derived and unratified; the RULE that derives them is now derived too.**
+  The old rule took the two most frequent curator labels, always. Measured, that
+  was not a description: bootstrapping each block's own members 2,000 times, the
+  FIRST term is stable (c:1 P = 1.00, c:4 P = 1.00) and the SECOND usually is not
+  — c:5's `tracking · control` survived at **P = 0.28**, its second word an
+  **exact 12%/12% tie** with `switching` decided by alphabetical order, while
+  c:0's *first* word rested on 1.6 percentage points across 24 effective labels.
+  Two things are derived now.
+  **TERM COUNT** — a second term is added only when the first fails to IDENTIFY
+  the block, i.e. another surviving community shares it. c:4 is 58% `switching`
+  and a second word carried nothing, so it has one.
+  **TERM CHOICE** — when a second term is needed it comes from **lift** (share
+  here over share pooled across blocks), not frequency, because frequency picks
+  what is common everywhere: `tracking` leads both c:1 and c:5 and separates
+  neither, while `control` is **7.4x over-represented** in c:5. It must also
+  cover 15% of the block's MEMBERS — lift alone selects whatever is exclusive
+  however thin, and c:1's highest-lift label rides 12 of 140 members. Where
+  nothing clears the bar the name says the block is **broad** rather than
+  inventing a term.
+  Effect: `static · clicking` → **static (c0)**, `switching · speed` →
+  **switching (c4)**, while c:1 and c:5 keep their text and acquire a measured
+  reason for it. **Two names lose a noise term; none gains an assertion.** The
+  names remain unratified and freeze-local, so points (1) and (2) above stand
+  unchanged, and a served item still shows the name it was served under.
 - **D14** — no range-restriction correction on the transfer map (the W6
   diagnostic above); the sample caveat is the measured median, printed from
   the data, never a literal.
