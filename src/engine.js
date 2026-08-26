@@ -1427,9 +1427,9 @@ const MiniEvxlEngine = (function(){
   // is what happens to a figure that lives in two places and re-runs in neither.
   //
   // AND THE ARRIVAL TABLE BELOW IS OVER A DIFFERENT POPULATION THAN THE SENTENCE ABOVE IT.
-  // It counts every PB EVENT in the record (625), not the 550 the rule actually reaches. The
-  // difference is exactly the 75 early-closes, and by construction those are all LATE PBs --
-  // which is why the run-3+ row is 58 here and only 14 among the PBs the rule reaches. Both
+  // It counts every PB EVENT in the record (625), not the 525 the rule actually reaches. The
+  // difference is exactly the 100 early-closes, and by construction those are all LATE PBs --
+  // which is why the run-3+ row is 58 here and only 6 among the PBs the rule reaches. Both
   // are true and they answer different questions; printed together they read as one.
   //
   //     PB arrived on run 1 of the bout   468 events (74.9%)  median +6.23% over the old PB
@@ -1438,7 +1438,17 @@ const MiniEvxlEngine = (function(){
   //     of which the RULE reaches:        468 / 51 / 6 (525), gains +6.23% / +3.12% / +2.15%
   //  The event table is a property of the RECORD and does not move with the threshold; the
   //  rule-reached row does, and at 0.685 it gives up 17 more of the run-2 PBs and 8 more of the
-  //  run-3+ ones. They are the small ones, which is the trade the aggressive setting buys.
+  //  run-3+ ones.
+  //
+  //  AND THOSE 25 ARE NOT THE SMALL ONES, which this comment and step 8 both used to claim. The
+  //  given-up set was never measured -- both quoted the medians of the PBs the rule still REACHES,
+  //  a different and systematically lower population, because the ones it stops reaching are the
+  //  later ones. Measured by replaying 0.6 and 0.685 over the same bouts and diffing them
+  //  (dev/hazard-lambda.json /givenUp): the 25 are 0 run-1, 17 run-2 and 8 run-3+, and their
+  //  median gains are +5.05% and +1.57% against a first-run PB's +6.23%. So the run-2 ones the
+  //  aggressive setting gives up are worth about FOUR FIFTHS of a first-run PB, not the half or
+  //  the third previously stated; the run-3+ ones are worth about a quarter. The trade is real
+  //  and the decision stands, but it costs more than the file said it did.
   //
   // Three quarters of his PBs come on the FIRST run, and one that takes three or more runs is
   // worth a third as much. His "grinding produces an outlier" turns out to be exactly right

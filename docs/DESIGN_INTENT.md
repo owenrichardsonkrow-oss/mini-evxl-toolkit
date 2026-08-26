@@ -719,9 +719,17 @@ decisions and do not belong in this sequence.
   [0.684211, 0.685855] until 2026-08-26: that upper figure is the band's MIDPOINT, so the width
   read half its true size. `dev/figures.json` checks both edges against
   `dev/hazard-lambda.json`'s `rename.decisionBand` now. 0.685 is inside either way.)* **Cost, measured:** items closed before a PB the play went on to get, 6.1% → 8.1%; PBs
-  reached 550 → 525, the 25 given up being 17 run-2 PBs worth a median +3.12% and 8 run-3+ ones
-  worth +2.15%, against a first-run PB's +6.23% — about **half** and about a third respectively,
-  not "a third" across the board.
+  reached 550 → 525. **The 25 given up are 0 run-1, 17 run-2 and 8 run-3+, worth a median
+  +5.05% and +1.57% against a first-run PB's +6.23%** — so the run-2 ones are worth about
+  **four fifths** of a first-run PB and the run-3+ ones about a quarter.
+  *(Measured at step 31 by replaying 0.6 and 0.685 over the same bouts and diffing them
+  (`dev/hazard-lambda.json` `/givenUp`). Every earlier statement of this cost — this entry's
+  first version, the engine comment, and step 8's original "the PBs an aggressive rule gives up
+  are the small ones" — quoted +3.12%/+2.15%, which are the medians of the 51 and 6 PBs the rule
+  still REACHES. That is a different and systematically lower population, because the ones it
+  stops reaching are the later ones. The move costs more than the record has ever said: the
+  run-2 half is worth four fifths of a first-run PB, not the third originally claimed nor the
+  half its first correction claimed.)* The decision stands and is reversible by design.
   **Consequence:** the form test now fires zero times on this record, because exhaustion always
   reaches the bar first. Reversible by design.
 

@@ -851,11 +851,19 @@
     // not bit-identical to the division and a boundary case at `<= stagnateAt` could flip.
     {
       const P = E.stagnateP, near = (a, b, tol) => Number.isFinite(a) && Math.abs(a - b) <= (tol || 1e-12);
-      // n = 5, NOT 3, and the reason is the whole of bar 2. k*(n) is an INTEGER, so at many n
-      // the shipped rule and the measured lambda stop at the SAME run: at n = 3 both stop at
-      // k = 2. The first draft of this case used n = 3 and failed, which is the discreteness
-      // that lets a single STAGNATE_AT reproduce the whole lambda schedule. At n = 5 they
-      // differ (4 against 3), so the case actually exercises the option.
+      // n = 5, and the reason is the whole of bar 2. k*(n) is an INTEGER, so at many n the
+      // shipped rule and the measured lambda stop at the SAME run -- which is the discreteness
+      // that lets a single STAGNATE_AT reproduce the whole lambda schedule. At the shipped
+      // STAGNATE_AT = 0.685 the agreeing n are 2 and 4 (both stop at k = 1 and k = 2
+      // respectively), and n = 5 differs: lambda = 1 stops at k = 3, lambda = 1.32 at k = 2.
+      //
+      // WHICH n AGREE DEPENDS ON THE THRESHOLD, and this comment was stale at birth: it was
+      // written against STAGNATE_AT = 0.6 (where n = 3 agreed at k = 2 and n = 5 read 4 against
+      // 3) in the same release that moved the constant to 0.685. At 0.685 n = 3 differs (2
+      // against 1), so the example it gave for agreement is now an example of disagreement.
+      // The assertion below is threshold-independent -- the measured lambda must stop STRICTLY
+      // SOONER -- so it kept passing while its stated reason was false. Recompute the pair from
+      // stagnateP if STAGNATE_AT moves again.
       const hist = [100, 100, 100, 100, 100];       // n = 5, target 100
       const bout = [90, 90, 90, 90, 90, 90];        // never beats it
       const stopK = lam => {
