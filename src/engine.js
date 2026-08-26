@@ -2442,6 +2442,162 @@ const MiniEvxlEngine = (function(){
       aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
+  // ---- INTENT-4: THE PROVENANCE LADDER (step 14, 2026-08-26) ------------------------
+  // Every claim this tool makes about "practising X moves Y" rests on evidence of one of
+  // three kinds, and until now the data model could not tell them apart -- every shipped edge
+  // was population-derived and nothing said so, which meant the upgrade path the design has
+  // always described had no representation at all.
+  //
+  //   prior       curator labels put these in the same skill. It is a PRIOR: somebody's
+  //               taxonomy, not a measurement. The weakest rung, and the only one available
+  //               for the 620 scenarios with no tested pair at n >= 100.
+  //   population  the two scenarios' residual strengths co-vary across the sampled players.
+  //               Measured, on thousands of people, and it is what every shipped edge is.
+  //               It is still not a causal claim -- D12 says so and the file repeats it.
+  //   personal    measured on THIS player's own record. The strongest rung because it needs
+  //               no transfer assumption at all, and the rarest because it needs history.
+  //
+  // The rung is DERIVED, never stored per edge: ~6,400 edges x a string would bloat the
+  // shipped block for something recomputable, and worse, a stored rung is a rung that can go
+  // stale the moment the record grows. `provenanceOf` resolves the highest rung with evidence
+  // behind it, so a scenario climbs the ladder by itself as the player's own history arrives.
+  const TRANSFER_PROVENANCE = ['prior', 'population', 'personal'];
+  const PROVENANCE_RANK = { prior: 0, population: 1, personal: 2 };
+  function provenanceOf(ev){
+    const e = ev || {};
+    if(e.personal && Number(e.personalEvents) > 0) return 'personal';
+    if(Number.isFinite(Number(e.r)) && Number(e.n) > 0) return 'population';
+    if(e.label) return 'prior';
+    return null;
+  }
+  // Highest rung reached anywhere in a set, for a headline that must not overstate.
+  function highestProvenance(list){
+    let best = null;
+    (list||[]).forEach(v=>{ const rk = PROVENANCE_RANK[v]; if(rk!==undefined && (best===null || rk > PROVENANCE_RANK[best])) best = v; });
+    return best;
+  }
+
+  // ---- INTENT-4: THE PERSONAL STUDY, in the engine (step 14) ------------------------
+  // R5 lives in `dev/personal-transfer.ps1` and its result is about THE OWNER. A shipped
+  // number would be his and useless to anyone else running the template, so the personal rung
+  // is computed AT RUNTIME from whoever's record is in the browser. That also means it climbs
+  // on its own: the same page gets a personal layer the day the user has enough history.
+  //
+  // A RETURN EVENT is the first run after a break of at least `minGap` days, with at least
+  // `minPrior` runs before it. The outcome is beating the best of those prior runs, and the
+  // baseline is the exact 1/(prior+1) -- the chance the newest of prior+1 exchangeable runs is
+  // the maximum. The attempt record keeps only the last 20 runs, so `prior` UNDER-counts and
+  // the baseline comes out too GENEROUS: that error runs against any finding, which is the
+  // safe direction.
+  //
+  // Two questions, two objects, exactly as R5 settled: the exact POISSON-BINOMIAL tail for
+  // "is it more than chance" (each event has its own baseline, so the count is not binomial),
+  // and a CLUSTER BOOTSTRAP over SCENARIOS for "how big is it" (one scenario contributes
+  // several events and they are not independent).
+  const PERSONAL_MIN_GAP_DAYS = 14;
+  const PERSONAL_MIN_PRIOR = 2;
+  const PERSONAL_MIN_EVENTS = 20;      // below this the interval is wider than the effect
+  function personalReturnEvents(runsByName, opts){
+    const o = Object.assign({ minGap: PERSONAL_MIN_GAP_DAYS, minPrior: PERSONAL_MIN_PRIOR }, opts||{});
+    const out = [];
+    (runsByName instanceof Map ? Array.from(runsByName.keys()) : Object.keys(runsByName||{})).forEach(name=>{
+      const raw = runsByName instanceof Map ? runsByName.get(name) : runsByName[name];
+      const list = (Array.isArray(raw) ? raw : []).map(x=>[Number(x[0]), Number(x[1])])
+        .filter(x=>Number.isFinite(x[0]) && x[0]>0 && Number.isFinite(x[1]) && x[1]>0)
+        .sort((a,b)=>a[0]-b[0]);
+      for(let i=o.minPrior; i<list.length; i++){
+        const gapDays = (list[i][0] - list[i-1][0])/DAY_MS;
+        if(gapDays < o.minGap) continue;
+        let best = 0;
+        for(let j=0;j<i;j++) if(list[j][1] > best) best = list[j][1];
+        out.push({ name, at: list[i][0], gapDays, prior: i,
+          hit: list[i][1] > best ? 1 : 0, baseline: 1/(i+1) });
+      }
+    });
+    return out;
+  }
+  function personalTransfer(runsByName, opts){
+    const o = Object.assign({ minGap: PERSONAL_MIN_GAP_DAYS, minPrior: PERSONAL_MIN_PRIOR,
+      minEvents: PERSONAL_MIN_EVENTS, boot: 2000, seed: 20260826 }, opts||{});
+    const events = personalReturnEvents(runsByName, o);
+    const n = events.length;
+    if(!n) return { events: 0, scenarios: 0, enough: false, rate: null, baseline: null, excess: null,
+      ci: null, pTail: null, collected: 0, expected: 0, minEvents: o.minEvents, byName: new Map() };
+    let collected = 0, expected = 0;
+    events.forEach(e=>{ collected += e.hit; expected += e.baseline; });
+    const rate = collected/n, baseline = expected/n, excess = rate - baseline;
+    // exact Poisson-binomial pmf by the standard O(n^2) recurrence -- no approximation needed
+    const pmf = new Float64Array(n+1); pmf[0] = 1;
+    let filled = 0;
+    events.forEach(e=>{ const q = e.baseline;
+      for(let idx=filled+1; idx>=1; idx--) pmf[idx] = pmf[idx]*(1-q) + pmf[idx-1]*q;
+      pmf[0] = pmf[0]*(1-q); filled++; });
+    let pTail = 0; for(let idx=collected; idx<=n; idx++) pTail += pmf[idx];
+    // cluster bootstrap over scenarios
+    const byName = new Map();
+    events.forEach(e=>{ const l = byName.get(e.name); if(l) l.push(e); else byName.set(e.name, [e]); });
+    const names = Array.from(byName.keys());
+    const rnd = seededRandom(o.seed);
+    const draws = new Float64Array(o.boot);
+    for(let b=0;b<o.boot;b++){
+      let h = 0, bl = 0, m = 0;
+      for(let i=0;i<names.length;i++){
+        const grp = byName.get(names[Math.floor(rnd()*names.length)]);
+        for(let g=0;g<grp.length;g++){ h += grp[g].hit; bl += grp[g].baseline; m++; }
+      }
+      draws[b] = m ? (h-bl)/m : 0;
+    }
+    const sorted = Array.from(draws).sort((a,b)=>a-b);
+    const lo = sorted[Math.floor(0.025*o.boot)], hi = sorted[Math.min(o.boot-1, Math.ceil(0.975*o.boot))];
+    return { events: n, scenarios: names.length, enough: n >= o.minEvents,
+      rate, baseline, excess, ci: [lo, hi], pTail, collected, expected,
+      minEvents: o.minEvents, byName };
+  }
+
+  // ---- INTENT-5: THE FORWARD HORIZON (step 14) --------------------------------------
+  // The scheduler could say whether a revisit qualifies TODAY and nothing else. What was
+  // missing is the projection: "this one is ripening, expect it around Thursday."
+  //
+  // Two conditions have to be met and they ripen on different clocks, so the horizon is the
+  // LATER of the two:
+  //   CALENDAR   at least `minDays` since the last visit. Known exactly -- it is arithmetic.
+  //   FORECAST   the revisit's odds, gain minus your own recent gap to the PB, turning
+  //              positive. `gain` is how far the co-varying scenarios have moved since that
+  //              visit, so it accrues as you train them; the rate is what has accrued so far
+  //              over the days since, and the crossing is `margin / rate` days after the visit.
+  //
+  // THE RATE IS A STRAIGHT-LINE EXTRAPOLATION and it assumes you keep training the
+  // neighbourhood at the pace you have been. That is a real assumption, so the projection is
+  // capped at `maxDays` and reports `beyond` rather than printing a date months out that
+  // nothing supports -- an over-confident date is worse than no date.
+  const REVISIT_MIN_DAYS = 14;
+  const HORIZON_MAX_DAYS = 90;
+  function revisitHorizon(o){
+    const opt = Object.assign({ minDays: REVISIT_MIN_DAYS, maxDays: HORIZON_MAX_DAYS }, o||{});
+    const now = Number(opt.now);
+    const lastT = numOrNull(opt.lastT);
+    if(lastT===null || !Number.isFinite(now)) return { at: null, days: null, basis: 'unknown', rate: null, ripe: false };
+    const calendarAt = lastT + opt.minDays*DAY_MS;
+    const sinceDays = (now - lastT)/DAY_MS;
+    const gain = numOrNull(opt.gain), margin = numOrNull(opt.margin), odds = numOrNull(opt.odds);
+    let forecastAt = null, rate = null;
+    if(gain!==null && sinceDays > 0){
+      rate = gain/sinceDays;                      // percentile points per day, from the neighbours
+      if(odds!==null && odds > 0) forecastAt = now;               // already over the line
+      else if(rate > 0 && margin!==null && margin > 0) forecastAt = lastT + (margin/rate)*DAY_MS;
+      else forecastAt = Infinity;                 // flat or falling: it does not ripen this way
+    }
+    // no forecast at all is not the same as a forecast that says never: with no evidence the
+    // calendar is the whole answer, and the basis says which case you are in
+    const at = forecastAt===null ? calendarAt : Math.max(calendarAt, forecastAt);
+    const days = (at - now)/DAY_MS;
+    if(!Number.isFinite(at) || days > opt.maxDays) return { at: null, days: null, rate,
+      basis: forecastAt===Infinity ? 'not-ripening' : 'beyond', ripe: false };
+    if(days <= 0) return { at: now, days: 0, rate, basis: 'ripe', ripe: true };
+    return { at, days, rate,
+      basis: (forecastAt!==null && forecastAt > calendarAt) ? 'forecast' : 'calendar', ripe: false };
+  }
+
   // ---- COACH-4's READINESS GATE (step 13, 2026-08-26) -------------------------------
   // COACH-4 is the model that replaces the randomised arm's normal-approximation interval: a
   // logistic fit of the FIRST-TRY PB on the forecast's measured parts, with the arm as a
@@ -3021,7 +3177,7 @@ const MiniEvxlEngine = (function(){
         pctRaw: sc.pctRaw===undefined ? null : sc.pctRaw, m: Number.isFinite(sc.m) ? sc.m : null, mMapped: !!sc.mMapped,
         game: gameShare(sc)>0 ? (isHit(sc) ? 'direct' : 'neighbour') : null,
         block: blockOf(sc), blockName: blockNameOf(sc) }); n--; } };
-    let popLevel = null;
+    let popLevel = null, horizons = null;
     if(played.length < SESSION_THIN_PLAYED){
       const pool = shuffle(rated.filter(sc=>!sc.played && sc.rung<=4));
       const mechs = FACET_MECHANICS.slice();
@@ -3282,6 +3438,50 @@ const MiniEvxlEngine = (function(){
       // logistic that turns it into a percentage is not consulted for this.
       const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && sc.rung<=level);
       const helpers0 = { historySince: opts.historySince, pairsIndex: opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null };
+      // INTENT-5: the FORWARD horizon. It sits BELOW `helpers0` because it reads it, and a
+      // `const` read above its declaration is in its temporal dead zone and THROWS -- the
+      // fifth sighting in this file, after pooledOf, spreadOf, ebWeightOf and mTrust.
+      //
+      // The scheduler could only say whether something qualifies TODAY. What was missing is
+      // "this one is ripening, expect it around Thursday" -- and the interesting set is NOT the
+      // most overdue. On a real record hundreds of scenarios are already months past the
+      // calendar bar, so the first draft's "longest unplayed" bound returned forty things that
+      // were all ripe and nothing that was ripening. Among the NOT-yet-ripe the oldest ripens
+      // soonest, so that is the forward set; a bounded slice of the already-ripe rides along so
+      // the page can say how many are waiting and which of them the forecast still holds back.
+      if(opts.horizon){
+        const want = Number(opts.horizon) > 0 ? Number(opts.horizon) : 40;
+        const eligible = played.filter(sc=>sc.att && sc.att.lastT>0 && !sc.maxed && sc.rung<=level);
+        const bar = opts.now - REVISIT_MIN_DAYS*DAY_MS;
+        const byOldest = (a, b)=> a.att.lastT - b.att.lastT;
+        const pending = eligible.filter(sc=>sc.att.lastT > bar).sort(byOldest).slice(0, want);
+        const already = eligible.filter(sc=>sc.att.lastT <= bar).sort(byOldest).slice(0, want);
+        const project = sc => {
+          const f = revisitForecast(sc, byName, helpers0);
+          const h = revisitHorizon({ now: opts.now, lastT: sc.att.lastT,
+            gain: f ? f.gain : null, margin: f ? f.margin : null, odds: f ? f.odds : null });
+          return { name: sc.name, lastT: sc.att.lastT, block: blockOf(sc), blockName: blockNameOf(sc),
+            m: Number.isFinite(sc.m) ? sc.m : null, at: h.at, days: h.days, basis: h.basis, ripe: h.ripe,
+            rate: h.rate, gain: f ? f.gain : null, margin: f ? f.margin : null, odds: f ? f.odds : null };
+        };
+        const rows = pending.map(project).concat(already.map(project));
+        const sortByWhen = (a, b)=>{
+          if(a.at===null && b.at===null) return a.lastT - b.lastT;
+          if(a.at===null) return 1;
+          if(b.at===null) return -1;
+          return a.at - b.at;
+        };
+        horizons = {
+          // ripening: a date you can act on. Sorted by WHEN, not by how long ago you played it.
+          ripening: rows.filter(r=>!r.ripe).sort(sortByWhen),
+          // and the ones the forecast holds back although the calendar has cleared -- the only
+          // reason a scenario can be months overdue and still not be served as a revisit
+          heldByForecast: rows.filter(r=>!r.ripe && r.lastT <= bar).length,
+          ripeNow: eligible.filter(sc=>sc.att.lastT <= bar).length,
+          eligible: eligible.length, scanned: rows.length,
+          soonestRipe: rows.filter(r=>r.ripe).sort((a, b)=> a.lastT - b.lastT).slice(0, 5)
+        };
+      }
       let collectReady = 0;
       revPool.forEach(sc=>{ const f = revisitForecast(sc, byName, helpers0); if(f && f.odds > 0) collectReady++; });
       // step 10: the inputs the type decision was taken on, returned beside the decision.
@@ -3530,7 +3730,7 @@ const MiniEvxlEngine = (function(){
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, levelBase, levelAdjust: levelAdj, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
-      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking };
+      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
@@ -4358,6 +4558,9 @@ const MiniEvxlEngine = (function(){
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
     coach4Readiness, COACH4_EPV,
+    TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
+    personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
+    revisitHorizon, REVISIT_MIN_DAYS, HORIZON_MAX_DAYS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,

@@ -693,6 +693,43 @@
       exhaustBeatsHard: bout([100], [90, 90, 90, 90, 90, 90], 100, 'hard')
     };
 
+    // ---- step 14: the provenance ladder and the forward horizon ----------------------
+    // NOT `H`: this scope already has one at the top of compute(), and a duplicate `const`
+    // is a SyntaxError -- which does not report a bad assertion, it stops the whole module
+    // from defining itself, so the harness fails at `S.compute is undefined` three files away.
+    const mkHorizon = (over) => { const r = E.revisitHorizon(Object.assign({ now: FIXED_MS }, over));
+      return { basis: r.basis, ripe: r.ripe, days: r.days===null ? null : Math.round(r.days*100)/100, rate: r.rate }; };
+    const HZ_DAY = 86400000;
+    R.step14 = {
+      prov: {
+        population: E.provenanceOf({ r: 0.4, n: 300 }),
+        priorOnly:  E.provenanceOf({ label: 'tracking' }),
+        // a label AND a measured pair is population: the higher rung wins
+        both:       E.provenanceOf({ r: 0.4, n: 300, label: 'tracking' }),
+        // personal needs EVENTS, not just the flag -- a flag with nothing behind it is a label
+        personalNoEvents: E.provenanceOf({ r: 0.4, n: 300, personal: true, personalEvents: 0 }),
+        personal:   E.provenanceOf({ r: 0.4, n: 300, personal: true, personalEvents: 3 }),
+        nothing:    E.provenanceOf({}),
+        ladder:     E.TRANSFER_PROVENANCE.slice(),
+        highest:    E.highestProvenance(['prior', 'population', 'prior'])
+      },
+      horizon: {
+        // the calendar alone, with no forecast to consult
+        calendar:  mkHorizon({ lastT: FIXED_MS - 4*HZ_DAY }),
+        ripeAlready: mkHorizon({ lastT: FIXED_MS - 40*HZ_DAY }),
+        // odds already positive: the forecast does not hold it back, so the calendar decides
+        oddsPositive: mkHorizon({ lastT: FIXED_MS - 4*HZ_DAY, gain: 0.2, margin: 0.05, odds: 0.15 }),
+        // the forecast is the LATER clock: 20 days since, gain 0.02 => rate 0.001/day,
+        // margin 0.05 => crosses 50 days after the visit, i.e. 30 days from now
+        forecastLater: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0.02, margin: 0.05, odds: -0.03 }),
+        // a flat or falling neighbourhood never ripens on the forecast
+        notRipening: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0, margin: 0.05, odds: -0.05 }),
+        // and a crossing past the cap is reported as out of range rather than given a date
+        beyond: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0.001, margin: 0.5, odds: -0.499 }),
+        noLast: mkHorizon({ lastT: null })
+      }
+    };
+
     // ---- step 13: COACH-4's readiness gate ------------------------------------------
     // A gate you can see is a gate; a gate you have to remember is a hope. So the thing that
     // must not break is that it can say NO for each distinct reason, and YES when they clear.
@@ -1106,6 +1143,29 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const S14 = R.step14;
+    if(!S14) problems.push('step14: missing');
+    else {
+      const PV = S14.prov;
+      if(J(PV.ladder) !== J(['prior','population','personal'])) problems.push('provenance: the ladder is prior -> population -> personal, got '+J(PV.ladder));
+      if(PV.population !== 'population') problems.push('provenance: a measured pair is population, got '+J(PV.population));
+      if(PV.priorOnly !== 'prior') problems.push('provenance: a label with no measured pair is a prior, got '+J(PV.priorOnly));
+      if(PV.both !== 'population') problems.push('provenance: with a label AND a pair the HIGHER rung wins, got '+J(PV.both));
+      if(PV.personalNoEvents !== 'population') problems.push('provenance: a personal flag with ZERO events is not personal evidence, got '+J(PV.personalNoEvents));
+      if(PV.personal !== 'personal') problems.push('provenance: measured events on the record are the personal rung, got '+J(PV.personal));
+      if(PV.nothing !== null) problems.push('provenance: no evidence of any kind is null, not a rung, got '+J(PV.nothing));
+      if(PV.highest !== 'population') problems.push('provenance: highestProvenance must return the top rung present, got '+J(PV.highest));
+
+      const HZ = S14.horizon;
+      if(HZ.calendar.basis !== 'calendar' || Math.abs(HZ.calendar.days - 10) > 0.01) problems.push('horizon: 4 days after a visit ripens on the calendar in 10 more, got '+J(HZ.calendar));
+      if(!HZ.ripeAlready.ripe || HZ.ripeAlready.basis !== 'ripe') problems.push('horizon: 40 days after a visit is already ripe, got '+J(HZ.ripeAlready));
+      if(HZ.oddsPositive.basis !== 'calendar') problems.push('horizon: with the odds already positive the CALENDAR is the binding clock, got '+J(HZ.oddsPositive));
+      if(HZ.forecastLater.basis !== 'forecast' || Math.abs(HZ.forecastLater.days - 30) > 0.5) problems.push('horizon: gain 0.02 over 20 days is 0.001/day, so a 0.05 margin crosses 30 days from now, got '+J(HZ.forecastLater));
+      if(HZ.notRipening.basis !== 'not-ripening') problems.push('horizon: a flat neighbourhood never ripens on the forecast and must say so rather than pick a date, got '+J(HZ.notRipening));
+      if(HZ.beyond.basis !== 'beyond' || HZ.beyond.days !== null) problems.push('horizon: a crossing past the cap is out of range and carries NO date, got '+J(HZ.beyond));
+      if(HZ.noLast.basis !== 'unknown') problems.push('horizon: with no last visit there is nothing to project from, got '+J(HZ.noLast));
+    }
+
     const C4 = R.coach4;
     if(!C4) problems.push('coach4: missing');
     else {
