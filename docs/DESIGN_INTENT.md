@@ -468,6 +468,14 @@ run-history import; both transfer analyses.
   `dev/emergence-comparison.json` — reading order: agreement tables with their
   pack baseline and p-values, then the divergence list, then (separately, as a
   proposal) candidate names.
+  **AND THE NAMES ARE CLOSED TOO (2026-08-26, step 34): they will NOT be ratified, ever, and that
+  is the decision rather than a deferral.** A community id is freeze-local — `c:1` was
+  *tracking · switching* under `ed89927b` and is *tracking · reactive* under `c9026a95` — so a
+  ratified name could not survive the next re-freeze, and the record would then carry a name that
+  means two things. What IS ratified is the RULE step 23 derived: the term count comes from whether
+  the first term already identifies the block, and any second term is chosen by LIFT over a mass
+  floor rather than by frequency. Names are output of that rule, recomputed per freeze, and the
+  freeze-local id is the part that carries identity. **This item leaves the open list.**
   **PROMOTING STRAFE (R6/R7) IS CLOSED** (2026-08-26, Review Ledger VI step 29) —
   on evidence rather than by a ruling, and on the owner's own pre-stated condition
   *"promote if the emergence analysis separates it"*. The basis quoted above does
@@ -659,48 +667,51 @@ decisions and do not belong in this sequence.
   is not pinned down and the page should say so; it does **not** enter the draw, because it is not
   evidence about *that* scenario. The estimator itself does not change: swapping the PB for a
   smoothed statistic was measured out of sample and beaten by the PB wherever the grind is real.
-  **The recorded breach REMAINS OPEN, and it is BROADER than step 11 recorded. A step-32 closure
-  was written and RETRACTED the same day** — retracted because its load-bearing sentence was
-  false about the code, and it is kept here rather than deleted because the way it was wrong is
-  the most useful thing in this entry.
-  **What was claimed:** that the borrowed quantity is the profile's median CV, one scalar for the
-  whole profile, applied in SCORE space and then mapped through `pctOf` — so it *"sets a scale
-  and nothing else"*, every scenario-to-scenario difference coming from the curve, and the
-  principle therefore intact.
-  **Why that is false, measured rather than argued.** `pctOf` is not linear in score: MET-2 moved
-  the share axis to a LOGIT interpolation with a hard cap, and `sd = |pctOf(x(1+c)) − pctOf(x(1−c))|/2`
-  puts `c` inside that nonlinearity twice. Doubling `c` over the 693 one-run curved rows gives a
-  ratio spanning **1.00 to 3.62 (median 1.95)** where a true scale would give exactly 2.00 for
-  every row, and **3.84% of one-run pairs change order**. The borrowed scalar's *value*
-  co-determines the ranking among one-run scenarios, which is precisely what this principle
-  forbids. (The step that asserted local linearity is the same one that replaced that function
-  with a logit interpolation, seven steps earlier.)
-  **And there are two further channels the original breach never named:**
-  (i) `mSe`, the board-offset error in the same weight, is itself borrowed — the **217**
-  offsets estimated from board size all carry one shared constant, and `seOf` falls back to 0.5,
-  so the **46** played scenarios with neither an offset row nor a curve have a weight built
-  entirely from borrowed numbers with no curve in it at all;
-  (ii) **τ² is estimated by Paule–Mandel over `ownErrorFull`** — the engine's own comment at that
-  line reads *"EVERY member with a usable error goes in, borrowed or measured"* — and τ² is the
-  NUMERATOR of every block member's weight. So a number borrowed from one scenario moves the rank
-  of a **well-measured** block-mate that borrowed nothing. That is a strictly stronger breach than
-  the one on record, and no entry had it.
-  **THE SENSITIVITY BOUND WAS MEASURED AT STEP 33, ON A BAR COMMITTED FIRST, AND IT FAILED.**
-  Sweeping the borrowed CV across the full per-scenario plausible range [0.0383, 0.2031] and
-  comparing the served weakest set over 40 seeded days against the shipped value: **worst Jaccard by
-  CV 0.279, worst by SEED 0.393.** The comparator is seed variation because that is randomness the
-  design already ships deliberately (D1). **So the borrowed constant moves what the coach serves MORE
-  than the sampler does, and the breach is MATERIAL.**
-  The structure matters more than the verdict: the effect is monotone in distance from the measured
-  value, and within about ±50% (0.05–0.10) the CV channel reads 0.379–0.400 — *level with* seed
-  variation. It exceeds it only at 2–3×. So the honest statement is not that the ranking is being
-  wrecked, but that **one constant is a poor stand-in for a quantity that varies 5.3× across
-  scenarios**, and at the edges of that spread it decides more than the draw does.
-  **The bar was written to be harsh and was applied as written** — reinterpreting a failed
-  pre-registered bar is exactly what the retracted step-32 closure did in the other direction. A mechanical claim was offered instead because it was
-  checkable, and it did not check out. **The general form first proposed to the owner — "a borrowed
-  number may set the weight, not the value" — is still the wrong shape**: it is a category future
-  decisions would be argued into.
+  **NARROWED AND CLOSED (2026-08-26, step 34), on the measurement rather than on an argument.**
+  The history is kept because the way this went wrong twice is the useful part: step 11 recorded a
+  breach, step 32 wrote a closure whose mechanical claim was FALSE and retracted it the same day,
+  and step 33 measured the thing that actually decides it on a bar committed first.
+
+  **What the measurement says.** Sweeping the borrowed CV across the full per-scenario plausible
+  range [0.0383, 0.2031] moves the served weakest set by a worst Jaccard of **0.279** against
+  **0.393** for the seed alone — so on the harshest reading the borrowed constant decides more than
+  the sampler's deliberate randomness does. But the effect is monotone in distance from the measured
+  value, and across **±50% of it (0.05–0.10) the CV channel reads 0.379–0.400 — level with seed
+  noise.** The profile median is a median over ~404 scenarios, so its own estimation error is far
+  inside that band. **The borrowed number's ESTIMATION ERROR is immaterial; what is material is the
+  conceptual stretch of one constant standing for a quantity that varies 5.3× across scenarios.**
+
+  **The rule, narrowed to what the evidence supports.** The two uses of a borrowed number came apart
+  when measured, and the split is not a matter of taste:
+  * setting the **value shown**, or the **width the order is DRAWN from** — measured and HARMFUL
+    (D19 pushed the single-run share of served slots to 80.9%, worse than the 74.2% it started at).
+    **Still forbidden.**
+  * entering a **precision weight** — measured and HELPFUL (the ordering's split-half reproducibility
+    rose 0.7311 → 0.7726). **Permitted, and it carries an obligation: its sensitivity must be
+    measured against the seed channel and RECORDED on this entry.** That obligation is not
+    decorative — it is what turns "a borrowed number may steer if it is only about precision" from
+    the open category it would otherwise be into a claim with a number attached.
+
+  **The recorded sensitivity, which is the obligation discharged:** immaterial over the estimation
+  range, material at 2–3× the measured value. A reader now knows exactly how much of the served set
+  is attributable to that constant instead of having to trust anyone's reading of the code.
+
+  **The τ² channel is INSIDE that measurement, and step 33 said otherwise.** `cvOverride → runCv →
+  runSampleSpread → ownErrorFull` feeds **both** `ebWeightOf`'s `s` **and** the set Paule–Mandel
+  solves τ² over, so the sweep already priced the borrowed constant's effect through both paths.
+  Step 33's caveat that "τ² is not tested here" was too conservative and is corrected.
+  **Whether borrowed errors belong in τ² at all is a separate question, and it is settled on step
+  11's own reasoning:** they are in because Paule–Mandel WEIGHTS by `1/(τ²+s²)` rather than
+  averaging, so a borrowed error is downweighted (roughly 0.18 of a measured one's weight at the
+  median imputed sd) rather than excluded; the alternative — estimating τ² over the multi-run subset
+  — buys range restriction, because the scenarios you repeat are the ones you have converged on.
+  Step 11 chose PM precisely to avoid needing that subset. **Kept.**
+
+  **`mSe` is the same class and is covered by the same rule.** The 217 board-size-estimated offsets
+  carry one shared constant and 46 played scenarios have neither an offset row nor a curve. That is
+  a data-COVERAGE fact, not a design choice, and its effect is self-limiting: those rows carry a
+  large error either way, so they shrink hard toward their block — which is the correct answer for a
+  scenario with no curve behind it. **No change.**
   Step 11's other exit is still closed — step 21 rejected the n-standardisation — and **neither
   step 29 nor D30 bears on this**: they settled the estimand (PB-rank), a different question.
   drawn intervals, was rejected in step 11 on a pre-registered EMPIRICAL bar, not on this
@@ -849,3 +860,30 @@ decisions and do not belong in this sequence.
   **Where score legitimately leads is the benchmark ladder** — a tier threshold is a score, so
   "what do I need for the next rank" is a score question and the detail pages answer it in scores.
   Everything the coach ranks, orders or reports a gain in is percentile.
+
+- **D36** (Review Ledger VI step 34) — **the estimand is THE SCENARIO'S OWN STANDING. Pooling toward
+  the block is variance reduction on a noisy estimate of it, NOT a claim that the block is what is
+  being measured.** This is the second estimand axis, open since step 19 and left open by step 29,
+  which settled only PB-rank versus skill-at-a-shared-run-count.
+  **It follows from two rulings already made rather than from a new argument.** D34 says the coach
+  operates on the FLOOR, and a floor is a property of a scenario, not of a block. D30 says "weakest"
+  means where the PB ranks, and a PB is a scenario's. D25 already shows the scenario's own unpooled
+  percentile on the card. Every visible commitment this project has made is per-scenario; only the
+  *justification* for the pooling was ever phrased as "the coach wants the block's common skill".
+  **What changes is that phrasing, not the code.** `poolToward` and the empirical-Bayes weight both
+  stay exactly as they are. What they are FOR is now stated correctly: an ICC of 0.135 says a single
+  standing is a noisy read of a quantity its block-mates also carry, so pulling it 13.5% toward the
+  block reduces the variance of the estimate. That is a shrinkage coefficient, not an estimand.
+  **The payoff is that D28's criterion stops being structurally blind.** Step 19 recorded, as a
+  limitation, that its criterion scores per-scenario recovery while step 6's argument wanted block
+  skill — so it "can compare rules sharing an estimand and cannot adjudicate between estimands", and
+  any future candidate touching the ICC factor had no instrument that could judge it. With the
+  estimand settled as per-scenario, **the criterion is measuring the right thing** and that
+  limitation is discharged rather than inherited.
+  **What was NOT done, and why.** The alternative ruling — the block's common skill — would have
+  implied deleting the ICC factor is wrong, and step 19 expected a per-scenario criterion to prefer
+  that deletion. That expectation was never measured: `pooling: 'eb'` composes the ICC pull with the
+  EB weight, and no mode isolates "EB without the ICC factor". Building one would be a ranking
+  change needing the four-leg gate. It is not built, because this ruling makes the ICC factor a
+  variance-reduction term whose magnitude is already measured (0.077–0.232 across the shipped
+  blocks) rather than a contested claim about what the coach is estimating.
