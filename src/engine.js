@@ -1415,9 +1415,10 @@ const MiniEvxlEngine = (function(){
   //    an average of martingales is a martingale -- so there is no exponent to choose.
   //
   // AGGRESSIVE, and what that cost when it was replayed over his 1,238 real bouts that had a
-  // PB to beat (median history 3 runs). At STAGNATE_AT 0.6 the coach closes 244 items on
-  // stagnation against 550 on a PB, at a median of ONE run before a stop, and 6.1% of all
-  // items (75) are closed before a PB that his actual play went on to get.
+  // PB to beat (median history 3 runs). At STAGNATE_AT 0.685 the coach closes 321 items on
+  // stagnation against 525 on a PB, at a median of ONE run before a stop, and 8.1% of all
+  // items (100) are closed before a PB that his actual play went on to get. At the old 0.6 those
+  // read 244 / 550 / 6.1% (75) -- the threshold move is step 29 and its cost is exactly this.
   //
   // TWO NUMBERS IN THIS COMMENT WERE WRONG UNTIL STEP 22 COMMITTED THE REPLAY. It said 249
   // stops and "7 of 249" form stops; the file's own step 8 section said 244 (243 exhaustion,
@@ -1434,7 +1435,10 @@ const MiniEvxlEngine = (function(){
   //     PB arrived on run 1 of the bout   468 events (74.9%)  median +6.23% over the old PB
   //                          run 2         99       (15.8%)          +4.17%
   //                          run 3+        58        (9.3%)          +2.36%
-  //     of which the RULE reaches:        468 / 68 / 14 (550), gains +6.23% / +3.33% / +1.59%
+  //     of which the RULE reaches:        468 / 51 / 6 (525), gains +6.23% / +3.12% / +2.15%
+  //  The event table is a property of the RECORD and does not move with the threshold; the
+  //  rule-reached row does, and at 0.685 it gives up 17 more of the run-2 PBs and 8 more of the
+  //  run-3+ ones. They are the small ones, which is the trade the aggressive setting buys.
   //
   // Three quarters of his PBs come on the FIRST run, and one that takes three or more runs is
   // worth a third as much. His "grinding produces an outlier" turns out to be exactly right
@@ -1442,11 +1446,30 @@ const MiniEvxlEngine = (function(){
   // over a bar that repeated sampling was always going to clear eventually. The PBs an
   // aggressive rule gives up are the small ones.
   //
-  // The form test almost never fires TODAY -- 1 of 244 stops -- because his median history is
-  // three runs and the exhaustion rule gets there first. It is not decoration: it is the rule
+  // THE FORM TEST NOW FIRES ZERO TIMES -- 0 of 321 stops, against 1 of 244 at the old threshold.
+  // His median history is three runs, so its smallest available rank is 1/4 and no single run can
+  // move the martingale far; at 0.685 exhaustion always gets there first. It is a live rule with
+  // nothing left to do on THIS record, and that is a consequence of step 29's threshold move
+  // rather than a defect in it -- it is the rule that acts once a scenario has real history, and
+  // step 7b's seed fix is what lets those counts accumulate. Recorded so it is not rediscovered
+  // as a bug: if the record deepens and it still never fires, it is dead weight and should go. It is not decoration: it is the rule
   // that acts once a scenario has real history, which is exactly when exhaustion turns
   // patient, and the step 7b seed fix is what lets those counts accumulate at last.
-  const STAGNATE_AT = 0.6;        // exhaustion: stop once P(no PB by now) has fallen to here
+  // 0.685 SINCE STEP 29, and the move is step 22's finding taken rather than a new opinion.
+  // At 0.6 the rule advertised "stop when the chance you have not beaten it yet falls to 0.6" and
+  // actually stopped at about 0.51, because the exchangeable null it computes that chance from is
+  // mis-calibrated: lambda measured 1.333 [1.218, 1.433] on this record, so personal bests arrive
+  // about a third more often than exchangeability predicts. Moving the threshold is the same
+  // change as applying lambda -- step 22 showed the two are one dial over the n this record holds
+  // -- so the knob moves and no second parameter is added.
+  //
+  // 0.685 AND NOT 0.684, WHICH IS OUTSIDE THE BAND. The thresholds that reproduce lambda-hat's
+  // integer stopping schedule over n = 1..19 run [0.684211, 0.685855] -- a width of 0.0016 -- and
+  // a round 0.684 falls below it, as does 0.6875 above. 0.685 is the roundest value inside.
+  //
+  // The owner's call, and reversible: "let's go with aggressive, we could adjust this later if I
+  // don't like how it feels." The cost is measured, not assumed -- see the step 29 section.
+  const STAGNATE_AT = 0.685;      // exhaustion: stop once P(no PB by now) has fallen to here
   // Step 22's measurement, recorded so the page can say what the exchangeable reading is worth.
   // It is NOT applied: the default lambda is 1.
   //
@@ -1472,12 +1495,13 @@ const MiniEvxlEngine = (function(){
   // Step 22 measured lambda on this record at 1.333, 95% CI [1.218, 1.433] day-clustered -- so
   // he beats the exchangeable null by about a third, flat across n and across within-bout
   // position. The measurement is solid and the multiplier STILL DOES NOT SHIP AS A DIAL,
-  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.6842:
+  // because over the n this record contains it is reproduced EXACTLY by STAGNATE_AT = 0.7500:
   // the threshold family expresses 3,130 distinct stopping schedules where the lambda family
-  // expresses 72, so the knob that already exists is strictly more expressive. See CLAUDE.md.
-  // (Those three figures were 0.6818 / 2,013 / 71 when first written here: they came from an
-  // ad-hoc candidate list, and making the enumeration exhaustive corrected them. They are quoted
-  // from dev/hazard-lambda.json and nowhere else now.)
+  // expresses 50, so the knob that already exists is strictly more expressive. See CLAUDE.md.
+  // (The rename figure is RELATIVE TO THE CURRENT THRESHOLD and moved with it at step 29: at the
+  // old 0.6 it read 0.6842 with 72 lambda schedules. The conclusion does not move with it -- the
+  // threshold family is more expressive at either setting -- and the figures are quoted from
+  // dev/hazard-lambda.json and nowhere else, which is what dev/figures.json checks.)
   // It lives here as an option for the same reason `squash` lives in the pooling modes and
   // `metric` in calibrateScenarios: the instrument needs a candidate to be checkable against,
   // and a build-and-revert comparison depends on nobody erring while reverting.
