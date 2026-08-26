@@ -730,6 +730,32 @@
       }
     };
 
+    // ---- step 19: the three scorers a ranking change is judged by ---------------------
+    // Each one exists because step 11's bars could be passed by destroying information, so each
+    // gets a case that a degenerate transform would fail.
+    R.criterion = {
+      // rank correlation: ties averaged, and a CONSTANT side is null rather than 0 or 1 --
+      // "no answer" must not read as a verdict
+      rhoPerfect: E.rankCorrelation([1, 2, 3, 4, 5], [10, 20, 30, 40, 50]),
+      rhoReversed: E.rankCorrelation([1, 2, 3, 4, 5], [50, 40, 30, 20, 10]),
+      rhoTies: E.rankCorrelation([1, 1, 2, 2, 3], [5, 5, 6, 6, 7]),
+      rhoConstant: E.rankCorrelation([1, 1, 1, 1, 1], [1, 2, 3, 4, 5]),
+      rhoTooShort: E.rankCorrelation([1, 2], [2, 1]),
+      // top-k overlap: the SET at the depth the coach serves
+      topSame: E.topKOverlap(['a','b','c','d'], ['a','b','c','d'], 3),
+      topHalf: E.topKOverlap(['a','b','c','d'], ['a','b','x','y'], 4),
+      topNone: E.topKOverlap(['a','b','c'], ['x','y','z'], 3),
+      // k is clamped to the shorter list rather than silently reading past its end
+      topClamped: E.topKOverlap(['a','b'], ['a','b','c','d'], 99),
+      // resolution: the leg that cannot be gamed, because destroying information IS the measure
+      resFull: E.orderingResolution([1, 2, 3, 4, 5, 6, 7, 8]),
+      resCollapsed: E.orderingResolution([1, 1, 1, 1, 2, 2, 2, 2]),
+      resOneValue: E.orderingResolution([3, 3, 3, 3, 3, 3, 3, 3]),
+      // one huge tie plus singletons: the raw count flatters it, exp(entropy) does not
+      resSkewed: E.orderingResolution([1, 1, 1, 1, 1, 1, 2, 3]),
+      resEmpty: E.orderingResolution([])
+    };
+
     // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
     const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
       secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
@@ -1161,6 +1187,27 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const CR = R.criterion;
+    if(!CR) problems.push('criterion: missing');
+    else {
+      if(!near(CR.rhoPerfect, 1, 1e-9)) problems.push('rankCorrelation: a monotone pair is 1, got '+J(CR.rhoPerfect));
+      if(!near(CR.rhoReversed, -1, 1e-9)) problems.push('rankCorrelation: a reversed pair is -1, got '+J(CR.rhoReversed));
+      if(!near(CR.rhoTies, 1, 1e-9)) problems.push('rankCorrelation: matched ties are still a perfect correlation, got '+J(CR.rhoTies));
+      if(CR.rhoConstant !== null) problems.push('rankCorrelation: a CONSTANT side has no correlation and must be null, not a number, got '+J(CR.rhoConstant));
+      if(CR.rhoTooShort !== null) problems.push('rankCorrelation: under three pairs there is no answer, got '+J(CR.rhoTooShort));
+
+      if(!near(CR.topSame.jaccard, 1, 1e-9) || CR.topSame.k !== 3) problems.push('topKOverlap: identical heads are 1, got '+J(CR.topSame));
+      if(!near(CR.topHalf.jaccard, 1/3, 1e-9)) problems.push('topKOverlap: two shared of four each is 2/6, got '+J(CR.topHalf));
+      if(CR.topNone.jaccard !== 0) problems.push('topKOverlap: disjoint heads are 0, got '+J(CR.topNone));
+      if(CR.topClamped.k !== 2) problems.push('topKOverlap: k must clamp to the shorter list, got '+J(CR.topClamped));
+
+      if(CR.resFull.distinct !== 8 || !near(CR.resFull.effective, 8, 1e-6)) problems.push('orderingResolution: eight distinct values is full resolution, got '+J(CR.resFull));
+      if(CR.resCollapsed.distinct !== 2 || !near(CR.resCollapsed.effective, 2, 1e-6)) problems.push('orderingResolution: two values over eight rows is a resolution of 2, got '+J(CR.resCollapsed));
+      if(CR.resOneValue.distinct !== 1 || !near(CR.resOneValue.effective, 1, 1e-6)) problems.push('orderingResolution: one value is the degenerate case and must read 1, got '+J(CR.resOneValue));
+      if(!(CR.resSkewed.effective < CR.resSkewed.distinct)) problems.push('orderingResolution: exp(entropy) must penalise one huge tie below the raw distinct count -- that is the whole reason it is reported, got '+J(CR.resSkewed));
+      if(CR.resEmpty.distinct !== 0 || CR.resEmpty.effective !== null) problems.push('orderingResolution: nothing in, no answer out, got '+J(CR.resEmpty));
+    }
+
     const DU = R.duration;
     if(!DU) problems.push('duration: missing');
     else {

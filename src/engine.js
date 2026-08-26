@@ -2442,6 +2442,95 @@ const MiniEvxlEngine = (function(){
       aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
+  // ---- THE ACCEPTANCE CRITERION FOR A RANKING CHANGE (step 19, 2026-08-26) ----------
+  // Step 11 shipped on three pre-registered bars and an adversarial read then showed that TWO of
+  // them are maximised by INFORMATION DESTRUCTION: emit the block median for every member and
+  // the served single-run share hits its base rate exactly (a perfect (b)), while a ranking that
+  // is mostly block medians is MORE reproducible across halves, so the split-half correlation
+  // (c) RISES as well. The observed result was not degenerate -- but the criteria would not have
+  // caught it, which means every future ranking change was being judged by bars that reward
+  // collapse. These are the replacements.
+  //
+  // Both are pure and both are scored on ORDER, because order is what the coach acts on. A rule
+  // that moves every value and changes nothing about who gets served has changed nothing.
+
+  // Spearman's rho over paired ranks, with the average-rank tie correction. Returns null rather
+  // than a plausible number when either side is constant -- a constant ordering has no
+  // correlation with anything, and reporting 0 or 1 there would be a verdict rather than an
+  // absence of one.
+  function rankCorrelation(a, b){
+    const n = Math.min((a||[]).length, (b||[]).length);
+    if(n < 3) return null;
+    const rankOf = v => {
+      const idx = v.map((x, i)=>[Number(x), i]).sort((p, q)=> p[0]-q[0]);
+      const out = new Array(v.length);
+      let i = 0;
+      while(i < idx.length){
+        let j = i;
+        while(j+1 < idx.length && idx[j+1][0] === idx[i][0]) j++;
+        const avg = (i + j)/2 + 1;
+        for(let k=i; k<=j; k++) out[idx[k][1]] = avg;
+        i = j + 1;
+      }
+      return out;
+    };
+    const ra = rankOf(a.slice(0, n)), rb = rankOf(b.slice(0, n));
+    const mean = v => v.reduce((x, y)=>x+y, 0)/v.length;
+    const ma = mean(ra), mb = mean(rb);
+    let num = 0, da = 0, db = 0;
+    for(let i=0;i<n;i++){ const u = ra[i]-ma, v = rb[i]-mb; num += u*v; da += u*u; db += v*v; }
+    if(!(da > 0) || !(db > 0)) return null;      // one side is constant: no answer, not zero
+    return num/Math.sqrt(da*db);
+  }
+
+  // The weak end as a SET, which is what the coach actually draws from. A whole-pool rank
+  // correlation is dominated by the uninformative middle -- hundreds of scenarios whose order
+  // nobody will ever act on -- and that is exactly why the degenerate transform could raise it.
+  // Jaccard of the first k of two orderings answers the question the product asks: would these
+  // two rankings put the same handful in front of you?
+  //
+  // `orderA`/`orderB` are arrays of names, best-to-worst is irrelevant so long as both are sorted
+  // the same way; k is taken from the front of each.
+  function topKOverlap(orderA, orderB, k){
+    const kk = Math.max(1, Math.min(Number(k)||12, (orderA||[]).length, (orderB||[]).length));
+    if(!(orderA||[]).length || !(orderB||[]).length) return { jaccard: null, shared: 0, k: kk };
+    const A = new Set(orderA.slice(0, kk));
+    const B = new Set(orderB.slice(0, kk));
+    let shared = 0;
+    A.forEach(nm=>{ if(B.has(nm)) shared++; });
+    // equal-sized sets, so |union| = 2k - shared
+    return { jaccard: shared/(2*kk - shared), shared, k: kk,
+      // the share of one set found in the other, which is the number a reader expects
+      recall: shared/kk };
+  }
+
+  // How much of the ordering SURVIVES the rule. The third leg of the criterion, and the one
+  // that cannot be gamed by construction, because destroying information is precisely what it
+  // measures: a rule that compresses 541 readings onto 39 distinct values has thrown the
+  // ordering away whatever its overlap score says.
+  //
+  // It is not a hypothetical. Measured on the real pool, the degenerate block-median transform
+  // reads 541 -> 39, and that is ALSO why it scores well on a top-30 set overlap: with 39
+  // distinct values the top thirty sit in a handful of ties, the tie-break is deterministic and
+  // independent of the runs, so the two halves agree on a set that the RANKING never chose.
+  // A high overlap on a low-resolution ordering is measuring the tie-break.
+  //
+  // `effective` is exp(entropy) over the value multiset -- the number of equally-common distinct
+  // values that would give the same spread -- so a rule with one huge tie and many singletons
+  // scores worse than the raw count suggests, which is the honest reading.
+  function orderingResolution(values, opts){
+    const o = Object.assign({ tol: 1e-9 }, opts||{});
+    const v = (values||[]).map(Number).filter(Number.isFinite);
+    if(!v.length) return { n: 0, distinct: 0, share: null, effective: null };
+    const key = x => Math.round(x/o.tol);
+    const counts = new Map();
+    v.forEach(x=>{ const k = key(x); counts.set(k, (counts.get(k)||0) + 1); });
+    let h = 0;
+    counts.forEach(c=>{ const p = c/v.length; h -= p*Math.log(p); });
+    return { n: v.length, distinct: counts.size, share: counts.size/v.length,
+      effective: Math.exp(h) };
+  }
+
   // ---- INTENT-6: HOW LONG A SCENARIO TAKES (step 17, 2026-08-26) --------------------
   // The coach serves items without knowing what it is asking for: a 30-second scenario and a
   // five-minute one are not the same request. That is INTENT-6's blind spot, and the data it
@@ -3383,9 +3472,23 @@ const MiniEvxlEngine = (function(){
       const t2 = blockTau2Of.get(b);
       return t2 / (t2 + s2*s2);          // 1 = trust the reading, 0 = trust the block
     };
+    // step 19: the pooling rule is SELECTABLE, because an acceptance criterion for a ranking
+    // change needs to run the candidate against the incumbent on the same data -- and steps 11
+    // and 12 both had to build-and-revert to do that, which is how a comparison ends up
+    // depending on nobody having made a mistake while reverting. `eb` is the shipped rule and
+    // the default, so every existing caller is untouched.
+    //   none   no pooling at all: the scenario's own reading
+    //   icc    step 6: pool toward the block by its measured ICC
+    //   eb     step 11 (SHIPPED): the ICC weight composed with tau^2/(tau^2 + s^2)
+    //   block  the DEGENERATE transform -- every member reads as its block standing. It exists
+    //          so a criterion can be checked against it: any bar this can pass is not a bar.
+    const poolMode = ({ none: 1, icc: 1, eb: 1, block: 1 })[opts.pooling] ? opts.pooling : 'eb';
     pooledOf = sc => { const b = blockOf(sc); if(!b) return shrunk(sc);
       const standing = blockStandingOf.has(b) ? blockStandingOf.get(b) : null;
+      if(poolMode === 'none') return shrunk(sc);
+      if(poolMode === 'block') return standing===null ? shrunk(sc) : standing;
       const afterIcc = poolToward(shrunk(sc), standing, blockIccOf.has(b) ? blockIccOf.get(b) : null);
+      if(poolMode === 'icc') return afterIcc;
       const w = ebWeightOf(sc);
       if(w===null || standing===null || !Number.isFinite(Number(afterIcc))) return afterIcc;
       return w*Number(afterIcc) + (1-w)*Number(standing);
@@ -3789,7 +3892,7 @@ const MiniEvxlEngine = (function(){
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
     return { regime: 'normal', level, levelBase, levelAdjust: levelAdj, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
-      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons };
+      type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons, pooling: poolMode };
   }
 
   // ---- Overlap page: the population map, recomputed from scenario pairs -------
@@ -4641,6 +4744,7 @@ const MiniEvxlEngine = (function(){
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
     scenarioDuration, DURATION_MIN_SAMPLES,
+    rankCorrelation, topKOverlap, orderingResolution,
     revisitHorizon, REVISIT_MIN_DAYS, HORIZON_MAX_DAYS,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
