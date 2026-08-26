@@ -1168,9 +1168,16 @@ const MiniEvxlEngine = (function(){
   // too generous on 98.9% of curves. It read a score as about ten percentile points better
   // than it is at the very first point below the last anchor, and worse further down --
   // which is exactly where the coach's primary output lives (S9 measured 10 of the owner's
-  // weakest 20 inside it). On his played set the change moves 32 scenarios by more than 2
-  // percentile points and reorders his weakest ten; membership of the weakest 20 moves by
-  // one scenario.
+  // weakest 20 inside it). The effect on the owner's page -- how many scenarios move, and by
+  // how much -- is in CLAUDE.md's MET-1/MET-2 section and DELIBERATELY NOT REPEATED HERE.
+  //
+  // It used to be, and the two copies disagreed: this comment said 32 scenarios moved by more
+  // than 2 percentile points "on his played set" while the section said 34 of 1,267 played
+  // CURVED ones. Curved is a subset of played, so 34 on the smaller set cannot sit beside 32 on
+  // the larger -- they are not two framings of one number, they contradict. And NEITHER can be
+  // re-derived: the rule being compared against was deleted when this one replaced it, so there
+  // is no artifact that could settle them and a third number from a reimplemented retired rule
+  // would settle nothing either. The fix for a figure that cannot be checked is to state it once.
   //
   // Below the last anchor is still EXTRAPOLATION -- the slope comes from the last anchor
   // PAIR -- so it is clamped to the last anchor's own share and falls back to the old ramp
@@ -4901,7 +4908,7 @@ const MiniEvxlEngine = (function(){
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
     standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
-    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,

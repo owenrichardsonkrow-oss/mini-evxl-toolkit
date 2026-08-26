@@ -795,6 +795,27 @@
     // cross-realm Map looks like from here is an object carrying Map's INTERFACE and failing
     // `instanceof`. That is exactly what `foreign` is, so this case fails the moment anyone puts
     // an `instanceof` back.
+    // ---- step 28: composeSession's `horizon` branch, which no test had ever entered -------
+    // The fixture exercised the pure helper `revisitHorizon` and never the BRANCH that calls it,
+    // and the page wraps that call in a catch that returned null on any throw -- so step 14's
+    // fifth temporal-dead-zone sighting lived inside it and showed only as an empty card. This
+    // enters the branch, which is the part that was untested.
+    {
+      let threw = null, hz = null;
+      try {
+        const r = E.composeSession(fixture(E), rotOpts({ horizon: 40 }), FILL);
+        hz = r.horizons || null;
+      } catch (e) { threw = (e && e.message) ? e.message : String(e); }
+      R.horizonBranch = {
+        threw,
+        built: hz !== null,
+        shaped: !!(hz && Array.isArray(hz.ripening) && typeof hz.eligible === 'number' && typeof hz.ripeNow === 'number'),
+        keys: hz ? Object.keys(hz).sort().join(',') : null,
+        // it must be the BRANCH that produced it: without the option there are no horizons at all
+        absentWithoutOption: (() => { try { return !E.composeSession(fixture(E), rotOpts(), FILL).horizons; } catch (e) { return false; } })()
+      };
+    }
+
     {
       const mk = pairs => {
         const m = new Map(pairs);
@@ -1380,6 +1401,10 @@
     else {
       if(!PL.defaultIsEb) problems.push('pooling: the DEFAULT must be `eb`, the shipped rule -- every existing caller depends on it');
       if(!PL.unknownFallsBackToEb) problems.push('pooling: an unrecognised mode must fall back to the shipped rule, not to something else');
+      if(!PL.squashSameOrder) problems.push('pooling: `squash` must be EXACTLY eb ordering -- if the order differs it is not the order-preserving attack it exists to be');
+      if(!PL.squashSmallerSpread) problems.push('pooling: `squash` must compress the SCALE -- that is the whole attack, and a rank statistic cannot see it');
+      if(!PL.squashResolutionKept) problems.push('pooling: `squash` must keep full resolution -- it defeats the rank legs WITHOUT collapsing, which is why the scale gate had to exist');
+      if(!PL.blockCollapses) problems.push('pooling: `block` must collapse the resolution -- that is what makes it the degenerate case');
     }
 
     // ---- step 21: the n-standardised metric CANDIDATE (rejected, kept as an instrument) ------
@@ -1402,6 +1427,19 @@
       if(!MT.noRunsUsesFallback) problems.push('metric: with NO runs the fallback is all there is, and it must be used');
       if(!MT.unknownJDoesNotBorrow) problems.push('metric: an unknown j must not silently borrow a_3 -- for j = 1 the true constant is ZERO, so the substitution has the wrong sign');
     }
+    // step 21's ROW-LEVEL cases. These lived inside the `realm` else-block until step 28 --
+    // two separate patches spliced them there -- so nine checks, including the four that guard
+    // step 19's degenerate `squash`/`block` attack, ran only because R.realm happened to exist.
+    if(!MR) problems.push('metricRows: missing');
+    else {
+      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
+      if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
+      // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
+      // rule that a borrowed number does not steer the order, for the ~half of the pool with one run.
+      if(!MR.std3LeavesSingle) problems.push('metric: `stdSingle:false` must leave a ONE-RUN row exactly where pb left it -- otherwise a borrowed scatter is steering the order for half the pool');
+      if(!MR.fullMovesSingle) problems.push('metric: `stdSingle:true` must move a one-run row, or the two variants are the same thing and the distinction is fiction');
+      if(!MR.notIdempotentAcrossMetrics) problems.push('metric: calibrateScenarios is idempotent BY DESIGN, but a caller asking for a different metric is not asking for a no-op -- step 19 lost days to exactly this wall');
+    }
 
     // ---- step 22 ----------------------------------------------------------------------
     const HZ = R.hazard;
@@ -1422,6 +1460,15 @@
     }
 
     // ---- cross-realm collections ------------------------------------------------------
+    const HB = R.horizonBranch;
+    if(!HB) problems.push('horizonBranch: missing');
+    else {
+      if(HB.threw) problems.push('horizon: composeSession THREW with opts.horizon set: ' + HB.threw + ' -- the page catches this and shows an empty card, which is how the fifth TDZ sighting hid');
+      if(!HB.built) problems.push('horizon: opts.horizon produced no `horizons` at all');
+      if(!HB.shaped) problems.push('horizon: `horizons` came back without ripening/eligible/ripeNow (' + HB.keys + '), so the card has nothing to draw');
+      if(!HB.absentWithoutOption) problems.push('horizon: `horizons` appears WITHOUT opts.horizon, so this case is not testing the branch');
+    }
+
     const RL = R.realm;
     if(!RL) problems.push('realm: missing');
     else {
@@ -1431,17 +1478,7 @@
       if(!RL.setLikeReal || !RL.setLikeForeign) problems.push('realm: a Set from any realm must read as set-like');
       if(!RL.setLikeRejectsMap) problems.push('realm: a Map must NOT read as set-like -- get() is the discriminator and without it a Map argument takes the Set path');
       if(!RL.foreignMapSameAsPlain) problems.push('realm: a foreign Map must give the SAME result as the equivalent plain object -- this is the assertion that would have caught the 411-members-unjudged failure');
-      if(!RL.foreignMapNotEmpty) problems.push('realm: the foreign-Map case produced NO events, so it is asserting nothing');      if(!MR.pbIsMax) problems.push('metric: the DEFAULT metric must still be the maximum-of-n -- step 21 rejected the candidate, so nothing may have moved');
-      if(!MR.std3LowersMulti) problems.push('metric: std3 must lower a four-run row through calibrateScenarios, or the option is not wired to the ranking at all');
-      // THE LOAD-BEARING ONE for the variant that was proposed: it respects step 7b's ratified
-      // rule that a borrowed number does not steer the order, for the ~half of the pool with one run.
-      if(!MR.std3LeavesSingle) problems.push('metric: `stdSingle:false` must leave a ONE-RUN row exactly where pb left it -- otherwise a borrowed scatter is steering the order for half the pool');
-      if(!MR.fullMovesSingle) problems.push('metric: `stdSingle:true` must move a one-run row, or the two variants are the same thing and the distinction is fiction');
-      if(!MR.notIdempotentAcrossMetrics) problems.push('metric: calibrateScenarios is idempotent BY DESIGN, but a caller asking for a different metric is not asking for a no-op -- step 19 lost days to exactly this wall');
-      if(!PL.squashSameOrder) problems.push('pooling: `squash` must be EXACTLY eb ordering -- if the order differs it is not the order-preserving attack it exists to be');
-      if(!PL.squashSmallerSpread) problems.push('pooling: `squash` must compress the SCALE -- that is the whole attack, and a rank statistic cannot see it');
-      if(!PL.squashResolutionKept) problems.push('pooling: `squash` must keep full resolution -- it defeats the rank legs WITHOUT collapsing, which is why the scale gate had to exist');
-      if(!PL.blockCollapses) problems.push('pooling: `block` must collapse the resolution -- that is what makes it the degenerate case');
+      if(!RL.foreignMapNotEmpty) problems.push('realm: the foreign-Map case produced NO events, so it is asserting nothing');
     }
 
     const CR = R.criterion;
