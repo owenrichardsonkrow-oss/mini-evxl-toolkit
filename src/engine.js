@@ -1307,8 +1307,15 @@ const MiniEvxlEngine = (function(){
   // Returns { sd, src } -- 'runs' when the scenario's own runs measured it, 'imputed' when
   // there was only one run and the sd is the profile's median scatter borrowed. The two are
   // kept apart on purpose: an imputed interval is the best estimate available and belongs on
-  // the page, but it is not evidence about THIS scenario, and the day's order is not steered
-  // by a number borrowed from elsewhere. See CLAUDE.md step 7b for what steering by it does.
+  // the page, but it is not evidence about THIS scenario.
+  //
+  // WHAT IT DOES AND DOES NOT STEER, corrected at step 32 after this comment claimed too much.
+  // It does NOT set the width the day's order is DRAWN from -- that reads the measured term only
+  // (`spreadOf(sc, false)`), which is D19, rejected on a pre-registered bar at step 11. But since
+  // step 11 it DOES reach the order, through `ebWeightOf`: this sd is part of `ownErrorFull`, and
+  // that is both the `s` in the weight and one of the errors Paule-Mandel estimates the block's
+  // tau^2 from -- so it moves the weight of block-mates that borrowed nothing. D26's breach is
+  // open and is broader than step 11 recorded; see DESIGN_INTENT D26.
   function runSampleSpread(runs, pctOf, cv){
     if(typeof pctOf !== 'function') return null;
     const xs = (runs||[]).map(Number).filter(x=>Number.isFinite(x) && x>0).sort((a,b)=>a-b);

@@ -574,12 +574,9 @@ run-history import; both transfer analyses.
   invariant across the whole sweep, 10 to 400, in both modes. All it moves is which
   groups are called "too thin to place". **So it does NOT become a control**: a
   selector for a knob that changes nothing implies a contestability the measurement
-  denies. On the ratification itself this entry says only what the measurement
-  supports — step 26 and `dev/knob-sensitivity.html` both word it **ratifiABLE at
-  30**, and ratification is the owner's act by this decision's own opening sentence.
-  He has not ruled on it (step 29's four rulings do not include it), so **30 stands
-  as the shipped value with the invariance measured behind it, and the ratification
-  is OPEN.**
+  denies. **RATIFIED AT 30** (2026-08-26, the owner's ruling, on step 26's invariance
+  measurement) — recorded as the owner's act, which is what this decision's opening
+  sentence requires and what an earlier draft of this amendment asserted without it.
 
 2026-08-25 (Review Ledger III):
 
@@ -653,7 +650,8 @@ decisions and do not belong in this sequence.
   commute, so either order puts weight `(1−icc)·w` on the scenario's own reading and the rest on
   the block, and at `w = 1` it is exactly this decision. The ICC remains the estimand half of the
   weight, and what step 11 added is a precision half. That step also breached D26 in doing so, and
-  that breach is still open.
+  that breach is still open — a step-32 closure was written and retracted the same day, and D26
+  records why, which is more useful than the closure would have been.
 
 - **D26** (Review Ledger IV step 7b, MET-7) — **a borrowed number may be SHOWN but must not STEER.**
   A scenario played once has no observable run scatter, so its interval is imputed from the
@@ -661,12 +659,42 @@ decisions and do not belong in this sequence.
   is not pinned down and the page should say so; it does **not** enter the draw, because it is not
   evidence about *that* scenario. The estimator itself does not change: swapping the PB for a
   smoothed statistic was measured out of sample and beaten by the PB wherever the grind is real.
-  **Recorded breach — ONE, and it is still OPEN:** step 11's empirical-Bayes weight steers the
-  centre of ~55% of the pool with exactly such a number. Step 11 named two exits, an explicit
-  retraction of this principle or a weight that does not need a borrowed number; step 21 rejected
-  the n-standardisation, which was that second exit, so only explicit retraction remains and
-  nothing has retracted it. **Neither step 29 nor D30 closed this** — they settled the estimand
-  (PB-rank), a different question. *(Ledger V's own D19, its queue id for unifying the shown and
+  **The recorded breach REMAINS OPEN, and it is BROADER than step 11 recorded. A step-32 closure
+  was written and RETRACTED the same day** — retracted because its load-bearing sentence was
+  false about the code, and it is kept here rather than deleted because the way it was wrong is
+  the most useful thing in this entry.
+  **What was claimed:** that the borrowed quantity is the profile's median CV, one scalar for the
+  whole profile, applied in SCORE space and then mapped through `pctOf` — so it *"sets a scale
+  and nothing else"*, every scenario-to-scenario difference coming from the curve, and the
+  principle therefore intact.
+  **Why that is false, measured rather than argued.** `pctOf` is not linear in score: MET-2 moved
+  the share axis to a LOGIT interpolation with a hard cap, and `sd = |pctOf(x(1+c)) − pctOf(x(1−c))|/2`
+  puts `c` inside that nonlinearity twice. Doubling `c` over the 693 one-run curved rows gives a
+  ratio spanning **1.00 to 3.62 (median 1.95)** where a true scale would give exactly 2.00 for
+  every row, and **3.84% of one-run pairs change order**. The borrowed scalar's *value*
+  co-determines the ranking among one-run scenarios, which is precisely what this principle
+  forbids. (The step that asserted local linearity is the same one that replaced that function
+  with a logit interpolation, seven steps earlier.)
+  **And there are two further channels the original breach never named:**
+  (i) `mSe`, the board-offset error in the same weight, is itself borrowed — the **217**
+  offsets estimated from board size all carry one shared constant, and `seOf` falls back to 0.5,
+  so the **46** played scenarios with neither an offset row nor a curve have a weight built
+  entirely from borrowed numbers with no curve in it at all;
+  (ii) **τ² is estimated by Paule–Mandel over `ownErrorFull`** — the engine's own comment at that
+  line reads *"EVERY member with a usable error goes in, borrowed or measured"* — and τ² is the
+  NUMERATOR of every block member's weight. So a number borrowed from one scenario moves the rank
+  of a **well-measured** block-mate that borrowed nothing. That is a strictly stronger breach than
+  the one on record, and no entry had it.
+  **What survives of the closure, and what would actually close this.** At a fixed `c`, most
+  cross-scenario variation really is the curve — only 3.84% of pairs invert under a 2× perturbation
+  — so the conclusion may well be defensible. But it would have to be established as a **measured
+  sensitivity bound** (*over the plausible range of `runCv`, the served weakest set does not
+  change*), which step 32 did not measure. A mechanical claim was offered instead because it was
+  checkable, and it did not check out. **The general form first proposed to the owner — "a borrowed
+  number may set the weight, not the value" — is still the wrong shape**: it is a category future
+  decisions would be argued into.
+  Step 11's other exit is still closed — step 21 rejected the n-standardisation — and **neither
+  step 29 nor D30 bears on this**: they settled the estimand (PB-rank), a different question.
   drawn intervals, was rejected in step 11 on a pre-registered EMPIRICAL bar, not on this
   principle; it upheld this rule rather than breaching it, and it is not the same D19 as anything
   in this file — see the note above D25.)*
@@ -768,3 +796,48 @@ decisions and do not belong in this sequence.
   and they have not used it at all yet."* Other template users stop being a weight on FUTURE
   decisions. **It retracts nothing already built for it** — the reset clearing the served ledger,
   the store prefixes, the personal-string guards are all correct on their own terms.
+
+- **D34** (Review Ledger VI step 32, the owner's ruling: *"the coach should operate mostly based on
+  floor, which if there is only one run then unfortunately that is the only data point you have to
+  draw conclusions from"*) — **the floor is the objective, so the composition of the served set is
+  a DIAGNOSTIC and never a target.** Step 11 set out to move the single-run share of served weakest
+  slots toward the pool's base rate, on the reasoning that the base rate is the neutral thing to
+  aim at. That was assumed and never decided, and it is now decided the other way: the coach serves
+  the floor, and whatever share of one-run scenarios follows from that is a consequence to be
+  reported, not a number to be steered toward.
+  **Step 11's criterion (b) is therefore RETIRED as a bar** and survives only as a printed
+  diagnostic. **It is retired because its TARGET was never decided, and now has been decided to be
+  the wrong thing to aim at — not because it fails on measurement.** That distinction was got wrong
+  in this entry's first draft, which said step 19 had shown (b) maximised by information destruction
+  on the real pool. It did not: step 19's collapse-wins result is criterion (c) (split-half rho:
+  the degenerate 0.7983 against eb's 0.7726), and step 19's own artifact measures (b) the OTHER way
+  — served single-run share eb **0.531** against the degenerate's 0.322 and `squash`'s 0.351, on a
+  base rate of 0.550, so on (b) the degenerate is rejected. What is true is that step 11's own
+  adversarial read argued (b) is gameable by collapse, and that step 21 found most of what it
+  measures is a mean-channel effect rather than the winner's curse it was named for. A bar nobody
+  can state the target of is not a bar.
+  **What this does NOT do is discard a thin reading.** The one data point is used: D25 keeps the
+  page showing the scenario's own unpooled percentile, so the floor is always visible. What is
+  pooled is the ORDER, and only by how well-conditioned the percentile readout is at that score —
+  see D26, where that quantity turns out to be a property of the population curve rather than of
+  the single run. If the ordering should follow the raw floor instead, that is `pooling: 'none'`,
+  one selectable mode away, and it is measured: **85% of weakest slots go to one-run scenarios**
+  under it, against 53% shipped and a 55% base rate.
+
+- **D35** (Review Ledger VI step 32, the owner's ruling: *"Percentile drives interpretation and
+  score can give extra context. Though score is mostly only relevant to a player trying to rank up
+  a benchmark"*) — **the calibrated percentile is the interpretive unit; a raw score is context.**
+  This settles which number a decision gets priced in, which had never been stated even though the
+  two units disagree. It sits directly under D30: the estimand is where the PB ranks, and *ranks*
+  is a percentile.
+  **Applied immediately, and it did not change a decision but it did change a figure.** D31's cost
+  had only ever been priced in score percent. Re-measured in percentile points
+  (`dev/hazard-lambda.json` `/givenUp/pctGainMed`, `/replay/base/pctGainMed`): a PB the rule reaches
+  is worth **+9.33 / +5.20 / +3.00** points by arrival run, and a PB the 0.6 → 0.685 move gives up
+  is worth **+6.99** (run 2) and **+2.22** (run 3+), **+4.05 overall**. So the 25 given up are worth
+  **0.43** of a first-run PB in standing against **0.36** in score — the units disagree, percentile
+  makes the trade look slightly DEARER, and the ratified setting survives the re-pricing. Recording
+  that it survived matters as much as the number: the decision was taken on the other unit.
+  **Where score legitimately leads is the benchmark ladder** — a tier threshold is a score, so
+  "what do I need for the next rank" is a score question and the detail pages answer it in scores.
+  Everything the coach ranks, orders or reports a gain in is percentile.
