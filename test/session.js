@@ -654,6 +654,133 @@
       m1: (() => { const st = E.stuckness(mkRunsC3([90, 91, 89, 92, 90, 60]), 100, 5); return { older: st.older, se: st.se, seBinomial: st.seBinomial }; })()
     };
 
+    // ---- step 12 (INTENT-1 + INTENT-2): the feel controller --------------------------
+    // Four rules, and each one is a decision that could have gone the other way, so each
+    // gets a case that fails if it is reversed.
+    const fa = f => { const r = E.feelAdjust(f); return { adj: r.adj, raw: r.raw, moves: r.moves, streak: r.streak, kind: r.kind, atLimit: r.atLimit }; };
+    R.feel = {
+      // pinned here so changing a constant fails the fixture rather than silently
+      // redefining what "three in a row" means
+      consts: { run: E.FEEL_RUN, max: E.FEEL_ADJ_MAX, values: E.FEEL_VALUES.slice() },
+      none: fa([]),
+      two: fa(['easy', 'easy']),
+      three: fa(['easy', 'easy', 'easy']),
+      threeHard: fa(['hard', 'hard', 'hard']),
+      // "about right" is an answer, and it BREAKS a run
+      brokenByGood: fa(['easy', 'easy', 'good', 'easy']),
+      // an unrated exposure is a question never asked -- it must NOT break a run
+      unratedDoesNotBreak: fa(['easy', 'easy', null, 'easy']),
+      // a fired streak is SPENT: the fourth identical rating must not move it again
+      spent: fa(['easy', 'easy', 'easy', 'easy']),
+      sixth: fa(['easy', 'easy', 'easy', 'easy', 'easy', 'easy']),
+      // and the clamp holds however long the run
+      clamped: fa(Array.from({ length: 12 }, () => 'easy')),
+      // opposite ratings cancel
+      cancel: fa(['easy', 'easy', 'easy', 'hard', 'hard', 'hard']),
+      // junk values are ignored entirely
+      junk: fa(['easy', 'nonsense', 'easy', 7, 'easy'])
+    };
+    // the THIRD EXIT, and its precedence. A rating must never erase an outcome the runs earned.
+    const bout = (hist, runs, pb, feel) => { const st = E.stagnation(hist, runs, pb, feel ? { feel } : null); return { done: st.done, why: st.why, k: st.k }; };
+    R.thirdExit = {
+      openNoFeel: bout([100, 101], [], 101, null),
+      hardCloses: bout([100, 101], [], 101, 'hard'),
+      easyDoesNot: bout([100, 101], [], 101, 'easy'),
+      goodDoesNot: bout([100, 101], [], 101, 'good'),
+      // a PB in the bout wins over the rating
+      pbBeatsHard: bout([100, 101], [120], 101, 'hard'),
+      // and so does a stagnation stop that already fired
+      exhaustBeatsHard: bout([100], [90, 90, 90, 90, 90, 90], 100, 'hard')
+    };
+
+    // ---- step 14: the provenance ladder and the forward horizon ----------------------
+    // NOT `H`: this scope already has one at the top of compute(), and a duplicate `const`
+    // is a SyntaxError -- which does not report a bad assertion, it stops the whole module
+    // from defining itself, so the harness fails at `S.compute is undefined` three files away.
+    const mkHorizon = (over) => { const r = E.revisitHorizon(Object.assign({ now: FIXED_MS }, over));
+      return { basis: r.basis, ripe: r.ripe, days: r.days===null ? null : Math.round(r.days*100)/100, rate: r.rate }; };
+    const HZ_DAY = 86400000;
+    R.step14 = {
+      prov: {
+        population: E.provenanceOf({ r: 0.4, n: 300 }),
+        priorOnly:  E.provenanceOf({ label: 'tracking' }),
+        // a label AND a measured pair is population: the higher rung wins
+        both:       E.provenanceOf({ r: 0.4, n: 300, label: 'tracking' }),
+        // personal needs EVENTS, not just the flag -- a flag with nothing behind it is a label
+        personalNoEvents: E.provenanceOf({ r: 0.4, n: 300, personal: true, personalEvents: 0 }),
+        personal:   E.provenanceOf({ r: 0.4, n: 300, personal: true, personalEvents: 3 }),
+        nothing:    E.provenanceOf({}),
+        ladder:     E.TRANSFER_PROVENANCE.slice(),
+        highest:    E.highestProvenance(['prior', 'population', 'prior'])
+      },
+      horizon: {
+        // the calendar alone, with no forecast to consult
+        calendar:  mkHorizon({ lastT: FIXED_MS - 4*HZ_DAY }),
+        ripeAlready: mkHorizon({ lastT: FIXED_MS - 40*HZ_DAY }),
+        // odds already positive: the forecast does not hold it back, so the calendar decides
+        oddsPositive: mkHorizon({ lastT: FIXED_MS - 4*HZ_DAY, gain: 0.2, margin: 0.05, odds: 0.15 }),
+        // the forecast is the LATER clock: 20 days since, gain 0.02 => rate 0.001/day,
+        // margin 0.05 => crosses 50 days after the visit, i.e. 30 days from now
+        forecastLater: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0.02, margin: 0.05, odds: -0.03 }),
+        // a flat or falling neighbourhood never ripens on the forecast
+        notRipening: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0, margin: 0.05, odds: -0.05 }),
+        // and a crossing past the cap is reported as out of range rather than given a date
+        beyond: mkHorizon({ lastT: FIXED_MS - 20*HZ_DAY, gain: 0.001, margin: 0.5, odds: -0.499 }),
+        noLast: mkHorizon({ lastT: null })
+      }
+    };
+
+    // ---- step 17 (INTENT-6): how long a scenario takes, from the run record -----------
+    const S = 1000, mkRuns = secs => { let t = FIXED_MS; const out = [[t, 100]];
+      secs.forEach(g => { t += g * S; out.push([t, 100]); }); return out; };
+    R.duration = {
+      // six 60-second gaps: a clean read
+      clean: E.scenarioDuration(mkRuns([62, 61, 63, 62, 64, 61])),
+      // one quit-early run must NOT define the answer -- that is why it is a low quantile
+      // rather than the minimum
+      withQuit: E.scenarioDuration(mkRuns([62, 61, 8, 63, 62, 64, 61])),
+      // gaps that are breaks, not restarts, are excluded
+      withBreak: E.scenarioDuration(mkRuns([62, 61, 4000, 63, 62, 61])),
+      // and two rows of one run seen twice are not a gap at all
+      dupes: E.scenarioDuration(mkRuns([1, 1, 62, 61, 63, 62])),
+      tooFew: E.scenarioDuration(mkRuns([62, 61])),
+      none: E.scenarioDuration([]),
+      short: E.scenarioDuration(mkRuns([25, 26, 24, 25, 27]))
+    };
+
+    // ---- step 13: COACH-4's readiness gate ------------------------------------------
+    // A gate you can see is a gate; a gate you have to remember is a hope. So the thing that
+    // must not break is that it can say NO for each distinct reason, and YES when they clear.
+    const mkExp = (i, over) => Object.assign({
+      resolved: true, hit: i % 3 === 0 ? 1 : 0, pv: 2, blockEpoch: 'e1', block: 'c' + (i % 7),
+      rung: 4, gain: 0.1, margin: 0.05, arm: (i % 4 === 0 ? 'B' : 'A'),
+      servedAt: FIXED_MS - (400 - i) * 3600000
+    }, over || {});
+    const full = Array.from({ length: 400 }, (u, i) => mkExp(i));
+    const rd = (rows, over) => {
+      const r = E.coach4Readiness(rows, Object.assign({ pv: 2, epoch: 'e1', blocksNow: 7, nowMs: FIXED_MS }, over || {}));
+      return { coefficients: r.coefficients, required: r.requiredRarer, rarer: r.rarer, usable: r.usable,
+               dropped: r.dropped, ready: r.ready, blockers: r.blockers, armA: r.armA, armB: r.armB,
+               blocks: r.blocks, blocksModelled: r.blocksModelled, weeks: r.weeksToReady };
+    };
+    R.coach4 = {
+      empty: rd([]),
+      ready: rd(full),
+      thin: rd(full.slice(0, 40)),
+      // an unresolved item is not evidence -- it must not count toward the gate
+      unresolved: rd(full.slice(0, 40).concat(Array.from({ length: 500 }, (u, i) => mkExp(i, { resolved: false })))),
+      // rows written under an older definition of gain/margin cannot be pooled with today's
+      stalePv: rd(full.map((r, i) => i < 50 ? Object.assign({}, r, { pv: 1 }) : r)),
+      // nor can block ids from a previous freeze: c:1 was a different community before it
+      staleEpoch: rd(full.map((r, i) => i < 60 ? Object.assign({}, r, { blockEpoch: 'e0' }) : r)),
+      // one block leaves no dummy to fit
+      oneBlock: rd(full.map(r => Object.assign({}, r, { block: 'c0' }))),
+      // and the arm needs BOTH sides
+      noArmB: rd(full.map(r => Object.assign({}, r, { arm: 'A' }))),
+      // the coefficient count is a property of the MODEL: it must not move with the data
+      sizedOnModel: rd(full.slice(0, 20), { blocksNow: 7 }).coefficients
+    };
+
     // ---- NEXT-4: the randomised arm -------------------------------------------------------
     // Three things have to hold or the experiment measures nothing:
     //   1. OFF is the identity -- every pre-NEXT-4 path is untouched.
@@ -1034,6 +1161,82 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const DU = R.duration;
+    if(!DU) problems.push('duration: missing');
+    else {
+      if(!(DU.clean.seconds >= 60 && DU.clean.seconds <= 64) || DU.clean.src !== 'runs') problems.push('duration: six ~62s gaps must read as about a minute, got '+J(DU.clean));
+      if(!(DU.withQuit.seconds >= 60)) problems.push('duration: a single quit-early gap must not define the answer -- that is what the low quantile is for, got '+J(DU.withQuit));
+      if(DU.withBreak.samples !== 5) problems.push('duration: a 4,000s gap is a BREAK and must be excluded, got '+J(DU.withBreak));
+      if(DU.dupes.samples !== 4) problems.push('duration: a 1s gap is one run seen twice, not a restart, got '+J(DU.dupes));
+      if(DU.tooFew.seconds !== null || DU.tooFew.src !== null) problems.push('duration: under the sample floor there is no answer, got '+J(DU.tooFew));
+      if(DU.none.seconds !== null) problems.push('duration: no runs, no answer, got '+J(DU.none));
+      if(!(DU.short.seconds >= 24 && DU.short.seconds <= 26)) problems.push('duration: a genuinely short scenario must read short, got '+J(DU.short));
+      if(!(DU.clean.min <= DU.clean.seconds && DU.clean.seconds <= DU.clean.median)) problems.push('duration: the reported value must sit between the min and the median, got '+J(DU.clean));
+    }
+
+    const S14 = R.step14;
+    if(!S14) problems.push('step14: missing');
+    else {
+      const PV = S14.prov;
+      if(J(PV.ladder) !== J(['prior','population','personal'])) problems.push('provenance: the ladder is prior -> population -> personal, got '+J(PV.ladder));
+      if(PV.population !== 'population') problems.push('provenance: a measured pair is population, got '+J(PV.population));
+      if(PV.priorOnly !== 'prior') problems.push('provenance: a label with no measured pair is a prior, got '+J(PV.priorOnly));
+      if(PV.both !== 'population') problems.push('provenance: with a label AND a pair the HIGHER rung wins, got '+J(PV.both));
+      if(PV.personalNoEvents !== 'population') problems.push('provenance: a personal flag with ZERO events is not personal evidence, got '+J(PV.personalNoEvents));
+      if(PV.personal !== 'personal') problems.push('provenance: measured events on the record are the personal rung, got '+J(PV.personal));
+      if(PV.nothing !== null) problems.push('provenance: no evidence of any kind is null, not a rung, got '+J(PV.nothing));
+      if(PV.highest !== 'population') problems.push('provenance: highestProvenance must return the top rung present, got '+J(PV.highest));
+
+      const HZ = S14.horizon;
+      if(HZ.calendar.basis !== 'calendar' || Math.abs(HZ.calendar.days - 10) > 0.01) problems.push('horizon: 4 days after a visit ripens on the calendar in 10 more, got '+J(HZ.calendar));
+      if(!HZ.ripeAlready.ripe || HZ.ripeAlready.basis !== 'ripe') problems.push('horizon: 40 days after a visit is already ripe, got '+J(HZ.ripeAlready));
+      if(HZ.oddsPositive.basis !== 'calendar') problems.push('horizon: with the odds already positive the CALENDAR is the binding clock, got '+J(HZ.oddsPositive));
+      if(HZ.forecastLater.basis !== 'forecast' || Math.abs(HZ.forecastLater.days - 30) > 0.5) problems.push('horizon: gain 0.02 over 20 days is 0.001/day, so a 0.05 margin crosses 30 days from now, got '+J(HZ.forecastLater));
+      if(HZ.notRipening.basis !== 'not-ripening') problems.push('horizon: a flat neighbourhood never ripens on the forecast and must say so rather than pick a date, got '+J(HZ.notRipening));
+      if(HZ.beyond.basis !== 'beyond' || HZ.beyond.days !== null) problems.push('horizon: a crossing past the cap is out of range and carries NO date, got '+J(HZ.beyond));
+      if(HZ.noLast.basis !== 'unknown') problems.push('horizon: with no last visit there is nothing to project from, got '+J(HZ.noLast));
+    }
+
+    const C4 = R.coach4;
+    if(!C4) problems.push('coach4: missing');
+    else {
+      if(C4.ready.coefficients !== 11) problems.push('coach4: intercept + gain + margin + arm + rung + 6 block dummies is 11 coefficients, got '+C4.ready.coefficients);
+      if(C4.ready.required !== 110) problems.push('coach4: 11 coefficients at 10 events per variable is 110 of the rarer outcome, got '+C4.ready.required);
+      if(!C4.ready.ready || C4.ready.blockers.length) problems.push('coach4: a full record must read READY with no blockers, got '+J(C4.ready));
+      if(C4.empty.ready || C4.empty.blockers.length !== 1) problems.push('coach4: an empty record must give ONE honest blocker, not one per missing term: '+J(C4.empty.blockers));
+      if(C4.thin.ready || !C4.thin.blockers.some(b=>/more of the rarer outcome/.test(b))) problems.push('coach4: a thin record must name the shortfall on the RARER outcome, got '+J(C4.thin.blockers));
+      if(!(C4.thin.weeks > 0)) problems.push('coach4: a thin record with a measurable rate must project a number of weeks, got '+J(C4.thin.weeks));
+      if(C4.unresolved.rarer !== C4.thin.rarer || C4.unresolved.usable !== C4.thin.usable) problems.push('coach4: UNRESOLVED items must not count toward the gate -- adding 500 of them moved it from '+J(C4.thin.usable)+' to '+J(C4.unresolved.usable));
+      if(C4.stalePv.dropped !== 50 || !C4.stalePv.blockers.some(b=>/older definition/.test(b))) problems.push('coach4: rows under an older `pv` must be dropped as unpoolable and said so, got '+J(C4.stalePv));
+      if(C4.staleEpoch.dropped !== 60) problems.push('coach4: rows whose block id belongs to a previous freeze must be dropped -- c:1 was a different community then, got dropped '+J(C4.staleEpoch.dropped));
+      if(!C4.oneBlock.blockers.some(b=>/at least two blocks/.test(b))) problems.push('coach4: one block leaves no dummy to fit and must block, got '+J(C4.oneBlock.blockers));
+      if(!C4.noArmB.blockers.some(b=>/arm B/.test(b))) problems.push('coach4: the arm contrast needs both sides, got '+J(C4.noArmB.blockers));
+      if(C4.sizedOnModel !== 11) problems.push('coach4: the coefficient count is a property of the MODEL and must not shrink because little data has arrived -- got '+C4.sizedOnModel+' on a 20-row record');
+    }
+
+    const FE = R.feel, TE = R.thirdExit;
+    if(!FE || !TE) problems.push('feel: missing');
+    else {
+      if(FE.consts.run !== 3 || FE.consts.max !== 2) problems.push('feel: the controller is three in a row and a +-2 rung clamp, got '+J(FE.consts));
+      if(J(FE.consts.values) !== J(['easy','good','hard'])) problems.push('feel: the rating vocabulary is easy/good/hard, got '+J(FE.consts.values));
+      if(FE.none.adj !== 0 || FE.two.adj !== 0) problems.push('feel: fewer than three in a row must not move the window, got '+J([FE.none, FE.two]));
+      if(FE.three.adj !== 1 || FE.three.moves !== 1) problems.push('feel: three "too easy" must move the window UP one rung, got '+J(FE.three));
+      if(FE.threeHard.adj !== -1) problems.push('feel: three "too hard" must move the window DOWN one rung, got '+J(FE.threeHard));
+      if(FE.brokenByGood.adj !== 0 || FE.brokenByGood.streak !== 1) problems.push('feel: "about right" must BREAK a run -- it is an answer, not an absence -- got '+J(FE.brokenByGood));
+      if(FE.unratedDoesNotBreak.adj !== 1) problems.push('feel: an UNRATED exposure is a question never asked and must not break a run (COACH-2 s rule), got '+J(FE.unratedDoesNotBreak));
+      if(FE.spent.adj !== 1 || FE.spent.streak !== 1) problems.push('feel: a fired streak is SPENT -- the fourth identical rating must start a new one, not move the window again -- got '+J(FE.spent));
+      if(FE.sixth.adj !== 2) problems.push('feel: six in a row is two moves, got '+J(FE.sixth));
+      if(FE.clamped.adj !== 2 || !FE.clamped.atLimit || FE.clamped.raw <= 2) problems.push('feel: the adjustment must clamp at +-2 and SAY it is clamped, got '+J(FE.clamped));
+      if(FE.cancel.adj !== 0) problems.push('feel: three easy then three hard must cancel, got '+J(FE.cancel));
+      if(FE.junk.adj !== 1) problems.push('feel: values outside the vocabulary must be ignored, not treated as breaks, got '+J(FE.junk));
+
+      if(TE.openNoFeel.done) problems.push('thirdExit: an unrated item with no runs must stay open, got '+J(TE.openNoFeel));
+      if(!TE.hardCloses.done || TE.hardCloses.why !== 'too-hard') problems.push('thirdExit: "too hard" must close the item as its own exit, got '+J(TE.hardCloses));
+      if(TE.easyDoesNot.done || TE.goodDoesNot.done) problems.push('thirdExit: only "too hard" closes an item, got '+J([TE.easyDoesNot, TE.goodDoesNot]));
+      if(TE.pbBeatsHard.why !== 'pb') problems.push('thirdExit: a PB in the bout must WIN over the rating -- a rating cannot erase an outcome the runs earned -- got '+J(TE.pbBeatsHard));
+      if(TE.exhaustBeatsHard.why !== 'exhausted') problems.push('thirdExit: a stagnation stop that already fired must win over the rating, got '+J(TE.exhaustBeatsHard));
+    }
+
     const SN = R.stuckNull;
     if(!SN) problems.push('stuckNull: missing');
     else {

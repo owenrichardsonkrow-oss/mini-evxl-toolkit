@@ -22,6 +22,7 @@
 <script src="/test/session.js"></script>
 <script src="/test/overlap.js"></script>
 <script src="/test/percentile.js"></script>
+<script src="/test/personal.js"></script>
 <pre id="out">RUNNING</pre>
 <script>
 (async () => {
@@ -33,6 +34,7 @@
     const S = window.__miniEvxlSession;
     const O = window.__miniEvxlOverlap;
     const P = window.__percentileTest;
+    const PE = window.__personalTest;
     const q = new URLSearchParams(location.search);
     // The session test needs no dataset: a synthetic fixture through composeSession.
     const sActual = S.compute(MiniEvxlEngine);
@@ -48,6 +50,12 @@
       const pFix = await fetch('/test/pctrank-fixture.json');
       if (pFix.ok) pResult = P.run(MiniEvxlEngine, await pFix.json());
     } catch (e) { pResult = null; }
+    // INTENT-4: the same discipline for the personal return-event rule
+    let peResult = null;
+    try {
+      const peFix = await fetch('/test/personal-fixture.json');
+      if (peFix.ok) peResult = PE.run(MiniEvxlEngine, await peFix.json());
+    } catch (e) { peResult = null; }
     const html = await (await fetch('/template.html')).text();
     const data = G.extractData(html);
     const actual = G.compute(MiniEvxlEngine, data);
@@ -72,7 +80,9 @@
         problems: sProblems.slice(0, 20), problemCount: sProblems.length },
       overlap: { checks: oActual.checks, problems: oActual.problems.slice(0, 30), problemCount: oActual.problems.length },
       percentile: pResult ? { checks: pResult.checks, maxDiff: pResult.maxDiff,
-        problems: pResult.problems.slice(0, 20), problemCount: pResult.problems.length } : { skipped: true } });
+        problems: pResult.problems.slice(0, 20), problemCount: pResult.problems.length } : { skipped: true },
+      personal: peResult ? { checks: peResult.checks, maxDiff: peResult.maxDiff,
+        problems: peResult.problems.slice(0, 20), problemCount: peResult.problems.length } : { skipped: true } });
   } catch (e) {
     out.textContent = 'ERROR ' + String(e && e.stack || e);
   }
