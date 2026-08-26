@@ -693,6 +693,39 @@
       exhaustBeatsHard: bout([100], [90, 90, 90, 90, 90, 90], 100, 'hard')
     };
 
+    // ---- step 13: COACH-4's readiness gate ------------------------------------------
+    // A gate you can see is a gate; a gate you have to remember is a hope. So the thing that
+    // must not break is that it can say NO for each distinct reason, and YES when they clear.
+    const mkExp = (i, over) => Object.assign({
+      resolved: true, hit: i % 3 === 0 ? 1 : 0, pv: 2, blockEpoch: 'e1', block: 'c' + (i % 7),
+      rung: 4, gain: 0.1, margin: 0.05, arm: (i % 4 === 0 ? 'B' : 'A'),
+      servedAt: FIXED_MS - (400 - i) * 3600000
+    }, over || {});
+    const full = Array.from({ length: 400 }, (u, i) => mkExp(i));
+    const rd = (rows, over) => {
+      const r = E.coach4Readiness(rows, Object.assign({ pv: 2, epoch: 'e1', blocksNow: 7, nowMs: FIXED_MS }, over || {}));
+      return { coefficients: r.coefficients, required: r.requiredRarer, rarer: r.rarer, usable: r.usable,
+               dropped: r.dropped, ready: r.ready, blockers: r.blockers, armA: r.armA, armB: r.armB,
+               blocks: r.blocks, blocksModelled: r.blocksModelled, weeks: r.weeksToReady };
+    };
+    R.coach4 = {
+      empty: rd([]),
+      ready: rd(full),
+      thin: rd(full.slice(0, 40)),
+      // an unresolved item is not evidence -- it must not count toward the gate
+      unresolved: rd(full.slice(0, 40).concat(Array.from({ length: 500 }, (u, i) => mkExp(i, { resolved: false })))),
+      // rows written under an older definition of gain/margin cannot be pooled with today's
+      stalePv: rd(full.map((r, i) => i < 50 ? Object.assign({}, r, { pv: 1 }) : r)),
+      // nor can block ids from a previous freeze: c:1 was a different community before it
+      staleEpoch: rd(full.map((r, i) => i < 60 ? Object.assign({}, r, { blockEpoch: 'e0' }) : r)),
+      // one block leaves no dummy to fit
+      oneBlock: rd(full.map(r => Object.assign({}, r, { block: 'c0' }))),
+      // and the arm needs BOTH sides
+      noArmB: rd(full.map(r => Object.assign({}, r, { arm: 'A' }))),
+      // the coefficient count is a property of the MODEL: it must not move with the data
+      sizedOnModel: rd(full.slice(0, 20), { blocksNow: 7 }).coefficients
+    };
+
     // ---- NEXT-4: the randomised arm -------------------------------------------------------
     // Three things have to hold or the experiment measures nothing:
     //   1. OFF is the identity -- every pre-NEXT-4 path is untouched.
@@ -1073,6 +1106,23 @@
       if(MX.servedItems !== 3 || MX.servedResolved !== 2 || MX.servedFirstTry !== 1) problems.push('resolve: a weakest and a route item are scored the same way as a revisit (Q4), got '+J(MX));
       if(MX.revisitsResolved !== 0) problems.push('resolve: the one revisit in that session was never attempted, so no revisit resolved, got '+J(MX));
     }
+    const C4 = R.coach4;
+    if(!C4) problems.push('coach4: missing');
+    else {
+      if(C4.ready.coefficients !== 11) problems.push('coach4: intercept + gain + margin + arm + rung + 6 block dummies is 11 coefficients, got '+C4.ready.coefficients);
+      if(C4.ready.required !== 110) problems.push('coach4: 11 coefficients at 10 events per variable is 110 of the rarer outcome, got '+C4.ready.required);
+      if(!C4.ready.ready || C4.ready.blockers.length) problems.push('coach4: a full record must read READY with no blockers, got '+J(C4.ready));
+      if(C4.empty.ready || C4.empty.blockers.length !== 1) problems.push('coach4: an empty record must give ONE honest blocker, not one per missing term: '+J(C4.empty.blockers));
+      if(C4.thin.ready || !C4.thin.blockers.some(b=>/more of the rarer outcome/.test(b))) problems.push('coach4: a thin record must name the shortfall on the RARER outcome, got '+J(C4.thin.blockers));
+      if(!(C4.thin.weeks > 0)) problems.push('coach4: a thin record with a measurable rate must project a number of weeks, got '+J(C4.thin.weeks));
+      if(C4.unresolved.rarer !== C4.thin.rarer || C4.unresolved.usable !== C4.thin.usable) problems.push('coach4: UNRESOLVED items must not count toward the gate -- adding 500 of them moved it from '+J(C4.thin.usable)+' to '+J(C4.unresolved.usable));
+      if(C4.stalePv.dropped !== 50 || !C4.stalePv.blockers.some(b=>/older definition/.test(b))) problems.push('coach4: rows under an older `pv` must be dropped as unpoolable and said so, got '+J(C4.stalePv));
+      if(C4.staleEpoch.dropped !== 60) problems.push('coach4: rows whose block id belongs to a previous freeze must be dropped -- c:1 was a different community then, got dropped '+J(C4.staleEpoch.dropped));
+      if(!C4.oneBlock.blockers.some(b=>/at least two blocks/.test(b))) problems.push('coach4: one block leaves no dummy to fit and must block, got '+J(C4.oneBlock.blockers));
+      if(!C4.noArmB.blockers.some(b=>/arm B/.test(b))) problems.push('coach4: the arm contrast needs both sides, got '+J(C4.noArmB.blockers));
+      if(C4.sizedOnModel !== 11) problems.push('coach4: the coefficient count is a property of the MODEL and must not shrink because little data has arrived -- got '+C4.sizedOnModel+' on a 20-row record');
+    }
+
     const FE = R.feel, TE = R.thirdExit;
     if(!FE || !TE) problems.push('feel: missing');
     else {

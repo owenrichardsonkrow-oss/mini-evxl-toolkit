@@ -2168,6 +2168,11 @@ const MiniEvxlEngine = (function(){
       margin: (it.margin===null || it.margin===undefined) ? null : Number(it.margin),
       odds: (it.odds===null || it.odds===undefined) ? null : Number(it.odds),
       arm: it.arm||null, pv: (it.pv===null || it.pv===undefined) ? null : Number(it.pv),
+      // step 13: the two stamps that decide whether a row may be POOLED with another --
+      // `sv` is the sampler that chose it, `blockEpoch` the freeze its block id belongs to.
+      // A readiness count that ignored them would report rows the fit cannot actually use.
+      sv: (it.sv===null || it.sv===undefined) ? null : Number(it.sv),
+      blockEpoch: it.blockEpoch||null,
       pbAt, k: 0, resolved: false, hit: 0, hitAny: 0,
       base: collectBaseline(it.n), baseAny: null, src: null };
     const rows = typeof runsOf==='function' ? runsOf(it.name) : null;
@@ -2437,6 +2442,83 @@ const MiniEvxlEngine = (function(){
       aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
+  // ---- COACH-4's READINESS GATE (step 13, 2026-08-26) -------------------------------
+  // COACH-4 is the model that replaces the randomised arm's normal-approximation interval: a
+  // logistic fit of the FIRST-TRY PB on the forecast's measured parts, with the arm as a
+  // covariate and the exchangeable `1/(n+1)` entering as a KNOWN OFFSET rather than a fitted
+  // term -- it is derived, not estimated, so it costs no degrees of freedom.
+  //
+  // `odds` is deliberately NOT a term: it is gain - margin, so including it with both would be
+  // exactly collinear. That is one of the things this report exists to state rather than leave
+  // to be rediscovered when someone finally fits it.
+  //
+  // The fit is months away and a gate you have to remember is a hope. So it is computed from
+  // the live record: what is there, what the fit needs, and what is missing.
+  const COACH4_EPV = 10;   // events per variable, the conventional floor for a logistic fit
+  function coach4Readiness(exposures, opts){
+    const o = Object.assign({ epv: COACH4_EPV, pv: null, sv: null, epoch: null,
+      minPerArm: ARM_MIN_PER_ARM, nowMs: Date.now() }, opts||{});
+    const all = (exposures||[]).filter(r=>r && r.resolved);
+    // POOLABLE means the row's numbers mean the same thing as today's. `pv` stamps the
+    // definition of gain/margin (COACH-1 changed it mid-record), `blockEpoch` stamps which
+    // freeze a block id belongs to -- c:1 was a different community before the re-freeze, so
+    // pooling across epochs would put two skills under one dummy.
+    const pvOk  = r => o.pv===null  || r.pv===null  || r.pv===o.pv;
+    const epOk  = r => o.epoch===null || !r.block || !r.blockEpoch || r.blockEpoch===o.epoch;
+    const usable = all.filter(r=>pvOk(r) && epOk(r));
+    const blocks = Array.from(new Set(usable.map(r=>r.block).filter(Boolean)));
+    // The coefficient count is a property of the MODEL, not of how much data has arrived. Size
+    // it on the blocks the coach uses TODAY (`opts.blocksNow`), not on the blocks the resolved
+    // rows happen to span -- otherwise the target grows as the record fills and the gate reads
+    // as a moving goalpost. How many blocks the rows actually COVER is its own blocker below.
+    const blocksModelled = Math.max(Number(o.blocksNow)||0, blocks.length);
+    const terms = [
+      { name: 'intercept', df: 1, have: true },
+      { name: 'gain',   df: 1, have: usable.some(r=>Number.isFinite(r.gain)) },
+      { name: 'margin', df: 1, have: usable.some(r=>Number.isFinite(r.margin)) },
+      { name: 'arm',    df: 1, have: usable.some(r=>r.arm) },
+      { name: 'rung',   df: 1, have: usable.some(r=>Number.isFinite(r.rung)) },
+      { name: 'block (k-1 dummies)', df: Math.max(blocksModelled - 1, 0), have: blocks.length > 1 }
+    ];
+    const coefficients = terms.reduce((a, t)=>a + t.df, 0);
+    const hits = usable.filter(r=>r.hit).length;
+    const misses = usable.length - hits;
+    const rarer = Math.min(hits, misses);
+    const requiredRarer = coefficients * o.epv;
+    // arms have their own floor: the contrast needs both sides, and a lopsided split is the
+    // binding constraint long before the total is
+    const armA = usable.filter(r=>r.arm==='A').length, armB = usable.filter(r=>r.arm==='B').length;
+    // the rate, so the shortfall is a date rather than a number
+    const stamps = usable.map(r=>Number(r.servedAt)).filter(t=>Number.isFinite(t) && t>0).sort((a,b)=>a-b);
+    const spanDays = stamps.length>1 ? (stamps[stamps.length-1]-stamps[0])/DAY_MS : 0;
+    const perWeek = spanDays >= 1 ? (usable.length/spanDays)*7 : null;
+    const rarerShare = usable.length ? rarer/usable.length : null;
+    const shortfallRarer = Math.max(0, requiredRarer - rarer);
+    const weeksToReady = (perWeek && perWeek>0 && rarerShare && rarerShare>0)
+      ? (shortfallRarer/(perWeek*rarerShare)) : null;
+    const dropped = all.length - usable.length;
+    const blockers = [];
+    if(!usable.length){
+      // one honest sentence beats five that all say the same thing
+      blockers.push('no resolved items yet -- an item resolves once a run is logged AFTER it was served');
+    } else {
+      if(shortfallRarer > 0) blockers.push(shortfallRarer+' more of the rarer outcome ('+(hits<=misses?'collected':'not collected')+'), for '+o.epv+' events per variable across '+coefficients+' coefficients');
+      if(armA < o.minPerArm) blockers.push((o.minPerArm-armA)+' more resolved items on arm A (the coach\'s top pick)');
+      if(armB < o.minPerArm) blockers.push((o.minPerArm-armB)+' more resolved items on arm B (the withheld runner-up)');
+      if(blocks.length < 2) blockers.push('resolved items in at least two blocks -- with one block there is no dummy to fit');
+      terms.forEach(t=>{ if(!t.have && t.df>0) blockers.push('no resolved item carries `'+t.name+'` yet'); });
+    }
+    if(dropped > 0) blockers.push(dropped+' resolved item(s) are stamped under an older definition and cannot be pooled with the rest');
+    return { terms, coefficients, epv: o.epv,
+      resolved: all.length, usable: usable.length, dropped,
+      hits, misses, rarer, rarerIs: hits<=misses ? 'collected' : 'not collected',
+      requiredRarer, shortfallRarer, ready: blockers.length===0,
+      armA, armB, minPerArm: o.minPerArm, blocks: blocks.length, blocksModelled,
+      perWeek: perWeek===null ? null : Math.round(perWeek*10)/10,
+      weeksToReady: weeksToReady===null ? null : Math.ceil(weeksToReady),
+      spanDays: Math.round(spanDays*10)/10, blockers };
+  }
+
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
   // One pass over the rows that gives every played scenario a number on ONE scale, so
   // that "weakest" means weakest skill rather than weakest board or weakest metric:
@@ -4275,6 +4357,7 @@ const MiniEvxlEngine = (function(){
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
+    coach4Readiness, COACH4_EPV,
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
