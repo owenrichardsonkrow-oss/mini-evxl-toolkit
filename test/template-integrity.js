@@ -84,12 +84,25 @@ if (pop) {
         }
       }
       // pairs (when the map kept every tested pair): {minShared, names, e:[ai, bi, r100, n, ...]}
-      if (o.transfer.pairs !== undefined) {
-        const p = o.transfer.pairs;
-        check(isObj(p) && Array.isArray(p.names) && Array.isArray(p.e) && Number.isInteger(p.minShared) && p.minShared > 0, 'transfer.pairs lacks minShared/names/e');
+      //
+      // PERF-1 (step 16): the pair matrix ships in its OWN <script id="population-pairs">
+      // element and is parsed on first use, because it is ~74% of the payload and nothing on
+      // Home touches it. It is read from there when present, and the checks below are the same
+      // ones -- a guard that quietly stopped running after a data-layout change would be worse
+      // than no guard, and `if (pairs !== undefined)` would have done exactly that.
+      const splitPairs = (() => {
+        const m = html.match(/<script id="population-pairs"[^>]*>([\s\S]*?)<\/script>/);
+        if (!m || !m[1].trim()) return undefined;
+        try { return JSON.parse(m[1]); } catch (e) { check(false, 'population-pairs does not parse: ' + e.message); return undefined; }
+      })();
+      const pairsBlock = o.transfer.pairs !== undefined ? o.transfer.pairs : splitPairs;
+      check(!(o.transfer.pairs !== undefined && splitPairs !== undefined), 'the pair matrix is present BOTH inline and as its own element -- one of them is stale');
+      if (pairsBlock !== undefined) {
+        const p = pairsBlock;
+        check(isObj(p) && Array.isArray(p.names) && Array.isArray(p.e) && Number.isInteger(p.minShared) && p.minShared > 0, 'the pair matrix lacks minShared/names/e');
         if (isObj(p) && Array.isArray(p.names) && Array.isArray(p.e)) {
-          check(p.e.length % 4 === 0, 'transfer.pairs.e length is not a multiple of 4: ' + p.e.length);
-          check(p.names.every(n => typeof n === 'string'), 'transfer.pairs.names holds a non-string');
+          check(p.e.length % 4 === 0, 'the pair matrix e length is not a multiple of 4: ' + p.e.length);
+          check(p.names.every(n => typeof n === 'string'), 'the pair matrix names holds a non-string');
           let bad = null;
           for (let i = 0; i + 3 < p.e.length && !bad; i += 4) {
             const ai = p.e[i], bi = p.e[i + 1], r100 = p.e[i + 2], n = p.e[i + 3];

@@ -3377,8 +3377,16 @@ const MiniEvxlEngine = (function(){
         run);
       return (s===null || !Number.isFinite(s) || s<=0) ? null : s;
     };
+    // PERF-4: DECORATE, SORT, UNDECORATE. The comparator used to call `sinks` and `weakKey`
+    // on BOTH sides of every comparison -- and `weakKey` is not cheap: it walks the scenario's
+    // neighbour list for `hubDegree` and recomputes the pooled value, which since step 11 runs
+    // the empirical-Bayes weight and the metric spread. That is O(n log n) evaluations of a
+    // function that only has n distinct answers. Computing each key ONCE turns ~5,000 key
+    // evaluations into 541 on this profile.
     const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
-      .sort((a,b)=> (sinks(a)?1:0)-(sinks(b)?1:0) || weakKey(a)-weakKey(b) || a.toMax-b.toMax || b.playlists-a.playlists);
+      .map(sc=>({ sc, s: sinks(sc)?1:0, k: weakKey(sc), t: sc.toMax, p: sc.playlists }))
+      .sort((a,b)=> a.s-b.s || a.k-b.k || a.t-b.t || b.p-a.p)
+      .map(d=>d.sc);
     // step 11: the WHOLE ranked pool, on request. A composition returns `size` items, which is
     // not enough to ask whether the ORDER is reliable -- and "does this change make the ranking
     // more reliable" is the question a change to the ranking has to answer. Reported, never
@@ -3500,7 +3508,7 @@ const MiniEvxlEngine = (function(){
         // `weakKey` and nothing else. No threshold: this is the code doing what the document
         // already said, not a new rule.
         weakBlockSinks: weakBlockMembers.length > 0
-          && weakBlockMembers.slice().sort((a, b)=> weakKey(a)-weakKey(b)).slice(0, 3).every(sinks),
+          && weakBlockMembers.map(sc=>({ sc, k: weakKey(sc) })).sort((a, b)=> a.k-b.k).slice(0, 3).map(d=>d.sc).every(sinks),
         blocksWithoutStanding: blockStats.filter(b=>b.played>0 && b.median===null).length,
         recentTypes: Array.isArray(opts.recentTypes) ? opts.recentTypes : [],
         weakBlockId: weakBlock ? weakBlock.id : null,
@@ -3615,14 +3623,26 @@ const MiniEvxlEngine = (function(){
         blockMembers.get(b).add(sc.name); (sc.plKeys||[]).forEach(k=>blockPlaylists.get(b).add(k)); });
     }
     if(pairsIndex && blocks){
+      // PERF-3: the candidate scan walks every member's edge list, which is the expensive part
+      // and depends only on the BLOCK. It used to run once per weak item because `exclude` was
+      // passed in -- but excluding a candidate only removes that candidate's own entry; it
+      // cannot change any other candidate's mean, since the accumulator is keyed by candidate.
+      // So filtering at SELECTION is exactly equivalent, and the scan runs once per block id.
+      // (The selection loop below already re-checked `chosen`/`routeTaken`, so the filter was
+      // doing the work twice as well as the scan.)
+      const _candCache = new Map();
+      const candidatesFor = (bid, members) => {
+        let v = _candCache.get(bid);
+        if(v===undefined){ v = blockRouteCandidates(pairsIndex, members, {}); _candCache.set(bid, v); }
+        return v;
+      };
       for(const w of weakItems){
         if(routeList.length >= template.route) break;
         if(routeSeen.has(w.name)) continue;
         const bid = blockOf(w); if(!bid) continue;
         const members = blockMembers.get(bid); if(!members || !members.size) continue;
         const plKeys = blockPlaylists.get(bid) || new Set();
-        const exclude = new Set([...chosen, ...routeTaken]);
-        const cands = blockRouteCandidates(pairsIndex, members, { exclude });
+        const cands = candidatesFor(bid, members);
         for(const cand of cands){
           const y = byName.get(cand.name);
           if(!y || chosen.has(y.name) || routeTaken.has(y.name)) continue;
