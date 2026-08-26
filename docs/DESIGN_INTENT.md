@@ -299,7 +299,10 @@ about skill structure.
   control, reactive, precise, dynamic and timing each split across two
   tracking communities (rule 5); strafe (9/9) and evasive (0.625) concentrate
   in a γ-1.0 community no mechanic owns (rule 2 — the R6/R7 promotion
-  question lands exactly here); two Voltaic S5 playlists and Anima Micro v2
+  question lands exactly here) *[SUPERSEDED 2026-08-26: that reading is the
+  retired `ed89927b` freeze. On the shipped `c9026a95`, strafe is 58 scenarios
+  with 42 in no cluster at all and 12 of the 16 placed sitting in `c:1`, a
+  mechanic-owned community; evasive concentrates nowhere. See D13's closure]*; two Voltaic S5 playlists and Anima Micro v2
   surface as factors with no facet above a third (rules 1/6). No name has
   been given to any cluster; the page carries ids + loading + stability +
   status only. The PSD-repair distance of the zero-filled matrix (0.305)
@@ -456,12 +459,24 @@ run-history import; both transfer analyses.
   PSD-repaired zero-filled matrix because its repair distance (0.305) matches
   the permutation null through the same pipeline (0.315): the distance is
   sparsity, not inconsistency. The page ships the **community lens** (γ 1.0),
-  because the factor lens reproduced the carrying playlists (ARI 0.824) and
-  shipping playlist co-membership as "skill clusters" would mislead. Naming
-  clusters and promoting strafe (R6/R7) remain Owen's decisions pending his
-  reading of `dev/emergence-comparison.json` — reading order: agreement tables
-  with their pack baseline and p-values, then the divergence list, then
-  (separately, as a proposal) candidate names.
+  because the factor lens reproduced the carrying playlists (ARI 0.824 on the
+  then-current `ed89927b` freeze; **0.619** on the shipped `c9026a95` — the
+  number a reader auditing this against `dev/emergence-comparison.json` will
+  find, see amendment (1)) and
+  shipping playlist co-membership as "skill clusters" would mislead. **Naming
+  clusters remains Owen's decision**, pending his reading of
+  `dev/emergence-comparison.json` — reading order: agreement tables with their
+  pack baseline and p-values, then the divergence list, then (separately, as a
+  proposal) candidate names.
+  **PROMOTING STRAFE (R6/R7) IS CLOSED** (2026-08-26, Review Ledger VI step 29) —
+  on evidence rather than by a ruling, and on the owner's own pre-stated condition
+  *"promote if the emergence analysis separates it"*. The basis quoted above does
+  not exist in the shipped freeze, so the question was re-derived before being put
+  to him: `strafe` is 58 scenarios, 42 with no cluster at all and 16 placed (12 in
+  `c:1` *tracking · reactive*, 2 in `c:5`, 2 provisional); `evasive` is 172 with 123
+  unclustered and the rest scattered over five communities. **The condition is not
+  met**, so it closes without a preference being needed. Naming is the only open
+  half of D13.
 - **D13 amended** (2026-08-26, Review Ledger V step 18) — **the naming rule stays
   data-derived and UNRATIFIED, and that is now a decision rather than a backlog
   item.** A block's displayed name is its members' two most frequent curator
@@ -473,8 +488,16 @@ run-history import; both transfer analyses.
   re-run on 2026-08-25 as `c9026a95…` (7,703 players × 1,158 scenarios, γ 1.0
   → 8 communities), and putting the residual on the logit moved the shipped
   lens's ARI against the mechanic taxonomy **0.221 → 0.393** while its ARI
-  against pack fell 0.141 → 0.067. The community lens is more defensible than
-  it was when the decision was taken, not less.
+  against pack fell 0.141 → 0.067. **The factor lens was re-measured on the same
+  freeze and it moved the other way — recorded here because it is the figure that
+  moved AGAINST this decision, and the first version of this amendment refreshed
+  only the two above:** ARI vs playlist **0.824 → 0.619**, vs mechanic 0.079 →
+  0.117. So the factor lens is less playlist-bound than it was, and D13's
+  quantitative ground for rejecting it is weaker than the body's 0.824 implies —
+  but 0.619 still reproduces the carrying playlists more than anything else, and
+  0.619 against the community lens's 0.050 is not close. The community lens is
+  more defensible than it was when the decision was taken, not less; the margin
+  is what narrowed.
   **(2)** Ids are freeze-local and every served item now carries `blockEpoch`,
   so a ratified name could not survive a re-freeze anyway without the record
   saying which epoch it belonged to.
@@ -494,6 +517,17 @@ run-history import; both transfer analyses.
   4.7% is too few to re-run the protocol over and the misplacement is
   concentrated in one interpretable place, so the freeze stands and the naming
   question stays open with its evidence attached.
+  **(4) On `-Rerun` and `frozenBeforeComparisonExisted: false`.** The shipped
+  comparison records that its freeze did NOT predate the comparison script, which
+  reads like a weakened protocol and is not one. The blind/compare separation
+  exists so labels cannot reach the blind stage; `-Rerun` is a path
+  **pre-registered in `emergence-compare.ps1` before any re-run existed**, and
+  guard 2b independently verifies the blind script, the core and the lib against
+  the hashes the freeze itself recorded — proved by tampering, one appended
+  comment line is refused. So the property actually held is STRONGER than
+  "frozen first": the code that produced the freeze is byte-identical to the code
+  the guard checked. No re-blind is warranted; what the record needed was this
+  paragraph.
 - **D13 amended again** (2026-08-26, Review Ledger V step 23) — **names stay
   data-derived and unratified; the RULE that derives them is now derived too.**
   The old rule took the two most frequent curator labels, always. Measured, that
@@ -522,9 +556,30 @@ run-history import; both transfer analyses.
 - **D14** — no range-restriction correction on the transfer map (the W6
   diagnostic above); the sample caveat is the measured median, printed from
   the data, never a literal.
-- **D15** — the overlap page's thresholds (overlap cut 0.25, cohesion floor
-  0.10, tested floor 30, unrelated ceiling 0.15) are knobs shown as controls,
-  not findings, until Owen ratifies them.
+- **D15** — the overlap page's thresholds are knobs, not findings, until Owen
+  ratifies them. **Amended twice since, and both halves of the original sentence
+  had gone stale.**
+  **(a) The values drifted.** The cohesion floor is **0.075**, not 0.10: step 5c
+  measured cross-playlist cohesion at a median 0.748 of the all-pairs figure and
+  moved the floor by that ratio — the same stringency read on the smaller scale.
+  The matrix floor moved 0.05 → 0.0375 with it. `cut` (0.25) and the unrelated
+  ceiling (0.15) did NOT move, and deliberately: step 15 settled that a threshold
+  on a statistic OF THE FILTERED SET is rescaled and a threshold on a SINGLE PAIR
+  is not. Step 26 made the floors mode-aware, so `xp=0` gets the all-pairs 0.10
+  it was calibrated for rather than the cross-playlist 0.075.
+  **(b) "Shown as controls" was false of one of them.** The tested floor of 30 has
+  no selector and no URL parameter, and it gates the COACH's blocks as well as the
+  page's walk. Step 26 measured it: the block set the coach routes into is
+  **invariant for T in [18, 265]** — a factor of 14.7 — and the page's kept set is
+  invariant across the whole sweep, 10 to 400, in both modes. All it moves is which
+  groups are called "too thin to place". **So it does NOT become a control**: a
+  selector for a knob that changes nothing implies a contestability the measurement
+  denies. On the ratification itself this entry says only what the measurement
+  supports — step 26 and `dev/knob-sensitivity.html` both word it **ratifiABLE at
+  30**, and ratification is the owner's act by this decision's own opening sentence.
+  He has not ruled on it (step 29's four rulings do not include it), so **30 stands
+  as the shipped value with the invariance measured behind it, and the ratification
+  is OPEN.**
 
 2026-08-25 (Review Ledger III):
 
@@ -545,22 +600,163 @@ run-history import; both transfer analyses.
   into the number. Where no offsets are stamped the old shrinkage still applies, so
   an older build is unchanged — the same "identity without its evidence" rule the
   v0.4 layers follow.
-- **D18** — the session composes by TYPE, not by one template. Four purposes with stated
+- **D18** *(NOT Review Ledger V's D18, which is a queue id for step 11's precision-aware pooling — see the note above D25)* — the session composes by TYPE, not by one template. Four purposes with stated
   triggers (collect / breadth / transfer / floor), priority in that order, and never the
   same alternating type three days running. Within the weakest slice the choice is a
   weighted draw rather than the argmin: D1 ratified floor-*biased* and explicitly not
   strict maximin, so sampling is the objective read correctly, and it is what stops every
   session looking identical. Opt-in (`opts.rotate`), so every earlier path is unchanged.
-- **D19** — the return-collect rate is always reported against the **1/(n+1)** null model
+- **D19** *(NOT Review Ledger V's D19, which is a queue id for step 11's proposal to unify the shown and drawn intervals, which was REJECTED — see the note above D25)* — the return-collect rate is always reported against the **1/(n+1)** null model
   (the chance of a first-try PB if nothing had changed), scored with Brier and a skill
   score, and is NOT scored at all under 20 resolved revisits. A KPI that cannot come out
   negative is not a report card; a KPI reported on five samples is noise. Both caveats on
   the baseline — attempts are not exchangeable, and the attempt count under-counts — push
   it upward, against the coach, and are printed rather than buried.
-- **D20** — a scenario is placed in an emergent block only by a decisive MEASURED affinity
+- **D20** *(NOT Review Ledger V's D20, which is a queue id for step 12's feel rating — see the note above D25)* — a scenario is placed in an emergent block only by a decisive MEASURED affinity
   (mean r against that block's members, cross-playlist, surviving its own standard error
   and separated from the runner-up). A tie between two blocks is recorded as a hybrid and
   left unplaced; "unplaced" and "unmapped" are distinguished, because one is a statement
   about the scenario and the other is a statement about our coverage. The freeze's factor
   loadings are NOT used for this: D13's reason for rejecting that lens applies with equal
   force to using it as a mixture.
+
+2026-08-26 (Review Ledger V and VI):
+
+**D21 THROUGH D24 ARE DELIBERATELY SKIPPED.** Review Ledger V used those four numbers as its own
+queue ids, in the same `D<n>` namespace as these ratified decisions. They are identified here by
+the STEP HEADING THAT CITES THEM, which is the only sourced definition of them that exists — the
+ledger never spells out what each id meant:
+  D18, D19 → Ledger V step 11 (precision-aware pooling; D19 was the proposal to unify the shown
+              and drawn intervals, which that step REJECTED on a pre-registered bar)
+  D20, D21 → Ledger V step 12 (the feel rating and the difficulty window, shipped as one controller)
+  D22, D24 → Ledger V step 10 (the transfer trigger BUG-2, and release #3)
+  D23      → Ledger V step 16 (the CSR pair index, deferred at 16 MB against a 30 MB bar)
+Three of them collide with real entries here, so a reader following a ledger heading lands on an
+unrelated decision. Renaming thirty references across the ledger would risk conflating the two namespaces further, so the numbering
+jumps instead: **no number in this file will ever mean two things.** Ledger queue ids are not
+decisions and do not belong in this sequence.
+
+- **D25** (Review Ledger IV step 6, MET-6 + INTENT-3) — **the pooling weight IS the measured ICC,
+  and the number on the page stays unpooled.** Under the one-factor reading a block already
+  assumes, the correlation between two members is the share of one member's variance that is the
+  common skill — so a block's cross-playlist cohesion *is* its intraclass correlation, and nothing
+  new had to be estimated. `poolToward(value, group, icc)` pulls a standing that far toward its
+  block and is the identity below `POOL_MIN_ICC`. Measured 0.077 to 0.232 across the shipped
+  blocks, median 0.135 — the D12 communities running about twice the label blocks, which is an
+  independent argument for the community lens. **The percentile shown on the card is the one you
+  can check against the KovaaK's leaderboard; the pooled value is what the order used, carried on
+  the item rather than hidden.** Per-skill confidence is the same number through Spearman–Brown.
+  **AMENDED by Ledger V step 11 — the ICC alone is no longer the shipped weight.** It is now
+  composed with an empirical-Bayes term `τ²/(τ² + s²)` carrying how well *this* scenario is
+  measured (`pooling: 'eb'`, the default in `src/engine.js`); pooling by the ICC alone survives as
+  the selectable `icc` mode. **This is composition, not double-shrinking:** the two weights
+  commute, so either order puts weight `(1−icc)·w` on the scenario's own reading and the rest on
+  the block, and at `w = 1` it is exactly this decision. The ICC remains the estimand half of the
+  weight, and what step 11 added is a precision half. That step also breached D26 in doing so, and
+  that breach is still open.
+
+- **D26** (Review Ledger IV step 7b, MET-7) — **a borrowed number may be SHOWN but must not STEER.**
+  A scenario played once has no observable run scatter, so its interval is imputed from the
+  profile's median CV. That interval belongs on the page, because a scenario played once genuinely
+  is not pinned down and the page should say so; it does **not** enter the draw, because it is not
+  evidence about *that* scenario. The estimator itself does not change: swapping the PB for a
+  smoothed statistic was measured out of sample and beaten by the PB wherever the grind is real.
+  **Recorded breach — ONE, and it is still OPEN:** step 11's empirical-Bayes weight steers the
+  centre of ~55% of the pool with exactly such a number. Step 11 named two exits, an explicit
+  retraction of this principle or a weight that does not need a borrowed number; step 21 rejected
+  the n-standardisation, which was that second exit, so only explicit retraction remains and
+  nothing has retracted it. **Neither step 29 nor D30 closed this** — they settled the estimand
+  (PB-rank), a different question. *(Ledger V's own D19, its queue id for unifying the shown and
+  drawn intervals, was rejected in step 11 on a pre-registered EMPIRICAL bar, not on this
+  principle; it upheld this rule rather than breaching it, and it is not the same D19 as anything
+  in this file — see the note above D25.)*
+
+- **D27** (Review Ledger V step 12, INTENT-1 + INTENT-2) — **the feel rating and the difficulty
+  window are ONE controller**, because the rating had no consumer and the window had no input.
+  One tap on the open item, written into the served ledger rather than into a preference; three of
+  a kind in a row move the rung target; an unrated exposure does not break a streak (a question
+  never asked is not an answer) but "about right" does; a fired streak is spent; "too hard" is a
+  third exit tested LAST, so a PB or an earned stagnation stop always wins. **`FEEL_ADJ_MAX = 2` is
+  a POLICY bound, not a measured one** — an earlier draft justified it by a difficulty effect that
+  did not survive selection correction, and that justification is retracted. The controller ships
+  as the only instrument that can ever measure the difficulty term on-policy, since the record
+  contains no coach-served item above level+1 at all.
+
+- **D28** (Review Ledger V step 19) — **a ranking change is judged by a four-leg criterion, and rank
+  statistics are diagnostics rather than bars.** Step 11 shipped on three bars, two of which are
+  *maximised by information destruction* — demonstrated, not argued: the degenerate "every member
+  reads as its block standing" transform beats the shipped rule on split-half rho. The legs are
+  SCALE (the key's spread against `EXPLORE_SD` — the only leg that looks at the quantity the
+  sampler actually prices against, because the coach subtracts fixed-magnitude bonuses; it and THE
+  SERVED SET are the two legs a rank statistic cannot see, which is why BOTH were added after
+  `squash` — eb's exact ordering, linearly compressed — defeated the first version by scoring a
+  perfect 1.000 on a rank leg while serving 111 scenarios to eb's 35), RESOLUTION, THE SERVED SET, and INJECTION across a
+  grid containing worlds the rule is wrong in. **Failing any one is a rejection, not a discussion.**
+  Its stated limit: it compares rules sharing an estimand and cannot adjudicate between estimands.
+
+- **D29** (Review Ledger V step 22) — **the exhaustion rule's null is calibrated by its THRESHOLD,
+  not by a second parameter.** `n/(n+k)` is exactly the λ = 1 member of a family with per-run hazard
+  `λ/(n+j)`, and λ measured 1.333 [1.218, 1.433] on the owner's record. It still does not ship as a
+  dial: over the n the record contains the threshold family expresses 3,130 distinct stopping
+  schedules and the λ family 50, so **the knob that already exists is strictly more expressive**.
+  λ lives in the engine as a measured option defaulting to 1, the way `squash` lives in the pooling
+  modes — a criterion needs candidates to be checkable against.
+
+- **D30** (Review Ledger VI step 29, the owner's ruling) — **"weakest" means WHERE THE PERSONAL BEST
+  RANKS**, not where skill ranks at a run count everyone shares. This is the estimand steps 19 and
+  21 both terminated on. It closes the n-standardisation on *definition* rather than only on
+  measurement: it answers a question the coach does not ask. **It does NOT settle the other estimand
+  axis** — a scenario's own standing versus its block's common skill — which D25 assumes and D28's
+  criterion cannot adjudicate. That one is open.
+
+- **D31** (Review Ledger VI step 29, the owner's ruling: *"let's go with aggressive, we could adjust
+  this later if I don't like how it feels"*) — **`STAGNATE_AT` is 0.685.** At 0.6 the rule
+  advertised "stop when the chance you have not beaten it yet falls to 0.6" and stopped at about
+  0.51, because the null it computes that from is mis-calibrated by D29's λ. 0.685 and not 0.684:
+  the plain thresholds reproducing λ̂'s integer schedule — with the λ rule run at the 0.6 the rule
+  was then advertising — form the half-open interval **[0.684211, 0.6875)**, width 0.0033, and a
+  round 0.684 falls *below* it while 0.6875 is the first value above it. *(Published as
+  [0.684211, 0.685855] until 2026-08-26: that upper figure is the band's MIDPOINT, so the width
+  read half its true size. `dev/figures.json` checks both edges against
+  `dev/hazard-lambda.json`'s `rename.decisionBand` now. 0.685 is inside either way.)* **Cost, measured:** items closed before a PB the play went on to get, 6.1% → 8.1%; PBs
+  reached 550 → 525, the 25 given up being 17 run-2 PBs worth a median +3.12% and 8 run-3+ ones
+  worth +2.15%, against a first-run PB's +6.23% — about **half** and about a third respectively,
+  not "a third" across the board.
+  **Consequence:** the form test now fires zero times on this record, because exhaustion always
+  reaches the bar first. Reversible by design.
+
+- **D32** (Review Ledger VI step 25, extended at step 29) — **a check nobody runs and a figure nobody re-derives are both
+  claims that have stopped being claims.** Every test and instrument must be reachable *from a
+  runner*, and `test/*.js` from both CI workflows separately — a grep for a filename is not
+  reachability, since `emergence-selftest.ps1` was named in four comments while nothing invoked it.
+  Every figure quoted in code that steers behaviour is checked against the artifact that produced
+  it (step 25). **Step 29 added the second half after the first half passed on a stale artifact:**
+  the artifact must itself have been generated under the shipped configuration, because a comment
+  and a superseded artifact agree with each other perfectly while both describe code that has
+  moved. Anything deliberately not run is declared with its reason, and that list is meant to feel
+  expensive.
+
+- **D33** (Review Ledger IV step 3, NEXT-4; ratified at Review Ledger VI step 29) — **a quarter of
+  revisit picks are RANDOMISED, and nothing rendered says so.** It exists because every other
+  measurement here is *the coach said X, you played X, here is what happened* — which can never
+  separate a good recommendation from improvement you would have made anyway. D26's calibration
+  says whether the forecast's probabilities are honest; it cannot say whether the ORDERING beats
+  serving something else. That needs a counterfactual, and this is the only one in the record.
+  `ARM_B_SHARE = 0.25` of revisit slots **withhold** the coach's top pick and serve the runner-up
+  (`ARM_MIN_PER_ARM = 10` resolved items per arm before a verdict). **It DISPLACES rather than
+  reorders** — swapping ranks 1 and 2 serves both and measures nothing, so the top pick has to be
+  held back; it stays in the pool for tomorrow. **Revisits only**, because a revisit resolves in
+  days against an exact `1/(n+1)` null while a route's claim is about a different scenario weeks
+  later. **Blinded** until an item resolves, because knowing would make the comparison measure
+  belief as much as ranking. Judged on excess over baseline, never raw rate: the arms draw
+  different `n` by construction.
+  It is **ON by default** (`armEnabled()` in `src/app/10-stores.js` is true unless an opt-out key
+  is set) **and step 29 ratified that it stays ON in the public template**, which it reaches at the
+  next release. So D11's return-collect KPI and D27's rung record must both be read against a coach
+  that does not always serve its best pick — which is exactly why this belongs in the log rather
+  than only in ledger prose: read without it, the behaviour looks like a bug.
+  **In the same ruling the owner downgraded the constraint behind the question**, in his words:
+  *"I no longer care about users having their data overwritten. I only gave the tool to one person
+  and they have not used it at all yet."* Other template users stop being a weight on FUTURE
+  decisions. **It retracts nothing already built for it** — the reset clearing the served ledger,
+  the store prefixes, the personal-string guards are all correct on their own terms.

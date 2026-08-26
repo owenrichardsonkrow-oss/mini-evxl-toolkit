@@ -1463,9 +1463,21 @@ const MiniEvxlEngine = (function(){
   // change as applying lambda -- step 22 showed the two are one dial over the n this record holds
   // -- so the knob moves and no second parameter is added.
   //
-  // 0.685 AND NOT 0.684, WHICH IS OUTSIDE THE BAND. The thresholds that reproduce lambda-hat's
-  // integer stopping schedule over n = 1..19 run [0.684211, 0.685855] -- a width of 0.0016 -- and
-  // a round 0.684 falls below it, as does 0.6875 above. 0.685 is the roundest value inside.
+  // 0.685 AND NOT 0.684, WHICH IS OUTSIDE THE BAND. The plain thresholds reproducing lambda-hat's
+  // integer stopping schedule over n = 1..19 -- with the lambda rule run at the 0.6 the rule was
+  // ADVERTISING when this was decided -- form a half-open interval:
+  //   decision band [0.684211, 0.6875), width 0.0033
+  // A round 0.684 falls BELOW it; 0.6875 is the first value above it. 0.685 is the roundest
+  // value inside, and it is the only round three-decimal value inside.
+  //
+  // CORRECTED 2026-08-26. This read [0.684211, 0.685855], width 0.0016, until the decision log
+  // was audited: 0.685855 is the band's MIDPOINT quoted as its endpoint, so the published width
+  // was half the truth. The cause is that the enumeration samples only breakpoints and midpoints,
+  // so the largest reproducing CANDIDATE it can return is the midpoint -- and the band was read
+  // off that candidate instead of being computed. dev/hazard-lambda.html derives it exactly now
+  // (rename.decisionBand, from k*(n) = k iff n/(n+k) <= a < n/(n+k-1)) and dev/figures.json
+  // checks BOTH endpoints against the artifact. The decision is unaffected: 0.685 is inside the
+  // corrected band and 0.684 is still below it.
   //
   // The owner's call, and reversible: "let's go with aggressive, we could adjust this later if I
   // don't like how it feels." The cost is measured, not assumed -- see the step 29 section.
