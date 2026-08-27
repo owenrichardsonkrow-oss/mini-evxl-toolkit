@@ -16592,7 +16592,15 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const lvl = levelBase===null ? null : Math.max(0, Math.min(8, levelBase + fa.adj));
     const adjTxt = fa.adj === 0 ? 'your level' : (fa.adj > 0 ? '+' : '')+fa.adj+' rung'+(Math.abs(fa.adj)===1?'':'s')+' from your ratings'+(fa.atLimit ? ', at the limit' : '');
     const streakTxt = (fa.streak && fa.kind) ? ' &middot; '+fa.streak+' of '+FEEL_RUN+' &ldquo;'+esc(FEEL_TXT[fa.kind].toLowerCase())+'&rdquo; in a row' : '';
-    const windowTxt = lvl===null ? '' : 'Window: at or under <b>'+esc(DIFF_LABELS[lvl]||String(lvl))+'</b> ('+esc(adjTxt)+')'+streakTxt;
+    // The window line must state its own EXEMPTION on the items it does not gate, or a Hard
+    // quick-win chip sits directly above "Window: at or under Intermediate" and reads as a
+    // contradiction (the owner read it as one, 2026-08-26). Quick wins are served on tier
+    // evidence alone -- 76% of the way to the next tier IS the evidence you can handle it --
+    // and fill-outs/routes run at level+1; only the weakest and revisit pools sit at the window.
+    const winExempt = (q && q.purpose === 'quickwin')
+      ? ' &mdash; quick wins are served on tier progress and skip the window'
+      : ((q && (q.purpose === 'fillout' || q.purpose === 'route')) ? ' &mdash; this purpose may run one rung above it' : '');
+    const windowTxt = lvl===null ? '' : 'Window: at or under <b>'+esc(DIFF_LABELS[lvl]||String(lvl))+'</b> ('+esc(adjTxt)+')'+winExempt+streakTxt;
     const feelTip = {
       easy: 'Three of these in a row move the window up a rung.',
       good: 'The window is where it should be. This breaks a run of the other two.',
