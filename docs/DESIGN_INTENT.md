@@ -937,3 +937,33 @@ decisions and do not belong in this sequence.
   ledger rows with `why: 'quickwin'` keep rendering; the fixture asserts the purpose is never
   served again. The session snapshot was re-blessed deliberately: one line changed — the
   quickwin item left and a sixth weakest entered.
+
+- **D40** (2026-08-27) — **difficulty STAYS on the labeled nine-rung system; the emergent
+  candidate was measured and failed its pre-registered bars.** The owner asked for difficulty
+  derived from population data the way the blocks were, with the name/label derivation kept as
+  the basis and reference. Run as a full research step: pre-registration committed before the
+  estimator (`dev/STEP40-PREREG.md`), adversarially reviewed by 33 agents BEFORE running (28
+  findings, 11 survived — among them: the original level(p) was the board-confounded raw
+  percentile A1 retired, fixed to the calibrated one; an R3-style untrained-crowd control was
+  added as a bar; the estimand was pinned — crowd level identifies WHO CHOOSES to play a
+  scenario, not what it demands). The candidate: crowdLevel(s) = median board-calibrated level
+  of the sampled players who play s, blind to every label and name.
+  **Result over 964 dually covered scenarios (`dev/difficulty-emergence.json`): SIGNAL passes
+  (Spearman 0.533, p 0.0005) and STABILITY passes (split-half 0.918), but the UNTRAINED-CROWD
+  CONTROL fails — 47.3% of the correlation survives among players who never trained a carrying
+  playlist, against the pre-registered 50% floor — and SHAPE fails with two adjacent inversions
+  (Int+ dips below Int at n 18; Hard+ sits BELOW Hard at n 70).** So about half of the ladder
+  ordering in crowd composition is the labels ROUTING players, not difficulty revealing itself,
+  and the fine-grain structure inverts at the top. The divergence list (434 of 964 at >= 2
+  rungs) concentrates exactly where the estimand distinction bites: "Jumbo"/"Larger" variants —
+  labeled easy by the modifier table — carry ELITE crowds (0.81–0.90: strong players use them
+  as warmups), while "50% Smaller" Hard+ variants carry casual crowds (0.43). The crowd
+  statistic measures adoption, not demand. Per the pre-registered outcome 2: nothing ships, the
+  artifact and disagreement structure are committed, the labeled rungs stand. Worth keeping
+  from the reported columns: threshold attainability (the share of a board clearing the
+  curators' lowest tier — an (a)-flavoured signal, rejected as primary for leaking curator
+  intent) correlates BETTER with the rungs (0.557) than the crowd does; the within-playlist
+  variance share is 0.301, so the crowd scale does carry per-scenario structure beyond
+  placement; the variant sign test reads 31 of 46. Re-run trigger: a materially larger player
+  sample (the control rested on 739 scenarios), or a demand-side statistic rather than an
+  adoption-side one.
