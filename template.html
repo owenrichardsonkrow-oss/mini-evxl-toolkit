@@ -9938,11 +9938,13 @@ const MiniEvxlEngine = (function(){
   //    P(it ever reaches 1/a) <= a. The free parameter e is removed by MIXING over a grid --
   //    an average of martingales is a martingale -- so there is no exponent to choose.
   //
-  // AGGRESSIVE, and what that cost when it was replayed over his 1,238 real bouts that had a
-  // PB to beat (median history 3 runs). At STAGNATE_AT 0.685 the coach closes 321 items on
-  // stagnation against 525 on a PB, at a median of ONE run before a stop, and 8.1% of all
-  // items (100) are closed before a PB that his actual play went on to get. At the old 0.6 those
-  // read 244 / 550 / 6.1% (75) -- the threshold move is step 29 and its cost is exactly this.
+  // AGGRESSIVE, and what that costs when replayed over his 1,238 real bouts that had a PB to
+  // beat (median history 3 runs). THE SHIPPED RULE IS 0.685 WITH THE TWO-RUN FLOOR (step 36):
+  // 194 items close on stagnation against 573 on a PB, at a median of TWO runs before a stop,
+  // and 4.2% of all items (52) close before a PB his actual play went on to get. The floor
+  // recovered exactly the 48 run-2 PBs the threshold move had given up -- rule-reached arrival
+  // went 468/51/6 back to 468/99/6 -- so the shipped operating point costs LESS than the old
+  // 0.6 did without it (244 / 550 / 6.1% (75)); pre-floor 0.685 read 321 / 525 / 8.1% (100).
   //
   // TWO NUMBERS IN THIS COMMENT WERE WRONG UNTIL STEP 22 COMMITTED THE REPLAY. It said 249
   // stops and "7 of 249" form stops; the file's own step 8 section said 244 (243 exhaustion,
@@ -9951,15 +9953,15 @@ const MiniEvxlEngine = (function(){
   // is what happens to a figure that lives in two places and re-runs in neither.
   //
   // AND THE ARRIVAL TABLE BELOW IS OVER A DIFFERENT POPULATION THAN THE SENTENCE ABOVE IT.
-  // It counts every PB EVENT in the record (625), not the 525 the rule actually reaches. The
-  // difference is exactly the 100 early-closes, and by construction those are all LATE PBs --
+  // It counts every PB EVENT in the record (625), not the 573 the rule actually reaches. The
+  // difference is exactly the 52 early-closes, and by construction those are all LATE PBs --
   // which is why the run-3+ row is 58 here and only 6 among the PBs the rule reaches. Both
   // are true and they answer different questions; printed together they read as one.
   //
   //     PB arrived on run 1 of the bout   468 events (74.9%)  median +6.23% over the old PB
   //                          run 2         99       (15.8%)          +4.17%
   //                          run 3+        58        (9.3%)          +2.36%
-  //     of which the RULE reaches:        468 / 51 / 6 (525), gains +6.23% / +3.12% / +2.15%
+  //     of which the RULE reaches:        468 / 99 / 6 (573), gains +6.23% / +4.17% / +2.15%
   //  The event table is a property of the RECORD and does not move with the threshold; the
   //  rule-reached row does, and at 0.685 it gives up 17 more of the run-2 PBs and 8 more of the
   //  run-3+ ones.
@@ -10016,6 +10018,19 @@ const MiniEvxlEngine = (function(){
   // The owner's call, and reversible: "let's go with aggressive, we could adjust this later if I
   // don't like how it feels." The cost is measured, not assumed -- see the step 29 section.
   const STAGNATE_AT = 0.685;      // exhaustion: stop once P(no PB by now) has fallen to here
+  // AN ITEM GETS AT LEAST TWO RUNS THIS VISIT before exhaustion may close it (step 36, D37).
+  // The owner's first real feel report (2026-08-26): one non-PB run on a one-prior-run scenario
+  // moved on immediately -- n/(n+k) = 1/2 <= 0.685 fires at k = 1 for every n <= 2, and it fired
+  // at the old 0.6 for n = 1 too, so this is not the threshold move's fault. Measured on the
+  // committed replay before deciding (dev/hazard-lambda.json /minKFloor): the floor recovers 48
+  // PBs (525 -> 573) and HALVES the early-close rate (8.1% -> 4.2%) at the cost of one extra run
+  // on items that stop; k >= 3 recovers 76 but guts the rule (321 -> 114 stops), so 2 it is.
+  // ANYTIME VALIDITY IS UNTOUCHED: the events {no PB by k} stay nested, so P(ever stopping) is
+  // P(no PB by the first QUALIFYING k), which a floor only lowers. A POLICY bound, like
+  // FEEL_ADJ_MAX -- the aggressive threshold stays; what changes is the minimum evidence per
+  // visit before it may act. The form test and the 'too hard' exit are deliberately NOT floored:
+  // form needs minHistory anyway, and a rating is the player speaking.
+  const STAGNATE_MIN_K = 2;
   // Step 22's measurement, recorded so the page can say what the exchangeable reading is worth.
   // It is NOT applied: the default lambda is 1.
   //
@@ -10086,7 +10101,7 @@ const MiniEvxlEngine = (function(){
     return p;
   }
   function stagnation(history, bout, pbAt, opts){
-    const o = Object.assign({ stagnateAt: STAGNATE_AT, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY, lambda: 1 }, opts||{});
+    const o = Object.assign({ stagnateAt: STAGNATE_AT, stagnateMinK: STAGNATE_MIN_K, formAlpha: FORM_ALPHA, minHistory: FORM_MIN_HISTORY, lambda: 1 }, opts||{});
     const hist = (history||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const runs = (bout||[]).map(Number).filter(x=>Number.isFinite(x) && x>0);
     const target = Number.isFinite(Number(pbAt)) ? Math.max(Number(pbAt), 0) : (hist.length ? Math.max(...hist) : 0);
@@ -10106,7 +10121,7 @@ const MiniEvxlEngine = (function(){
         if(martingale >= 1/o.formAlpha) return { done: true, why: 'form', k, runs: runs.length, n, pExhaust: stagnateP(n,k,o.lambda), martingale };
       }
       const pEx = stagnateP(n,k,o.lambda);
-      if(pEx <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: pEx, martingale };
+      if(k >= o.stagnateMinK && pEx <= o.stagnateAt) return { done: true, why: 'exhausted', k, runs: runs.length, n, pExhaust: pEx, martingale };
     }
     // step 12 (D21): "too hard" is a THIRD EXIT, and it is tested LAST on purpose. Anything
     // the runs already decided stands -- a PB above all, but an exhaustion or form stop too --
@@ -13521,7 +13536,7 @@ const MiniEvxlEngine = (function(){
     adjustPercentile, calibrateScenarios, metricSpread, runSampleSpread, SELECT_VERSION, METRIC_MIN_CURVED,
     standardisePct, expectedBestOfJ, A_OF_J,
     playlistSharing,
-    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, STAGNATE_MIN_K, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
@@ -13563,7 +13578,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   const STORE_PREFIX = String(SITE.storePrefix||'mini-evxl');
   const storeKey = s => STORE_PREFIX+'-'+s;
   // The engine (src/engine.js, inlined just above this script by build.ps1).
-  const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, stuckness, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, profileConfidence, sessionHistoryStats, P_VERSION, SELECT_VERSION, poolToward, standingReliability, metricSpread, runSampleSpread, boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES, feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, coach4Readiness, COACH4_EPV, TRANSFER_PROVENANCE, provenanceOf, highestProvenance, playlistSharing, personalTransfer, personalReturnEvents, PERSONAL_MIN_EVENTS, scenarioDuration, rankCorrelation, topKOverlap, orderingResolution, revisitHorizon, REVISIT_MIN_DAYS, forecastBucket, adjustPercentile, calibrateScenarios, standardisePct, expectedBestOfJ, numOrNull, GAME_FACETS_DEFAULT,
+  const { stripSuffix, entryItems, convertV1Entry, isV1Entry, achievedIndex, preciseTier, scenarioCompletion, subcategoryGroups, subcategoryGroupsNamed, subcategoryBest, tierFrac, tierOf, categoryGroups, RANK_RULES, rankReqRule, benchmarkStanding, benchmarkVolts, standingLabel, pctLabel, hasSelection, selectionGroups, defaultSelection, selectionIssues, rankedItems, mergedProgress, classifyDifficulty, difficultyRung, difficultyFamily, difficultyRungOfText, DIFF_LABELS, classifyFacets, facetChips, FACET_MECHANICS, countScenarios, mergeAttempts, attemptSummary, stuckness, composeSession, skillProfile, percentileRank, percentileLabel, responsiveness, profileConfidence, sessionHistoryStats, P_VERSION, SELECT_VERSION, poolToward, standingReliability, metricSpread, runSampleSpread, boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, STAGNATE_MIN_K, FORM_ALPHA, queueNext, drawPurposes, PURPOSES, feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, coach4Readiness, COACH4_EPV, TRANSFER_PROVENANCE, provenanceOf, highestProvenance, playlistSharing, personalTransfer, personalReturnEvents, PERSONAL_MIN_EVENTS, scenarioDuration, rankCorrelation, topKOverlap, orderingResolution, revisitHorizon, REVISIT_MIN_DAYS, forecastBucket, adjustPercentile, calibrateScenarios, standardisePct, expectedBestOfJ, numOrNull, GAME_FACETS_DEFAULT,
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
     rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf,
     scenarioAffinity, affinityAssignment, blockRouteCandidates } = MiniEvxlEngine;
@@ -18146,7 +18161,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   window.__miniEvxl = Object.freeze({ benchmarkStanding, entryItems, convertV1Entry, parsedItemsFor, defaultSelection, selectionFor, achievedIndex, preciseTier, subcategoryGroups, RANK_RULES, getBenchmarks: ()=>BENCHMARKS, scenarioCluster, clusterInfo, overlapIndex, overlapDefaults, overlapNChoices, overlapBlocks, labelKeyLayer, playlistKeysOf, groupMatrix, independentGroups, scenarioAffinity, affinityAssignment, poolToward, standingReliability, exportScoresPayload, importScoresText,
     adjustPercentile, scenarioPercentile, scenarioAdjusted, boardOffset, boardOffsetSe, boardOffsetPlayers, metricSpread, SELECT_VERSION,
     probeSession, sessionScenarios, calibrateScenarios, calibrateRows, runScoresOf, runSampleSpread, offsetsTable: ()=>OFFSETS,
-    invalidateScores, invalidateCaches, boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
+    invalidateScores, invalidateCaches, boutsOf, stagnation, stagnateP, STAGNATE_MIN_K, HAZARD_LAMBDA_MEASURED, BOUT_GAP_MS, STAGNATE_AT, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, feelNow, feelsInOrder, writeFeel, FEEL_RUN, FEEL_ADJ_MAX, attemptSources, coach4Readiness,
     attemptRuns, attemptsFor, attemptNames, personalTransfer, scenarioDuration, rankCorrelation, topKOverlap, orderingResolution, standardisePct, expectedBestOfJ, personalReturnEvents, revisitHorizon, provenanceOf, TRANSFER_PROVENANCE, playlistSharing, overlapDefaults, playlistKeysOf, overlapOf, groupMatrix, independentGroups, overlapLabelsOf, labelKeyLayer,
     readQueue, queueState, serveNext, advanceQueue, servedToday });
