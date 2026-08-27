@@ -3949,9 +3949,34 @@ const MiniEvxlEngine = (function(){
       const coverageSlot = purposeWeights ? (template.coverage||0) : (template.weakest>1 && blockStats.some(isCold) ? 1 : 0);
       const slots = purposeWeights ? (template.weakest||0) : template.weakest - coverageSlot;
       const ws = ranked.map(b=>Math.max(0.05, 1-b.median)); const wsum = ws.reduce((a,b)=>a+b, 0) || 1;
-      const raw = ws.map(w=>w*slots/wsum); const alloc = raw.map(Math.floor); let used = alloc.reduce((a,b)=>a+b, 0);
-      const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
-      for(let i=0; used<slots && i<order.length; i++){ alloc[-order[i][1]]++; used++; }
+      const alloc = ranked.map(()=>0);
+      if(purposeWeights && slots > 0 && slots < ranked.length){
+        // FEWER SLOTS THAN BLOCKS -- the degenerate case, and it is the queue's normal case.
+        // Largest-remainder is DETERMINISTIC, so with one slot it hands that slot to the block
+        // with the largest 1-median every single time: the weakest block, forever. The spread
+        // across blocks stops being a spread and becomes an argmax, and then the weakest one or
+        // two scenarios inside that block alternate. Reported from real use (2026-08-26): two
+        // scenarios coming back across three personal bests each.
+        //
+        // Step 8 converted the PURPOSES from a slot vector to weights for exactly this reason --
+        // "over ten items that is the old mix in expectation; over one it is the queue" -- and
+        // did not convert this. Same fix and the same argument: DRAW the block proportional to
+        // its weight. Over many items it reproduces the old proportions; over one it is a draw.
+        // Seeded, so a day is still stable across re-renders.
+        const pool = ranked.map((b, i)=>i);
+        for(let sl=0; sl<slots && pool.length; sl++){
+          let tot = 0; pool.forEach(i=>{ tot += ws[i]; });
+          let x = rnd()*tot, pick = pool.length-1;
+          for(let q=0; q<pool.length; q++){ x -= ws[pool[q]]; if(x<=0){ pick = q; break; } }
+          alloc[pool[pick]]++; pool.splice(pick, 1);
+        }
+      } else {
+        const raw = ws.map(w=>w*slots/wsum);
+        for(let i=0;i<ranked.length;i++) alloc[i] = Math.floor(raw[i]);
+        let used = alloc.reduce((a,b)=>a+b, 0);
+        const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
+        for(let i=0; used<slots && i<order.length; i++){ alloc[-order[i][1]]++; used++; }
+      }
       const perPlB = new Set(); let carry = 0;
       ranked.forEach((b, i)=>{
         let want = alloc[i] + carry; carry = 0;

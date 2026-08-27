@@ -12466,9 +12466,34 @@ const MiniEvxlEngine = (function(){
       const coverageSlot = purposeWeights ? (template.coverage||0) : (template.weakest>1 && blockStats.some(isCold) ? 1 : 0);
       const slots = purposeWeights ? (template.weakest||0) : template.weakest - coverageSlot;
       const ws = ranked.map(b=>Math.max(0.05, 1-b.median)); const wsum = ws.reduce((a,b)=>a+b, 0) || 1;
-      const raw = ws.map(w=>w*slots/wsum); const alloc = raw.map(Math.floor); let used = alloc.reduce((a,b)=>a+b, 0);
-      const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
-      for(let i=0; used<slots && i<order.length; i++){ alloc[-order[i][1]]++; used++; }
+      const alloc = ranked.map(()=>0);
+      if(purposeWeights && slots > 0 && slots < ranked.length){
+        // FEWER SLOTS THAN BLOCKS -- the degenerate case, and it is the queue's normal case.
+        // Largest-remainder is DETERMINISTIC, so with one slot it hands that slot to the block
+        // with the largest 1-median every single time: the weakest block, forever. The spread
+        // across blocks stops being a spread and becomes an argmax, and then the weakest one or
+        // two scenarios inside that block alternate. Reported from real use (2026-08-26): two
+        // scenarios coming back across three personal bests each.
+        //
+        // Step 8 converted the PURPOSES from a slot vector to weights for exactly this reason --
+        // "over ten items that is the old mix in expectation; over one it is the queue" -- and
+        // did not convert this. Same fix and the same argument: DRAW the block proportional to
+        // its weight. Over many items it reproduces the old proportions; over one it is a draw.
+        // Seeded, so a day is still stable across re-renders.
+        const pool = ranked.map((b, i)=>i);
+        for(let sl=0; sl<slots && pool.length; sl++){
+          let tot = 0; pool.forEach(i=>{ tot += ws[i]; });
+          let x = rnd()*tot, pick = pool.length-1;
+          for(let q=0; q<pool.length; q++){ x -= ws[pool[q]]; if(x<=0){ pick = q; break; } }
+          alloc[pool[pick]]++; pool.splice(pick, 1);
+        }
+      } else {
+        const raw = ws.map(w=>w*slots/wsum);
+        for(let i=0;i<ranked.length;i++) alloc[i] = Math.floor(raw[i]);
+        let used = alloc.reduce((a,b)=>a+b, 0);
+        const order = raw.map((r,i)=>[r-Math.floor(r), -i]).sort((a,b)=> b[0]-a[0] || b[1]-a[1]);
+        for(let i=0; used<slots && i<order.length; i++){ alloc[-order[i][1]]++; used++; }
+      }
       const perPlB = new Set(); let carry = 0;
       ranked.forEach((b, i)=>{
         let want = alloc[i] + carry; carry = 0;
@@ -16301,9 +16326,30 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // coverage, attempts density, days of score history) -> the template band.
   function profileConfidenceNow(list, now){ return profileConfidence(list, now, historyDays(now)); }
   // What the last few sessions served, and what kind they were -- the rotation's memory.
-  function recentlyServed(sessions){
+  // THE RECENCY DAMP READS THE SERVED LEDGER, NOT THE SESSION LOG -- and it read the log until
+  // 2026-08-26, which made it DEAD for every queue user since step 8.
+  //
+  // Step 8 replaced sessions with the queue and removed the session-log WRITER (the ledger took
+  // over), and left this function reading the log. `writeSessionLog` now has exactly one caller,
+  // the import merge. So `recentItems` was frozen at whatever the log held before that change --
+  // empty for anyone who started on the queue -- and `thompsonOrder`'s recency penalty never
+  // fired for anything the queue served.
+  //
+  // The only remaining anti-repeat was `serveNext` excluding the SINGLE item that just closed,
+  // and that produces an exact TWO-CYCLE by construction: exclude A, serve B; exclude B, serve A.
+  // Reported from real use -- two scenarios alternating across three personal bests each. Neither
+  // test caught it because a two-cycle satisfies both: "skip gives a DIFFERENT scenario" is true,
+  // and step 7's "40 draws must not all give the weakest slot to the SAME scenario" is true.
+  //
+  // The window is DAYS, not a count of servings. "The last three sessions" meant three days when
+  // a session was a day; a queue serves a variable number of items, so a fixed count of servings
+  // would span a different stretch of calendar on a light day than on a heavy one -- and the
+  // complaint this fixes is about a single sitting.
+  const RECENT_DAMP_DAYS = 3;
+  function recentlyServed(days){
     const out = new Set();
-    readSessionLog().slice(-sessions).forEach(e=>(e.items||[]).forEach(it=>{ if(it && it.name) out.add(it.name); }));
+    const cut = Date.now() - (Number(days) || RECENT_DAMP_DAYS) * 86400000;
+    servedLedger().forEach(r=>{ if(r && r.name && Number(r.servedAt) >= cut) out.add(String(r.name)); });
     return out;
   }
   function recentSessionTypes(sessions){
@@ -16397,9 +16443,23 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   function serveNext(excludeName){
     const list = calibrateRows(sessionScenarios());
     const now = Date.now();
-    const r = queueNext(list, sessionOpts(list, now, 0, { exclude: excludeName ? [excludeName] : null }), playlistFill());
-    if(!r || !r.item) return null;
+    // THE SEED MUST ADVANCE PER SERVING, and it did not until 2026-08-26. `seed` is
+    // `dayNumber(now)*7919 + seedBump`, and this passed seedBump 0 every time -- so every serve
+    // in a day replayed the IDENTICAL random sequence: the same purpose draw, the same block
+    // draw, the same Thompson draw. The composition was deterministic for the whole day and the
+    // only thing that varied between consecutive serves was the single excluded name. That is a
+    // TWO-CYCLE by construction: exclude A and the deterministic best is B, exclude B and it is
+    // A again. Reported from real use as two scenarios alternating across three PBs each.
+    //
+    // Day-stability was right for the old model, where a session was composed once and must not
+    // reshuffle on re-render. The queue does not need it: the OPEN ITEM is persisted, and that
+    // is what makes it stable. Every NEW serving should be a fresh draw.
+    //
+    // The bump is the serving's index within the day, read from the append-only ledger, so it is
+    // still deterministic and still reproducible from the record -- not `Math.random()`.
     const idx = servedToday(now);
+    const r = queueNext(list, sessionOpts(list, now, idx, { exclude: excludeName ? [excludeName] : null }), playlistFill());
+    if(!r || !r.item) return null;
     const q = { name: r.item.name, servedAt: now, pbAt: SCORES.get(r.item.name)||0, item: r.item,
       purpose: r.purpose, bias: r.bias, biasWhy: r.biasWhy, regime: r.regime, level: r.level,
       levelBase: r.levelBase, levelAdjust: r.levelAdjust||0,
