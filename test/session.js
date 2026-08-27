@@ -263,7 +263,7 @@
     R.forecastOrder = sD.items.filter(it=>it.why==='revisit').map(it=>[it.name, it.forecast ? Math.round(it.forecast.p*100)/100 : null]);
     // template + profile confidence
     R.templates = {};
-    [null, 0, 0.1, 0.29, 0.3, 0.35, 0.5, 0.65, 0.66, 0.9, 1].forEach(c=>{ [8, 10, 12].forEach(size=>{ const t = E.sessionTemplate(c, size); R.templates[String(c)+'@'+size] = [t.band, t.weakest, t.route, t.fillout, t.quickwin, t.revisit]; }); });
+    [null, 0, 0.1, 0.29, 0.3, 0.35, 0.5, 0.65, 0.66, 0.9, 1].forEach(c=>{ [8, 10, 12].forEach(size=>{ const t = E.sessionTemplate(c, size); R.templates[String(c)+'@'+size] = [t.band, t.weakest, t.route, t.fillout, t.revisit]; }); });
     R.confNoAtt = E.profileConfidence(fixture(E).map(sc=>Object.assign({}, sc, { att: null })), FIXED_MS, 45);
     // v0.5 blocks: the overlap map's independent set as the skill unit. Three
     // blocks by mechanic facet (clicking / tracking / switching); with them the
@@ -440,8 +440,8 @@
     const sRot = E.composeSession(fixture(E), rotOpts(), FILL);
     const slotsOf = res => { const c = {}; res.items.forEach(it=>{ c[it.why] = (c[it.why]||0)+1; }); return c; };
     R.rotation = { type: sRot.type, hasWhy: !!(sRot.typeWhy && sRot.typeWhy.length > 20), size: sRot.items.length,
-      template: sRot.template ? [sRot.template.weakest, sRot.template.route, sRot.template.fillout, sRot.template.quickwin, sRot.template.revisit] : null,
-      wanted: (()=>{ const t = E.SESSION_TYPES[sRot.type]; return t ? [t.weakest, t.route, t.fillout, t.quickwin, t.revisit] : null; })(),
+      template: sRot.template ? [sRot.template.weakest, sRot.template.route, sRot.template.fillout, sRot.template.revisit] : null,
+      wanted: (()=>{ const t = E.SESSION_TYPES[sRot.type]; return t ? [t.weakest, t.route, t.fillout, t.revisit] : null; })(),
       // step 8: with rotation the slot vector is DRAWN from the type's weights, one purpose
       // per item, so it is no longer equal to that vector -- it is a sample from it. What
       // must still hold: it sums to the size, and nothing is served from a purpose the type
@@ -1749,7 +1749,7 @@
     Object.keys(R.templates).forEach(k=>{ const [c, size] = k.split('@'); const t = R.templates[k]; const sum = t.slice(1).reduce((a,b)=>a+b, 0); const want = Math.min(Number(size), 10);
       if(sum!==want) problems.push('template '+k+': slots sum to '+sum+', expected '+want+' ('+J(t)+')');
       const cn = c==='null' ? null : Number(c);
-      if((cn===null || (cn>=0.3 && cn<=0.65)) && Number(size)===10 && J(t)!==J(['mid',5,2,1,1,1])) problems.push('template '+k+': the middle band must be exactly 5/2/1/1/1, got '+J(t));
+      if((cn===null || (cn>=0.3 && cn<=0.65)) && Number(size)===10 && J(t)!==J(['mid',6,2,1,1])) problems.push('template '+k+': the middle band must be exactly 6/2/1/1 (D39: quickwin retired, its slot to weakest), got '+J(t));
       if(cn!==null && cn<0.3 && t[0]!=='low') problems.push('template '+k+': c < 0.30 is the low band, got '+J(t));
       if(cn!==null && cn>0.65 && t[0]!=='high') problems.push('template '+k+': c > 0.65 is the high band, got '+J(t));
     });
@@ -1787,7 +1787,7 @@
   // v0.4 (same day, later) changed exactly one line -- guards.weakR lost the r = 0.2
   // bridge route -- and every other line is v0.3's, which is the "reduces to v0.3
   // without its evidence" contract made executable. ----
-  const EXPECTED = {
+  const EXPECTED =   {
     "main": {
       "regime": "normal", "level": 4, "popLevel": 0.47,
       "weakLabels": [
@@ -1804,10 +1804,10 @@
         {"name":"Sw Speed Small","why":"weakest","via":null},
         {"name":"Cl Dynamic Mid","why":"weakest","via":null},
         {"name":"Tr Smooth Thin","why":"weakest","via":null},
+        {"name":"Sw Switch Basic","why":"weakest","via":null},
         {"name":"Cl Dynamic Large","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.51,"n":260}},
         {"name":"Tr Smooth Cube","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":null,"r":0.48,"n":180}},
         {"name":"Sw Gap Switch","why":"fillout","via":null},
-        {"name":"Cl Easy Flick","why":"quickwin","via":null},
         {"name":"Sw Old Switch","why":"revisit","via":null}
       ]
     },
@@ -1817,13 +1817,13 @@
         {"name":"Sw Speed Small","why":"weakest","via":null},
         {"name":"Cl Dynamic Mid","why":"weakest","via":null},
         {"name":"Tr Smooth Thin","why":"weakest","via":null},
+        {"name":"Sw Switch Basic","why":"weakest","via":null},
         {"name":"Cl Dynamic Large","why":"route","via":{"target":"Fx Static Wide","viaLabel":null,"r":0.51,"n":260}},
         {"name":"Tr Smooth Cube","why":"route","via":{"target":"Tr Reactive Slow","viaLabel":null,"r":0.48,"n":180}},
         {"name":"Sw Gap Switch","why":"fillout","via":null},
-        {"name":"Cl Easy Flick","why":"quickwin","via":null},
         {"name":"Sw Old Switch","why":"revisit","via":null},
         {"name":"Cl NoCurve Tap","why":"weakest","via":null},
-        {"name":"Sw Switch Basic","why":"weakest","via":null}
+        {"name":"Cl Static Micro","why":"weakest","via":null}
       ] },
     "thin": { "regime": "thin", "level": null, "items": [
         ["Cl Easy Flick","placement","clicking"],
@@ -1869,7 +1869,10 @@
     if(m.level!==4) problems.push('probe: level (median rung of played) must be 4, got '+m.level);
     if(m.items.length!==10) problems.push('probe: size 10 must give 10 items, got '+m.items.length);
     const whys = m.items.map(it=>it.why);
-    ['weakest','route','fillout','quickwin','revisit'].forEach(w=>{ if(!whys.includes(w)) problems.push('probe: no "'+w+'" item in the main run'); });
+    // D39: the quickwin purpose is RETIRED -- tier-proximity is benchmark-ladder logic (D35),
+    // not floor logic (D34). Its absence is asserted, not merely no longer required.
+    if(whys.includes('quickwin')) problems.push('D39: the retired quickwin purpose was served');
+    ['weakest','route','fillout','revisit'].forEach(w=>{ if(!whys.includes(w)) problems.push('probe: no "'+w+'" item in the main run'); });
     if(m.items.filter(it=>it.why==='weakest').some(it=>it.name==='Cl Stuck Flicks')) problems.push('probe: the stuck scenario (lowest percentile, recent tries well under the PB) must sink out of the weakest five');
     const routes = m.items.filter(it=>it.why==='route');
     if(routes.length!==2) problems.push('probe: the main run must carry two routes, got '+routes.length);

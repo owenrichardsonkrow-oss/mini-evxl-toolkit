@@ -922,3 +922,18 @@ decisions and do not belong in this sequence.
   channel and the owner's own play (measured: 11 re-raised immediately, three quarantine entries
   cleared as verified-real by that channel), while a foreign high never heals. The template ships
   an empty repair table, asserted in CI — the quarantine names run history that is not the user's.
+
+- **D39** (2026-08-27, the owner's call) — **the QUICK-WIN purpose is retired from the coach.**
+  The owner: *"I don't think quick wins or any purpose card matters anymore. This is probably
+  carryover from the 10 playlist format we moved away from... I'm not sure how it being close to
+  a benchmark rank tier relates to our approach of working at skill floors."* He is right on the
+  design's own terms: tier-proximity ("76% of the way to the next tier") is benchmark-ladder
+  logic — D35 says score is the unit for a player chasing a RANK — while the coach's objective is
+  the FLOOR (D34). The two aims conflicted in the same slot. The purpose's weight moves to
+  WEAKEST in every template and session type (floor 7/1/0/2, transfer 4/4/0/2, collect 4/1/0/5,
+  breadth 4/1/4/1; bands low 5/2/2/1, mid 6/2/1/1, high 7/1/0/2 — all still summing to 10), per
+  D34: the marginal slot goes to the floor. The Home "Quick wins" panel STAYS — that surface IS
+  the benchmark ladder, where tier-proximity is exactly the right statistic. Historical served-
+  ledger rows with `why: 'quickwin'` keep rendering; the fixture asserts the purpose is never
+  served again. The session snapshot was re-blessed deliberately: one line changed — the
+  quickwin item left and a sixth weakest entered.
