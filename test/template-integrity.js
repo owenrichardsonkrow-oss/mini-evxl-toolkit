@@ -213,6 +213,17 @@ check(html.includes('.replace(/"/g,\'&quot;\')'), "esc() no longer escapes '\"'"
 // (Review Ledger IV BUG-6) -- eleven source comments carried it into every build, because
 // comments are embedded verbatim. A name in a denylist is not a leak; it is what lets the
 // check fail. Write "the owner" in comments that ship.
+// The repair table names another player's run history (step 37) -- like the scores block,
+// the template ships it EMPTY.
+{
+  const m = html.match(/id="repairs-data"[^>]*>([^<]*)</);
+  check(!!m, 'the repairs-data block is missing from the template');
+  if (m) {
+    let rep = null; try { rep = JSON.parse(m[1]); } catch (e) {}
+    check(rep !== null && Object.keys(rep.quarantine || {}).length === 0,
+      'the template must ship an EMPTY repair table -- it names run history that is not the user's');
+  }
+}
 check(!/richardsonkrow|mayogobbler/i.test(html), 'personal identity string in template');
 check(!/\bOwen\b/.test(html), "the owner's name survives in the template -- source comments ship verbatim, say \"the owner\" instead");
 check(!/7656119\d{10}/.test(html), 'steam64 id in template');

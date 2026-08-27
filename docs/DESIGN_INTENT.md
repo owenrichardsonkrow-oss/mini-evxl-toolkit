@@ -909,3 +909,16 @@ decisions and do not belong in this sequence.
   **D31's and D35's recorded figures are unchanged in meaning**: they priced the threshold decision
   pre-floor, and the artifact keeps that variant under `/noFloor` so their guarded figures
   reproduce instead of silently changing under the same pointers.
+
+- **D38** (Review Ledger VI step 37) — **nothing unattributed is ingested.** Between 2026-08-07 and
+  08-20 an online sync channel absorbed ANOTHER PLAYER'S daily sessions into the owner's record —
+  195 runs across 41 scenarios, 23 of them becoming the stored PB, each a phantom target the queue
+  then served. The rule this closes on: every ingested event that carries an owner field is checked
+  against the account (the activity feed carried `username` all along and the client never read
+  it); a channel whose rows carry NO identity — `last-scores/by-name` — gets its proven damage
+  quarantined, embedded in the personal build, and enforced as a STANDING input filter, because an
+  append-only store never heals and an old export would otherwise resurrect the foreign rows.
+  Repairs go LOW deliberately: a lowered legit score self-heals through the steamId-keyed weekly
+  channel and the owner's own play (measured: 11 re-raised immediately, three quarantine entries
+  cleared as verified-real by that channel), while a foreign high never heals. The template ships
+  an empty repair table, asserted in CI — the quarantine names run history that is not the user's.
