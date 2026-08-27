@@ -887,3 +887,25 @@ decisions and do not belong in this sequence.
   change needing the four-leg gate. It is not built, because this ruling makes the ICC factor a
   variance-reduction term whose magnitude is already measured (0.077–0.232 across the shipped
   blocks) rather than a contested claim about what the coach is estimating.
+
+- **D37** (Review Ledger VI step 36, on the owner's first feel report from real use) — **an item
+  gets at least TWO runs this visit before exhaustion may close it.** `STAGNATE_MIN_K = 2`.
+  The report: one non-PB run on a one-prior-run scenario and the queue moved on. That is the rule
+  as ratified — `n/(n+k) = 1/2 ≤ 0.685` fires at k = 1 for every n ≤ 2, and it fired at the old 0.6
+  for n = 1 too — so this is not a bug in D31 and not the threshold move's fault. It is the feel
+  adjustment D31 explicitly reserved (*"we could adjust this later if I don't like how it feels"*),
+  taken under delegation, measured first on the committed replay (`dev/hazard-lambda.json`
+  `/minKFloor`): the floor recovers **48 PBs** (525 → 573) and **halves the early-close rate**
+  (8.1% → 4.2%) at the cost of one extra run on items that stop; k ≥ 3 recovers 76 but guts the
+  rule (321 → 114 stops), so 2.
+  **It recovers exactly the 48 run-2 PBs the threshold move had given up** — rule-reached arrival
+  468/51/6 back to 468/99/6 — so the shipped operating point now costs *less* than the old 0.6 did
+  without it. A **policy** bound like `FEEL_ADJ_MAX`, not a measured constant: the aggressive
+  threshold stays, and what changes is the minimum evidence per visit before it may act. Anytime
+  validity untouched (the events `{no PB by k}` stay nested; a floor only lowers P(ever stopping)).
+  The form test and the "too hard" exit are deliberately NOT floored — form needs `minHistory`
+  anyway, and a rating is the player speaking. A first-run PB still closes at k = 1: the floor
+  delays only exhaustion.
+  **D31's and D35's recorded figures are unchanged in meaning**: they priced the threshold decision
+  pre-floor, and the artifact keeps that variant under `/noFloor` so their guarded figures
+  reproduce instead of silently changing under the same pointers.
