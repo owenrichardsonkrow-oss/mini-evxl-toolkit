@@ -967,3 +967,37 @@ decisions and do not belong in this sequence.
   placement; the variant sign test reads 31 of 46. Re-run trigger: a materially larger player
   sample (the control rested on 739 scenarios), or a demand-side statistic rather than an
   adoption-side one.
+
+- **D41** (2026-08-27) — **within-family emergent difficulty PASSES its bars; the calibration
+  and divergence list ship as committed artifacts; whether emergent rungs replace the modifier
+  component inside `difficultyRung` is the recorded NEXT decision, taken on a distribution
+  comparison.** The owner's design, after D40: keep the nine-rung system as the control, neglect
+  the hand-calibrated modifier weights, pair bases with variants by NAME, and compare score
+  distributions across the pair alongside the player-spread findings — his direction checked and
+  CORRECT with one qualification his own example shows (at matched raw board rank the harder
+  `RawControlSphere` out-scores its `Easier` variant because its board is a stronger crowd; at
+  matched CALIBRATED level through the committed offsets the family is strictly monotone).
+  The statistic: score_s(L) = the committed percentile curve inverted at the board-calibrated
+  share for level L; step(v) = mean log2 of variant/base score over L in {0.35, 0.55, 0.75,
+  0.92}, negative = harder — a DEMAND-side quantity where D40's crowdLevel was adoption-side.
+  Pre-registered and amended before the estimator existed (`dev/STEP41-PREREG.md`, 32-agent
+  adversarial review, 4 blocking findings including a sign-inverted ship rule); the bars ran on
+  the mechanically-classified NON-CIRCULAR subset only (tier-word suffixes — the modifier
+  weights were themselves calibrated from a one-anchor version of this statistic in 2026-08-18,
+  so modifier pairs cannot certify it).
+  **Result (`dev/difficulty-demand.json`, 426 pairs, 126 bar-carrying over 102 bases): SIGN
+  96.1% of bases agree (bar 75%), LADDERS pooled tau-b 0.619 over 41 ladders (bar 0.6 — a
+  narrow pass, stated as such), LEVEL-STABILITY 98.4% (bar 80%). All three pass; outcome 1.**
+  Calibration: rungUnit = 0.0963 log2 per labeled rung (one rung of difficulty is about a 6.9%
+  score ratio at matched level); emergent rungs assigned to 253 variants with rated anchor
+  bases; **118 diverge from their labels by >= 2 rungs, and the direction is 85 harder-than-
+  labeled against 33 easier** — over all 253, labels UNDER-rate difficulty 124 times and
+  over-rate 74, median |shift| one rung. Diagnostics behaved: the grind confound measures small
+  (board-ratio coefficient −0.016 log2 per doubling against a rung unit of 0.096), the interior
+  sub-grid reproduces the bars (98/102), the estimated-offset co-report agrees (147/153), and
+  the circular-ish pairs agree at 80/86 — the hand modifier table was directionally right, and
+  is now REDUNDANT where a measured step exists rather than refuted. What does NOT ship yet:
+  any change to `difficultyRung` — replacing the modifier component with emergent rungs changes
+  what the coach's window serves and is walked through everything that reads it (step 35's
+  lesson), on the distribution comparison above, as its own step with the four-leg criterion if
+  it moves the ranking.
