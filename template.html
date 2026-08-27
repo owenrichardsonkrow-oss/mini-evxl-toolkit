@@ -10235,22 +10235,29 @@ const MiniEvxlEngine = (function(){
   //   2. REVISIT FORECAST: how the candidate's transfer neighbours and label-
   //      bridged scenarios moved since its last visit, against its own gap to PB;
   //      logged per item so the return-collect record can calibrate it.
-  //   3. ADAPTIVE TEMPLATE by profile confidence (three bands; mid = 5/2/1/1/1).
+  //   3. ADAPTIVE TEMPLATE by profile confidence (three bands; mid = 6/2/1/1 since D39).
   //   4. GAME-RELEVANCE knob: a capped percentile bonus for scenarios carrying
   //      game:cs/val / game:tacfps, spread one hop through transfer neighbours.
   //   5. BOARD CONFIDENCE: a small board's percentile is shrunk toward the
   //      user's overall level in the ranking (log10(n)/4, clamped).
   //   6. SESSION HISTORY stats (sessionHistoryStats) for the history view.
   const SESSION_THIN_PLAYED = 30;
-  const SESSION_TEMPLATE = { weakest: 5, route: 2, fillout: 1, quickwin: 1, revisit: 1 };
+  // D39 (2026-08-27): the QUICK-WIN purpose is retired from the coach. Tier-proximity
+  // ("76% of the way to the next tier") is benchmark-ladder logic -- D35 says score is what a
+  // player chasing a RANK cares about -- and the coach's objective is the FLOOR (D34). The two
+  // aims conflict in the same slot, and the owner called it carryover from the ten-item format.
+  // Its weight moves to WEAKEST, per D34. The Home "Quick wins" panel stays: that surface IS
+  // the benchmark ladder. Historical ledger rows with why:'quickwin' still render (the UI keeps
+  // the label); nothing serves the purpose again.
+  const SESSION_TEMPLATE = { weakest: 6, route: 2, fillout: 1, revisit: 1 };
   // Profile-confidence bands -> templates (slot counts at size 10; a smaller
   // session shrinks them by largest remainder, see sessionTemplate). Thin profile:
   // fill the picture (more fill-out); full profile: get out of the way (more
   // weakest, more revisits).
   const SESSION_TEMPLATES = {
-    low:  { weakest: 4, route: 2, fillout: 2, quickwin: 1, revisit: 1 },
+    low:  { weakest: 5, route: 2, fillout: 2, revisit: 1 },
     mid:  SESSION_TEMPLATE,
-    high: { weakest: 6, route: 1, fillout: 0, quickwin: 1, revisit: 2 }
+    high: { weakest: 7, route: 1, fillout: 0, revisit: 2 }
   };
   // c < CONF_LOW -> low band; c > CONF_HIGH -> high band; between -> mid (= v0.3).
   // 0.30, not 0.35: a profile whose played set is fully curved but has no logged
@@ -10277,10 +10284,10 @@ const MiniEvxlEngine = (function(){
   // Every template sums to 10 and none is a single purpose: D1's "floor-BIASED, never
   // 100% to the argmin" holds inside each one.
   const SESSION_TYPES = {
-    floor:    { weakest: 6, route: 1, fillout: 0, quickwin: 1, revisit: 2 },
-    transfer: { weakest: 3, route: 4, fillout: 0, quickwin: 1, revisit: 2 },
-    collect:  { weakest: 3, route: 1, fillout: 0, quickwin: 1, revisit: 5 },
-    breadth:  { weakest: 3, route: 1, fillout: 4, quickwin: 1, revisit: 1 }
+    floor:    { weakest: 7, route: 1, fillout: 0, revisit: 2 },
+    transfer: { weakest: 4, route: 4, fillout: 0, revisit: 2 },
+    collect:  { weakest: 4, route: 1, fillout: 0, revisit: 5 },
+    breadth:  { weakest: 4, route: 1, fillout: 4, revisit: 1 }
   };
   // A3's sampling width, in percentile points. NEXT-2 proposed replacing it outright with
   // the measured spread; that was tried and MEASURED, and it does not survive. The measured
@@ -10323,7 +10330,7 @@ const MiniEvxlEngine = (function(){
   // Where there is room for the whole mix (size >= its total, which is how the fixtures call
   // it) the draw is skipped and the exact old vector is returned -- nothing that used to be
   // deterministic became random, and the session snapshot is unchanged by this step.
-  const PURPOSES = ['weakest', 'route', 'fillout', 'quickwin', 'revisit', 'coverage'];
+  const PURPOSES = ['weakest', 'route', 'fillout', 'revisit', 'coverage'];  // quickwin retired, D39
   function drawPurposes(size, weights, rnd){
     const n = Math.max(0, Math.round(Number(size)) || 0);
     const w = PURPOSES.map(k=>Math.max(0, Number(weights && weights[k]) || 0));
@@ -10623,7 +10630,7 @@ const MiniEvxlEngine = (function(){
     size = Number(size)>0 ? Math.round(Number(size)) : 10;
     const band = (c===null || c===undefined || !Number.isFinite(Number(c))) ? 'mid' : (Number(c) < CONF_LOW ? 'low' : (Number(c) > CONF_HIGH ? 'high' : 'mid'));
     const base = SESSION_TEMPLATES[band];
-    const keys = ['weakest', 'route', 'fillout', 'quickwin', 'revisit'];
+    const keys = ['weakest', 'route', 'fillout', 'revisit'];
     const total = keys.reduce((a,k)=>a+base[k], 0);
     if(size >= total) return Object.assign({ band }, base);
     const raw = keys.map(k=>base[k]*size/total);
@@ -12629,9 +12636,7 @@ const MiniEvxlEngine = (function(){
     const fillTargets = new Set(fillPl.map(p=>p.key));
     const fillPool = gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level+1 && (sc.plKeys||[]).some(k=>fillTargets.has(k)))));
     take(fillPool, 'fillout', sc=>{ const p = fillPl.find(x=>(sc.plKeys||[]).includes(x.key)); return 'Fill out — '+(p? p.name+' is '+Math.round(p.played/p.total*100)+'% played and this is one of its gaps' : 'a gap in a playlist you have mostly played')+'; a fuller played set settles the ordering. '+label(sc)+gameNote(sc)+'.'; }, template.fillout);
-    // ---- QUICK WIN
-    const qw = played.filter(sc=>!sc.maxed && sc.toNext>=0.7 && !chosen.has(sc.name)).sort((a,b)=> b.playlists - a.playlists || b.toNext - a.toNext);
-    take(qw, 'quickwin', sc=>'Quick win — '+Math.round(sc.toNext*100)+'% of the way to the next tier across '+sc.playlists+' playlist'+(sc.playlists===1?'':'s')+'.', template.quickwin);
+    // (D39: the QUICK WIN slice lived here -- tier-proximity serving, retired 2026-08-27.)
     // ---- REVISIT: the v0.3 pool (> 14 days away, not maxed, rung <= level).
     // Candidates with a forecast (a neighbour or bridged label actually moved
     // since the visit) come first by first-try PB odds; the rest keep v0.3's
@@ -16668,14 +16673,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const lvl = levelBase===null ? null : Math.max(0, Math.min(8, levelBase + fa.adj));
     const adjTxt = fa.adj === 0 ? 'your level' : (fa.adj > 0 ? '+' : '')+fa.adj+' rung'+(Math.abs(fa.adj)===1?'':'s')+' from your ratings'+(fa.atLimit ? ', at the limit' : '');
     const streakTxt = (fa.streak && fa.kind) ? ' &middot; '+fa.streak+' of '+FEEL_RUN+' &ldquo;'+esc(FEEL_TXT[fa.kind].toLowerCase())+'&rdquo; in a row' : '';
-    // The window line must state its own EXEMPTION on the items it does not gate, or a Hard
-    // quick-win chip sits directly above "Window: at or under Intermediate" and reads as a
-    // contradiction (the owner read it as one, 2026-08-26). Quick wins are served on tier
-    // evidence alone -- 76% of the way to the next tier IS the evidence you can handle it --
-    // and fill-outs/routes run at level+1; only the weakest and revisit pools sit at the window.
-    const winExempt = (q && q.purpose === 'quickwin')
-      ? ' &mdash; quick wins are served on tier progress and skip the window'
-      : ((q && (q.purpose === 'fillout' || q.purpose === 'route')) ? ' &mdash; this purpose may run one rung above it' : '');
+    // The window line must state its own EXEMPTION on the items it does not gate (the owner
+    // read the un-stated version as a contradiction, 2026-08-26). Fill-outs and routes run at
+    // level+1; only the weakest and revisit pools sit at the window. (The quickwin branch was
+    // retired with the purpose itself, D39.)
+    const winExempt = ((q && (q.purpose === 'fillout' || q.purpose === 'route')) ? ' &mdash; this purpose may run one rung above it' : '');
     const windowTxt = lvl===null ? '' : 'Window: at or under <b>'+esc(DIFF_LABELS[lvl]||String(lvl))+'</b> ('+esc(adjTxt)+')'+winExempt+streakTxt;
     const feelTip = {
       easy: 'Three of these in a row move the window up a rung.',
