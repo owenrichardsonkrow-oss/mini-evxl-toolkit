@@ -3841,7 +3841,12 @@ const MiniEvxlEngine = (function(){
                       : 'this board is too thinly sampled to calibrate directly, so its shift is estimated from board size');
       return ' — ±'+(s*100).toFixed(1)+' points of measurement error on that standing ('+why+'), and the order is drawn from that interval rather than treating the number as exact';
     };
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
+    // D42: this parenthetical used to read "so a high score is reachable" -- the J1 claim, that
+    // a percentile above your level overstates weakness. Step 42 MEASURED that and refuted it:
+    // over 7,135 sampled players the calibrated reading above a player's own rung level sits
+    // +0.69 percentile points ABOVE their at-or-below reading (95% CI upper 0.92), i.e. very
+    // slightly generous, never depressed. What survives is the co-variation reason (J2).
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, where strength still co-varies with the rest)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
     // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
     if(rotate){
       const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);

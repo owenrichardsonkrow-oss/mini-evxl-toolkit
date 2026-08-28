@@ -184,6 +184,14 @@
       thin: { regime: thin.regime, level: thin.level, items: thin.items.map(it=>[it.name, it.why, it.label]) },
       guards: { routes: guardRoutes.map(routeOf), playlistMateUsed: guardRoutes.some(it=>it.name==='Fx Static Small'), crossPlaylistUsed: guardRoutes.some(it=>it.name==='Cl Dynamic Large') },
       playedRated: { main: fx.filter(sc=>sc.played && sc.rung>=0).length, thin: thinFixture(E).filter(sc=>sc.played && sc.rung>=0).length },
+      // D42: the snapshot's `item` serializer carries {name, why, via} and NO reason, so no
+      // fixture could see the justification clause printed on every weakest item. It is computed
+      // here from the LIVE composition and asserted in the probe; it is deliberately not fed to
+      // same(), so it needs no re-bless.
+      d42: (()=>{ const w = main.items.filter(it=>it.why==='weakest');
+        return { weakest: w.length,
+                 statesWindow: w.every(it=>/at or under your level/.test(it.reason||'')),
+                 retiredJ1: w.some(it=>/high score is reachable/.test(it.reason||'')) }; })(),
       features: features(E)
     };
   }
@@ -1872,6 +1880,16 @@
     // D39: the quickwin purpose is RETIRED -- tier-proximity is benchmark-ladder logic (D35),
     // not floor logic (D34). Its absence is asserted, not merely no longer required.
     if(whys.includes('quickwin')) problems.push('D39: the retired quickwin purpose was served');
+    // D42: the weakest reason states WHY the window exists, on every weakest item, in the public
+    // template. It used to say "so a high score is reachable" -- the J1 claim, that a percentile
+    // above your level overstates weakness. Step 42 measured J1 and REFUTED it (the reading above
+    // a player's own rung level is +0.69 percentile points, if anything generous), so the string
+    // is pinned NEGATIVELY as well as positively. Nothing pinned this clause before D42, which is
+    // how the retired claim would have kept shipping -- BUG-3's class exactly.
+    const d42 = actual.d42 || {};
+    if(!(d42.weakest > 0)) problems.push('D42: no weakest item to check the window justification on');
+    if(d42.retiredJ1) problems.push('D42: the weakest reason still carries the REFUTED J1 claim ("a high score is reachable") -- step 42 measured the above-level reading at +0.69 percentile points, i.e. generous, not depressed');
+    if(!d42.statesWindow) problems.push('D42: the weakest reason must state the window it was drawn under ("at or under your level")');
     ['weakest','route','fillout','revisit'].forEach(w=>{ if(!whys.includes(w)) problems.push('probe: no "'+w+'" item in the main run'); });
     if(m.items.filter(it=>it.why==='weakest').some(it=>it.name==='Cl Stuck Flicks')) problems.push('probe: the stuck scenario (lowest percentile, recent tries well under the PB) must sink out of the weakest five');
     const routes = m.items.filter(it=>it.why==='route');

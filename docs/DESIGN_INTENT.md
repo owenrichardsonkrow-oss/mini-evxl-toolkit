@@ -201,6 +201,11 @@ about skill structure.
   obvious. The middle band is free design space.
 - Within a skill, scenarios are chosen at **difficulty rung ≈ user level ±1**
   (the difficulty attribute enters the math instead of sitting beside it).
+  **Corrected 2026-08-27 (D42): this sentence is false of the shipped code in BOTH
+  directions and always was.** The rule is a CEILING only — `rung <= level` for the
+  weakest and revisit pools, `rung <= level+1` for fill-out and routes — with **no
+  floor at any site**, so an Easy- scenario is fully eligible for a level-8 player;
+  and difficulty never enters the ranking key, it gates eligibility beside it. See D42.
 - Quick wins folds in as the session's reward slice.
 - **Live companion for free**: auto-check already fires on tab-back
   (visibilitychange) and patches new scores — the session view subscribes and
@@ -1001,3 +1006,57 @@ decisions and do not belong in this sequence.
   what the coach's window serves and is walked through everything that reads it (step 35's
   lesson), on the distribution comparison above, as its own step with the four-leg criterion if
   it moves the ranking.
+
+- **D42** (2026-08-27) — **the difficulty CEILING stays, but its justification on record was
+  WRONG and is corrected: the coach does not filter by rung because a percentile above your
+  level reads badly (measured and REFUTED), it filters because co-variation between two
+  scenarios fades as their rungs separate.** The owner objected to the window on two grounds:
+  that the calibrated percentile already prices difficulty so a rung filter double-counts it,
+  and that playing hard scenarios helps easier ones so a wide range is good. Run as a full
+  research step — pre-registration committed before the estimator (`dev/STEP42-PREREG.md`),
+  then adversarially reviewed by 36 agents BEFORE running (30 findings, 25 survived independent
+  refutation, **6 blocking**, all six amended into the design). Estimator
+  `dev/fit-board-offsets.ps1 -RungBias` (a switch on the fitter, not a second copy: BAR 1's
+  half-fit leg needs `Invoke-OffsetFit`, PERF-5), artifact `dev/difficulty-window.json`.
+  **THE FIRST BAR WAS UNFALSIFIABLE AND THE REVIEW CAUGHT IT.** It asked whether the calibrated
+  percentile correlates with rung within a player. It cannot: `offset[scenario]` is a FREE
+  per-scenario intercept fitted as the median over its players, so it absorbs any per-scenario
+  mean shift, difficulty included — and holding out PLAYERS does not withhold a SCENARIO-level
+  property. Bounded at |r| ≈ 0.02 against a 0.10 tolerance, and the scoping run read the
+  calibrated per-rung medians as `+0.0000` at all nine rungs. Replaced by the one channel a
+  per-scenario constant cannot express: **the ABOVE-LEVEL CONTRAST**, a player-level × rung
+  interaction — each player's median residual on scenarios above their own rung level minus
+  their median at or below it.
+  **RESULT, over 7,135 sampled players (`bar1.e_aboveLevelContrast`): the reading above a
+  player's own level sits +0.69 calibrated percentile points ABOVE their at-or-below reading
+  (95% CI upper 0.92, bar 1.0) — PASS, and the SIGN is the opposite of the ceiling's premise.**
+  A percentile above your level is not depressed; if anything it is very slightly generous. **J1
+  — the measurement justification — is REFUTED**, and it was the justification the product
+  printed on every weakest item ("at or under your level, so a high score is reachable"). That
+  string is corrected in this entry's commit and pinned negatively in `test/session.js`; nothing
+  had pinned it before, because the session snapshot's item serializer carries `{name, why, via}`
+  and no reason text at all.
+  **BAR 2 FAILS, and that is what the ceiling now rests on.** Over cross-playlist tested pairs
+  at n ≥ 100, Fisher-z pooled r by rung distance declines monotonically and crosses zero:
+  **+0.0160 (Δ0) · +0.0151 · +0.0134 · +0.0108 · +0.0002 (Δ4) · −0.0067 · −0.0076 · −0.0279 ·
+  −0.0478 (Δ8)**, and the pooled |Δrung| ≥ 4 bin is **−0.0097, 95% CI [−0.0138, −0.0057]**
+  clustered on scenario — entirely below zero, over 36,026 pairs and 656 scenarios. Not an
+  ipsative artefact: MET-5 measured the leave-one-out correction at −0.0009, an order of
+  magnitude smaller. So per the pre-registered outcome 3 **the ceiling STAYS, on J2 — co-variation
+  — AND ON THE POPULATION RUNG ONLY.** That is a shared-skill prior about how strengths co-vary
+  across players, NOT a measurement that practising a hard scenario fails to move an easy one;
+  COACH-1 already records that distinction, and the design cannot separate a declining profile
+  from the two bins being measured on differently composed crowds. **Whether a wider window is
+  more PRODUCTIVE remains unmeasured** — it needs on-policy served-and-resolved records, and
+  step 12's difficulty-term estimate had to be taken off-policy precisely because the eligible
+  pool contains 0 hard scenarios. The cost the ceiling carries is recorded rather than
+  dismissed: on the owner's profile it excludes **36.4% of his curved+rated played pool (427 of
+  1,174)**, and the excluded half is on average WEAKER (median calibrated percentile 0.758
+  against 0.796 in-window). **Unmeasured, not passed:** the `m = 0` slice bar (1f) had 17 usable
+  players against a pre-registered floor of 200, so the 217 board-size-predicted offsets — whose
+  share is itself rung-correlated, 23–25% at rungs 5–8 against 5–11% at rungs 2–4 — carry an
+  uncorrected shift that this step could not size. Per the pre-registration that routes to a
+  precision flag and **never to a ceiling**: a difference in how well a rung is measured is an
+  argument about the empirical-Bayes weight (D25), because a filter discards the reading instead
+  of discounting it. Re-run trigger: the on-policy record reaching the gate calendar's threshold,
+  or a crowd-composition-stratified BAR 2.
