@@ -1842,7 +1842,7 @@ const MiniEvxlEngine = (function(){
   // at the point the draw changed instead of pooling two different policies.
   //   1 = softmax over an invented temperature (release #2, the arm experiment's first days)
   //   2 = Thompson sampling from the measured spread (step 7)
-  const SELECT_VERSION = 2;
+  const SELECT_VERSION = 3;   // 3 = D43, the ceiling off for floor work (weakest/revisit)
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
@@ -2906,7 +2906,12 @@ const MiniEvxlEngine = (function(){
     // pooling across epochs would put two skills under one dummy.
     const pvOk  = r => o.pv===null  || r.pv===null  || r.pv===o.pv;
     const epOk  = r => o.epoch===null || !r.block || !r.blockEpoch || r.blockEpoch===o.epoch;
-    const usable = all.filter(r=>pvOk(r) && epOk(r));
+    // `sv` stamps which SELECTION POLICY produced the row. It was accepted as an option and
+    // never read, so a bumped SELECT_VERSION would silently NOT have split this gate -- and
+    // D43's bump is the first one whose rows differ in which scenarios were eligible at all.
+    const svOk  = r => o.sv===null  || r.sv===null  || r.sv===o.sv;
+    const usable = all.filter(r=>pvOk(r) && epOk(r) && svOk(r));
+    const staleSv = all.length - all.filter(svOk).length;
     const blocks = Array.from(new Set(usable.map(r=>r.block).filter(Boolean)));
     // The coefficient count is a property of the MODEL, not of how much data has arrived. Size
     // it on the blocks the coach uses TODAY (`opts.blocksNow`), not on the blocks the resolved
@@ -2951,7 +2956,7 @@ const MiniEvxlEngine = (function(){
     }
     if(dropped > 0) blockers.push(dropped+' resolved item(s) are stamped under an older definition and cannot be pooled with the rest');
     return { terms, coefficients, epv: o.epv,
-      resolved: all.length, usable: usable.length, dropped,
+      resolved: all.length, usable: usable.length, dropped, staleSv,
       hits, misses, rarer, rarerIs: hits<=misses ? 'collected' : 'not collected',
       requiredRarer, shortfallRarer, ready: blockers.length===0,
       armA, armB, minPerArm: o.minPerArm, blocks: blocks.length, blocksModelled,
@@ -3562,10 +3567,35 @@ const MiniEvxlEngine = (function(){
     const levelBase = sessionLevel(played);
     const levelAdj = numOrNull(opts.levelAdjust)===null ? 0 : Math.round(Number(opts.levelAdjust));
     const level = levelBase===null ? null : Math.max(0, Math.min(8, levelBase + levelAdj));
+    // D43: THE CEILING IS OFF FOR FLOOR WORK ON PLAYED SCENARIOS, and the split is by what a
+    // slice CLAIMS rather than by pool name.
+    //   WEAKEST / REVISIT (here, and revPool + the ripening horizon) claim only "this is your
+    //   floor". Step 42 measured the justification that gated them -- J1, that a percentile
+    //   above your level overstates weakness -- and REFUTED it: over 7,135 sampled players the
+    //   above-level reading is +0.69 percentile points, i.e. slightly GENEROUS. A PB is scored
+    //   against its own scenario's 1/(n+1), which never reads the rung, so a hard PB and an easy
+    //   PB already count the same. Nothing was left for the ceiling to correct here.
+    //   ROUTES (routeCheck, level+1) claim something different -- that practising Y moves X --
+    //   and step 42's BAR 2 is exactly the evidence against that across rung distance: pooled
+    //   cross-playlist r falls +0.016 at the same rung to -0.048 eight rungs apart. So the
+    //   ceiling STAYS there, and now on a measured basis rather than an assumed one.
+    //   FILL-OUT / unplayed claim coverage, have no percentile at all, and are untested (J3).
+    // The cost is real and named: work far from your level has less measured SPILLOVER. D34
+    // rules that the objective is the floor, not spillover, so that cost is accepted, not
+    // hidden. `floorWindow: 'level'` restores the old gate for the diagnostics that compare.
+    // MEASURED on the owner's record over 40 seeded days (dev/window-effect.json, run with
+    // `dev/run-tests.ps1 -Window`): D43 serves 41.1% of weakest slots above level, where
+    // floorWindow:'level' still serves 0 -- the second number is what makes the first a
+    // measurement rather than a restatement. The day's TYPE did not move (transfer 40/40 both
+    // ways, collectReady 0 both ways), and the served set barely did: 55 distinct against 58,
+    // top-ten share 0.607 against 0.558, i.e. slightly MORE concentrated, which is the honest
+    // cost of letting a few very weak above-level scenarios into the head of the list.
+    const floorCeiling = opts.floorWindow === 'level';
+    const inFloorWindow = sc => !floorCeiling || level===null || sc.rung<=level;
     const curved = played.filter(hasPct);
     popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
     const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
-    // ---- WEAKEST: the loop, on the population metric. Rung <= level.
+    // ---- WEAKEST: the loop, on the population metric. Every rung (D43).
     const stuck = isStuck;
     // v0.3's stuck test OR-ed with v0.4's plateaued reading: both sink, neither routes.
     const sinks = sc => stuck(sc) || plateaued(sc);
@@ -3789,7 +3819,7 @@ const MiniEvxlEngine = (function(){
     // the empirical-Bayes weight and the metric spread. That is O(n log n) evaluations of a
     // function that only has n distinct answers. Computing each key ONCE turns ~5,000 key
     // evaluations into 541 on this profile.
-    const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
+    const weakPool = played.filter(sc=>!sc.maxed && inFloorWindow(sc))
       .map(sc=>({ sc, s: sinks(sc)?1:0, k: weakKey(sc), t: sc.toMax, p: sc.playlists }))
       .sort((a,b)=> a.s-b.s || a.k-b.k || a.t-b.t || b.p-a.p)
       .map(d=>d.sc);
@@ -3845,8 +3875,10 @@ const MiniEvxlEngine = (function(){
     // a percentile above your level overstates weakness. Step 42 MEASURED that and refuted it:
     // over 7,135 sampled players the calibrated reading above a player's own rung level sits
     // +0.69 percentile points ABOVE their at-or-below reading (95% CI upper 0.92), i.e. very
-    // slightly generous, never depressed. What survives is the co-variation reason (J2).
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, where strength still co-varies with the rest)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
+    // slightly generous, never depressed. D43 then took the window off this slice entirely, so
+    // there is no gate left to name and the clause is GONE -- the rung is still printed by
+    // label(sc) immediately before it.
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
     // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
     if(rotate){
       const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);
@@ -3855,7 +3887,7 @@ const MiniEvxlEngine = (function(){
       // ripe = a revisit candidate whose co-varying scenarios moved MORE than its own gap
       // to the PB (forecast odds > 0). That is the measured half of the forecast; the
       // logistic that turns it into a percentage is not consulted for this.
-      const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && sc.rung<=level);
+      const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && inFloorWindow(sc));
       const helpers0 = { historySince: opts.historySince, pairsIndex: opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null };
       // INTENT-5: the FORWARD horizon. It sits BELOW `helpers0` because it reads it, and a
       // `const` read above its declaration is in its temporal dead zone and THROWS -- the
@@ -3870,7 +3902,7 @@ const MiniEvxlEngine = (function(){
       // the page can say how many are waiting and which of them the forecast still holds back.
       if(opts.horizon){
         const want = Number(opts.horizon) > 0 ? Number(opts.horizon) : 40;
-        const eligible = played.filter(sc=>sc.att && sc.att.lastT>0 && !sc.maxed && sc.rung<=level);
+        const eligible = played.filter(sc=>sc.att && sc.att.lastT>0 && !sc.maxed && inFloorWindow(sc));
         const bar = opts.now - REVISIT_MIN_DAYS*DAY_MS;
         const byOldest = (a, b)=> a.att.lastT - b.att.lastT;
         const pending = eligible.filter(sc=>sc.att.lastT > bar).sort(byOldest).slice(0, want);
@@ -4129,7 +4161,7 @@ const MiniEvxlEngine = (function(){
     // since the visit) come first by first-try PB odds; the rest keep v0.3's
     // longest-unplayed order -- with no movement anywhere the two are the same list.
     const helpers = { historySince: opts.historySince, pairsIndex };
-    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
+    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && inFloorWindow(sc) && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
     // NEXT-4: walk the ordered candidates and, for each slot, decide arm. B withholds the

@@ -189,9 +189,19 @@
       // here from the LIVE composition and asserted in the probe; it is deliberately not fed to
       // same(), so it needs no re-bless.
       d42: (()=>{ const w = main.items.filter(it=>it.why==='weakest');
+        const lvl = main.level;
         return { weakest: w.length,
-                 statesWindow: w.every(it=>/at or under your level/.test(it.reason||'')),
-                 retiredJ1: w.some(it=>/high score is reachable/.test(it.reason||'')) }; })(),
+                 // D43: the window is OFF for this slice, so the reason must not claim one.
+                 claimsWindow: w.some(it=>/at or under your level/.test(it.reason||'')),
+                 retiredJ1: w.some(it=>/high score is reachable/.test(it.reason||'')),
+                 // the behaviour itself: an above-level scenario must be ELIGIBLE. The fixture
+                 // decides whether one is weak enough to be served; what is pinned here is that
+                 // nothing filters it out on rung alone.
+                 aboveLevelPool: fx.filter(sc=>sc.played && !sc.maxed && sc.rung>lvl).length,
+                 aboveLevelServed: w.filter(it=>{ const sc = fx.find(x=>x.name===it.name); return sc && sc.rung>lvl; }).length,
+                 // and the legacy gate must still be expressible, for the diagnostics
+                 legacyAboveLevelServed: (()=>{ const g = E.composeSession(fx, Object.assign({}, OPTS, { floorWindow: 'level' }), FILL);
+                   return g.items.filter(it=>it.why==='weakest').filter(it=>{ const sc = fx.find(x=>x.name===it.name); return sc && sc.rung>g.level; }).length; })() }; })(),
       features: features(E)
     };
   }
@@ -1889,7 +1899,12 @@
     const d42 = actual.d42 || {};
     if(!(d42.weakest > 0)) problems.push('D42: no weakest item to check the window justification on');
     if(d42.retiredJ1) problems.push('D42: the weakest reason still carries the REFUTED J1 claim ("a high score is reachable") -- step 42 measured the above-level reading at +0.69 percentile points, i.e. generous, not depressed');
-    if(!d42.statesWindow) problems.push('D42: the weakest reason must state the window it was drawn under ("at or under your level")');
+    if(d42.claimsWindow) problems.push('D43: the weakest reason claims a difficulty window that no longer gates this slice');
+    // D43's behaviour, pinned both ways: with the ceiling OFF an above-level scenario is
+    // eligible, and with floorWindow:"level" the legacy gate still excludes every one of them.
+    // The second half is what makes the first half a test rather than a restatement.
+    if(!(d42.aboveLevelPool > 0)) problems.push('D43: the fixture has no played above-level scenario, so the ceiling change is untested -- add one');
+    if(d42.legacyAboveLevelServed !== 0) problems.push('D43: floorWindow:"level" must reproduce the old gate (no above-level weakest item), got '+d42.legacyAboveLevelServed);
     ['weakest','route','fillout','revisit'].forEach(w=>{ if(!whys.includes(w)) problems.push('probe: no "'+w+'" item in the main run'); });
     if(m.items.filter(it=>it.why==='weakest').some(it=>it.name==='Cl Stuck Flicks')) problems.push('probe: the stuck scenario (lowest percentile, recent tries well under the PB) must sink out of the weakest five');
     const routes = m.items.filter(it=>it.why==='route');

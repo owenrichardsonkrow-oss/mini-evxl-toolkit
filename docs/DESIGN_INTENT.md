@@ -1060,3 +1060,45 @@ decisions and do not belong in this sequence.
   argument about the empirical-Bayes weight (D25), because a filter discards the reading instead
   of discounting it. Re-run trigger: the on-policy record reaching the gate calendar's threshold,
   or a crowd-composition-stratified BAR 2.
+
+- **D43** (2026-08-27) — **the difficulty CEILING is OFF for floor work.** The owner: *"I really
+  want for it to be possible for me to be suggested a hard scenario, high score, and then for it
+  to be possible for me to be served an easy scenario, and hitting a score in both would be
+  considered equally impressive in our case."* That is now the shipped behaviour, and D42 is why
+  it is defensible rather than a preference: **J1 — the claim that a percentile above your level
+  overstates weakness — was MEASURED and REFUTED** (over 7,135 sampled players the above-level
+  reading is **+0.69 percentile points**, 95% CI upper 0.92, i.e. slightly generous). And the
+  "equally impressive" half was already true and is now stated: a personal best is scored against
+  that scenario's own `1/(n+1)` exchangeability null, which never reads the rung.
+  **The split is by what a slice CLAIMS, not by pool name.** WEAKEST, REVISIT, `revPool` (which
+  feeds `collectReady`, so the day's TYPE) and the ripening horizon claim only *"this is your
+  floor"* — the ceiling is removed there. ROUTES keep it (`routeCheck`, level+1) because a route
+  claims that practising Y moves X, and **D42's BAR 2 is the evidence against that across rung
+  distance** (cross-playlist pooled r +0.016 at the same rung down to −0.048 eight rungs apart) —
+  so that gate is now MEASURED rather than assumed. FILL-OUT and the unplayed top-up keep it on
+  J3-coverage: an unplayed scenario has no percentile, the rung is the only difficulty signal
+  there, and nothing has tested it. The thin regime's fixed `rung <= 4` is out of scope.
+  **The cost is named, not hidden.** BAR 2 says work far from your level has less measured
+  SPILLOVER to the rest of your profile. D34 rules the objective is the FLOOR, not spillover, so
+  the trade is taken deliberately. Measured over 40 seeded days on the owner's record
+  (`dev/window-effect.json`, `dev/run-tests.ps1 -Window`): **41.1% of weakest slots now go above
+  level where the legacy gate served 0**; the day's type did not move (transfer 40/40 both ways,
+  collectReady 0 both ways); and the served set barely moved but got slightly MORE concentrated —
+  55 distinct against 58, top-ten share 0.607 against 0.558. Live on his profile the change
+  surfaces `Popcorn MV Hard` (rung 7, 11th percentile) — his single weakest scenario, which the
+  ceiling had been excluding — beside two more above-level rows.
+  **`SELECT_VERSION` 2 → 3**, because rows either side differ in which scenarios were ELIGIBLE at
+  all, and step 12's difficulty re-take (independent variable `rung − level`) is the first
+  analysis that would read across the boundary. **`coach4Readiness` gained the `svOk` filter it
+  had been missing**: it accepted an `sv` option and read nothing, so the stamp would not have
+  split the gate it exists to split; unpoolable rows are reported as `staleSv`, not dropped.
+  **AND THE FEEL CONTROLLER IS NOW INERT AS A SERVING CONTROL — measured, and INTENT-2 REOPENS.**
+  The step-42 pre-registration committed to settling by measurement a question two referees
+  disagreed on: at size 1, what share of servings still comes from a pool the window gates? **Over
+  200 draws: `weakest` 167, `revisit` 33, fill-out 0, route 0 — a share of ZERO.** So
+  `levelAdjust` no longer changes what is served on this profile. What survives is the "too hard"
+  THIRD EXIT, which closes the open item and is untouched. The rating copy now says exactly that
+  rather than asserting a control that does nothing. Giving the rating a live consumer again is
+  INTENT-2, reopened here and deliberately not invented. Note the payoff: serving above level
+  directly is what finally makes step 12's difficulty re-take possible ON-POLICY — the eligible
+  pool used to contain 0 hard scenarios, which is why that estimate had to be taken off-policy.
