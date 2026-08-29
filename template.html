@@ -10360,7 +10360,13 @@ const MiniEvxlEngine = (function(){
   // at the point the draw changed instead of pooling two different policies.
   //   1 = softmax over an invented temperature (release #2, the arm experiment's first days)
   //   2 = Thompson sampling from the measured spread (step 7)
-  const SELECT_VERSION = 2;
+  //   4 = step 45, the queue-readers repair. Rows either side differ in which PURPOSES were
+  //       SERVABLE at all: before it, a `route` draw composed no anchor and the top-up relabelled
+  //       the serving `weakest`, so no row under sv <= 3 can be pooled with one under sv 4 when
+  //       asking what a purpose was worth. Measured at 84 of 84 route draws collapsing
+  //       (dev/queue-readers.json). Same class as D43's 2 -> 3, which split on which SCENARIOS
+  //       were eligible; this splits on which PURPOSES were reachable.
+  const SELECT_VERSION = 4;
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
@@ -11424,7 +11430,12 @@ const MiniEvxlEngine = (function(){
     // pooling across epochs would put two skills under one dummy.
     const pvOk  = r => o.pv===null  || r.pv===null  || r.pv===o.pv;
     const epOk  = r => o.epoch===null || !r.block || !r.blockEpoch || r.blockEpoch===o.epoch;
-    const usable = all.filter(r=>pvOk(r) && epOk(r));
+    // `sv` stamps which SELECTION POLICY produced the row. It was accepted as an option and
+    // never read, so a bumped SELECT_VERSION would silently NOT have split this gate -- and
+    // D43's bump is the first one whose rows differ in which scenarios were eligible at all.
+    const svOk  = r => o.sv===null  || r.sv===null  || r.sv===o.sv;
+    const usable = all.filter(r=>pvOk(r) && epOk(r) && svOk(r));
+    const staleSv = all.length - all.filter(svOk).length;
     const blocks = Array.from(new Set(usable.map(r=>r.block).filter(Boolean)));
     // The coefficient count is a property of the MODEL, not of how much data has arrived. Size
     // it on the blocks the coach uses TODAY (`opts.blocksNow`), not on the blocks the resolved
@@ -11469,7 +11480,7 @@ const MiniEvxlEngine = (function(){
     }
     if(dropped > 0) blockers.push(dropped+' resolved item(s) are stamped under an older definition and cannot be pooled with the rest');
     return { terms, coefficients, epv: o.epv,
-      resolved: all.length, usable: usable.length, dropped,
+      resolved: all.length, usable: usable.length, dropped, staleSv,
       hits, misses, rarer, rarerIs: hits<=misses ? 'collected' : 'not collected',
       requiredRarer, shortfallRarer, ready: blockers.length===0,
       armA, armB, minPerArm: o.minPerArm, blocks: blocks.length, blocksModelled,
@@ -11794,6 +11805,11 @@ const MiniEvxlEngine = (function(){
   // error of that mean above zero. No invented threshold -- the same instinct as
   // overlapOf's "sort `with` by the lower edge of the interval", applied to a mean.
   const ROUTE_MIN_PAIRS = 10;    // fewer measured pairs into the block than this: not a claim
+  // How deep a route draw walks the ranked weak pool looking for an anchor it can route out of.
+  // DECLARED rather than incidental: the realised route share is monotone in this number, so
+  // leaving it implicit would make BAR 1's result a property of an unstated parameter
+  // (dev/STEP45-PREREG.md). 8 is `spread`'s own target under the transfer weights.
+  const ROUTE_ANCHOR_SCAN = 8;
   // index: buildOverlapIndex's adjacency. memberNames: the block's scenarios (a Set).
   // opts.exclude: names that cannot be candidates (already chosen, or in the block).
   // opts.minN: the shared-player floor per pair (the index's own, by default).
@@ -12080,10 +12096,35 @@ const MiniEvxlEngine = (function(){
     const levelBase = sessionLevel(played);
     const levelAdj = numOrNull(opts.levelAdjust)===null ? 0 : Math.round(Number(opts.levelAdjust));
     const level = levelBase===null ? null : Math.max(0, Math.min(8, levelBase + levelAdj));
+    // D43: THE CEILING IS OFF FOR FLOOR WORK ON PLAYED SCENARIOS, and the split is by what a
+    // slice CLAIMS rather than by pool name.
+    //   WEAKEST / REVISIT (here, and revPool + the ripening horizon) claim only "this is your
+    //   floor". Step 42 measured the justification that gated them -- J1, that a percentile
+    //   above your level overstates weakness -- and REFUTED it: over 7,135 sampled players the
+    //   above-level reading is +0.69 percentile points, i.e. slightly GENEROUS. A PB is scored
+    //   against its own scenario's 1/(n+1), which never reads the rung, so a hard PB and an easy
+    //   PB already count the same. Nothing was left for the ceiling to correct here.
+    //   ROUTES (routeCheck, level+1) claim something different -- that practising Y moves X --
+    //   and step 42's BAR 2 is exactly the evidence against that across rung distance: pooled
+    //   cross-playlist r falls +0.016 at the same rung to -0.048 eight rungs apart. So the
+    //   ceiling STAYS there, and now on a measured basis rather than an assumed one.
+    //   FILL-OUT / unplayed claim coverage, have no percentile at all, and are untested (J3).
+    // The cost is real and named: work far from your level has less measured SPILLOVER. D34
+    // rules that the objective is the floor, not spillover, so that cost is accepted, not
+    // hidden. `floorWindow: 'level'` restores the old gate for the diagnostics that compare.
+    // MEASURED on the owner's record over 40 seeded days (dev/window-effect.json, run with
+    // `dev/run-tests.ps1 -Window`): D43 serves 41.1% of weakest slots above level, where
+    // floorWindow:'level' still serves 0 -- the second number is what makes the first a
+    // measurement rather than a restatement. The day's TYPE did not move (transfer 40/40 both
+    // ways, collectReady 0 both ways), and the served set barely did: 55 distinct against 58,
+    // top-ten share 0.607 against 0.558, i.e. slightly MORE concentrated, which is the honest
+    // cost of letting a few very weak above-level scenarios into the head of the list.
+    const floorCeiling = opts.floorWindow === 'level';
+    const inFloorWindow = sc => !floorCeiling || level===null || sc.rung<=level;
     const curved = played.filter(hasPct);
     popLevel = curved.length ? medianOf(curved.map(sc=>sc.pct)) : null;
     const weakLabels = skillProfile(rated).filter(p=>p.n>=4);
-    // ---- WEAKEST: the loop, on the population metric. Rung <= level.
+    // ---- WEAKEST: the loop, on the population metric. Every rung (D43).
     const stuck = isStuck;
     // v0.3's stuck test OR-ed with v0.4's plateaued reading: both sink, neither routes.
     const sinks = sc => stuck(sc) || plateaued(sc);
@@ -12307,7 +12348,7 @@ const MiniEvxlEngine = (function(){
     // the empirical-Bayes weight and the metric spread. That is O(n log n) evaluations of a
     // function that only has n distinct answers. Computing each key ONCE turns ~5,000 key
     // evaluations into 541 on this profile.
-    const weakPool = played.filter(sc=>!sc.maxed && sc.rung<=level)
+    const weakPool = played.filter(sc=>!sc.maxed && inFloorWindow(sc))
       .map(sc=>({ sc, s: sinks(sc)?1:0, k: weakKey(sc), t: sc.toMax, p: sc.playlists }))
       .sort((a,b)=> a.s-b.s || a.k-b.k || a.t-b.t || b.p-a.p)
       .map(d=>d.sc);
@@ -12359,7 +12400,14 @@ const MiniEvxlEngine = (function(){
                       : 'this board is too thinly sampled to calibrate directly, so its shift is estimated from board size');
       return ' — ±'+(s*100).toFixed(1)+' points of measurement error on that standing ('+why+'), and the order is drawn from that interval rather than treating the number as exact';
     };
-    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+' (at or under your level, so a high score is reachable)'+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
+    // D42: this parenthetical used to read "so a high score is reachable" -- the J1 claim, that
+    // a percentile above your level overstates weakness. Step 42 MEASURED that and refuted it:
+    // over 7,135 sampled players the calibrated reading above a player's own rung level sits
+    // +0.69 percentile points ABOVE their at-or-below reading (95% CI upper 0.92), i.e. very
+    // slightly generous, never depressed. D43 then took the window off this slice entirely, so
+    // there is no gate left to name and the clause is GONE -- the rung is still printed by
+    // label(sc) immediately before it.
+    const weakReason = sc=>'Weakest — '+standing(sc)+(primary(sc)?' in '+primary(sc):'')+', '+label(sc)+(sc.playlists>1?'; moves '+sc.playlists+' playlists':'')+(stuck(sc)?' — note: several recent tries well under the PB':'')+respNote(sc)+shrinkNote(sc)+poolNote(sc)+spreadNote(sc)+gameNote(sc)+'.';
     // ---- the day's TYPE (A3), decided once the blocks have standings -----------------
     if(rotate){
       const ranked0 = blockStats.filter(b=>b.median!==null).sort((a,b)=> a.median-b.median);
@@ -12368,7 +12416,7 @@ const MiniEvxlEngine = (function(){
       // ripe = a revisit candidate whose co-varying scenarios moved MORE than its own gap
       // to the PB (forecast odds > 0). That is the measured half of the forecast; the
       // logistic that turns it into a percentage is not consulted for this.
-      const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && sc.rung<=level);
+      const revPool = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*DAY_MS && !sc.maxed && inFloorWindow(sc));
       const helpers0 = { historySince: opts.historySince, pairsIndex: opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null };
       // INTENT-5: the FORWARD horizon. It sits BELOW `helpers0` because it reads it, and a
       // `const` read above its declaration is in its temporal dead zone and THROWS -- the
@@ -12383,7 +12431,7 @@ const MiniEvxlEngine = (function(){
       // the page can say how many are waiting and which of them the forecast still holds back.
       if(opts.horizon){
         const want = Number(opts.horizon) > 0 ? Number(opts.horizon) : 40;
-        const eligible = played.filter(sc=>sc.att && sc.att.lastT>0 && !sc.maxed && sc.rung<=level);
+        const eligible = played.filter(sc=>sc.att && sc.att.lastT>0 && !sc.maxed && inFloorWindow(sc));
         const bar = opts.now - REVISIT_MIN_DAYS*DAY_MS;
         const byOldest = (a, b)=> a.att.lastT - b.att.lastT;
         const pending = eligible.filter(sc=>sc.att.lastT > bar).sort(byOldest).slice(0, want);
@@ -12555,7 +12603,24 @@ const MiniEvxlEngine = (function(){
     // Both must pass routeCheck against the weak item: rated, at or under level+1, not
     // maxed, not a sink, and either unplayed or standing higher -- volume there is
     // productive where volume on the weak one may not be.
-    const weakItems = items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>byName.get(it.name)).filter(Boolean);
+    // ---- STEP 45 FIX A: the anchor is the ranked weak POOL, not the served items ------
+    // This was `items.filter(...)` alone, and the queue composes ONE item: on a `route` draw
+    // template.weakest is 0, no weakest item is composed, the list is empty, both loops below
+    // iterate nothing, routeList stays empty and the top-up at the end relabels the serving
+    // `weakest`. So the route purpose has never been servable by the queue. Measured before
+    // the fix (dev/queue-readers.json): 84 of 84 route draws collapsed that way, and served
+    // weakest equalled drawn-weakest plus drawn-route EXACTLY, in every arm.
+    //
+    // `spread` is the right anchor because it is built from the TYPE's weights
+    // (spreadTarget, above) rather than from the drawn template, so it is populated on a
+    // route draw when `items` is not. The owner's ruling (2026-08-29): the coach picks the
+    // weak scenario behind the scenes and serves only the route, naming the weakness it
+    // feeds -- so the anchor is deliberately internal and need not be a served item.
+    //
+    // `routeAnchors: 'served'` restores the pre-fix behaviour, which is what the step-45
+    // 2x2 needs to attribute A's effect separately from B's.
+    const servedWeak = items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>byName.get(it.name)).filter(Boolean);
+    const weakItems = opts.routeAnchors === 'served' ? servedWeak : spread.slice(0, ROUTE_ANCHOR_SCAN);
     const pairsIndex = opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null;
     const plOf = sc => new Set(sc && sc.plKeys ? sc.plKeys : []);
     const sharesPlaylist = (a, b) => { const pa = plOf(a); return (b && b.plKeys || []).some(k=>pa.has(k)); };
@@ -12642,7 +12707,7 @@ const MiniEvxlEngine = (function(){
     // since the visit) come first by first-try PB odds; the rest keep v0.3's
     // longest-unplayed order -- with no movement anywhere the two are the same list.
     const helpers = { historySince: opts.historySince, pairsIndex };
-    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && sc.rung<=level && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
+    const rev = played.filter(sc=>sc.att && sc.att.lastT>0 && (opts.now - sc.att.lastT) > 14*86400000 && !sc.maxed && inFloorWindow(sc) && !chosen.has(sc.name)).sort((a,b)=> a.att.lastT - b.att.lastT);
     rev.forEach(sc=>{ sc._forecast = revisitForecast(sc, byName, helpers); });
     const revOrdered = rev.filter(sc=>sc._forecast).sort((a,b)=> b._forecast.p - a._forecast.p || a.att.lastT - b.att.lastT).concat(rev.filter(sc=>!sc._forecast));
     // NEXT-4: walk the ordered candidates and, for each slot, decide arm. B withholds the
@@ -13729,7 +13794,22 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       if(rec && Array.isArray(rec.last)){
         const before = rec.last.length;
         rec.last = rec.last.filter(r=>!quarantinedRun(name, r[0], r[1]));
-        purged += before - rec.last.length;
+        const cut = before - rec.last.length;
+        purged += cut;
+        // THE COUNT MUST COME DOWN WITH THE RUNS (step 46). This filtered `last` and left
+        // `rec.n` alone, and attemptSummary returns max(rec.n, last.length) -- so the max
+        // preserved a lifetime count that still included another player's runs. It gates the
+        // isStuck FALLBACK (att.n >= 4 with nearness < 0.85), the responsiveness density, and
+        // collectBaseline(n) = 1/(n+1), which is the null the coach's own KPI is scored
+        // against: an inflated n makes the baseline too small and the measured excess too
+        // large, flattering the coach. D19 says both of its caveats push that baseline UP;
+        // this channel pushed it DOWN, which is why it is worth a comment and not just a line.
+        //
+        // NOT an equality assertion. `n` is a lifetime count and `last` a 20-run rolling
+        // buffer, so they agree only while n <= 20 -- asserting equality (the audit's own
+        // suggestion) would undercount every well-played scenario. Subtract what was purged
+        // and floor at the window, which is the invariant that actually holds.
+        if(cut) rec.n = Math.max(rec.last.length, Math.max(0, (Number(rec.n)||0) - cut));
         if(!rec.last.length) ATTEMPTS.delete(name);
       }
       const vals = REPAIRS.vals.get(name);
@@ -15119,6 +15199,20 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     }
     const username = getKovaaksUsername(forcePrompt, presetUsername);
     if(!username){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
+    // D44: a deep sync under someone ELSE'S username is how another player's entire record --
+    // 563 runs across 128 scenarios, PBs included -- ended up in this store (steps 37/38/44:
+    // one player, attributed by exact run match against their own API record). The by-name rows
+    // carry no identity, so the QUERY is the attribution -- which makes a switched username
+    // over a non-empty store the one gate that can stop the whole class. Switching is still
+    // one click (the template is passed between people by design); it is just no longer silent.
+    const priorUser = localStorage.getItem(KOVAAKS_USERNAME_KEY);
+    if(priorUser && priorUser !== username && SCORES.size > 0){
+      // one line, no escapes -- the repo's rule after twelve backslash-trap sightings is not
+      // "escape it", it is DO NOT NEED AN ESCAPE.
+      const ok = window.confirm('This page has been syncing as "'+priorUser+'" and holds '+SCORES.size+
+        ' scores. Sync as "'+username+'" instead? Their runs would merge into this record and could not be told apart later.  OK = sync as '+username+'.  Cancel = keep '+priorUser+'.');
+      if(!ok){ const e = new Error('Cancelled'); e.name = 'AbortError'; throw e; }
+    }
     syncAbort = false;
 
     // Phase 1 — total-play. Cheap (3 paginated requests) but incomplete.
@@ -16442,14 +16536,44 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // would span a different stretch of calendar on a light day than on a heavy one -- and the
   // complaint this fixes is about a single sitting.
   const RECENT_DAMP_DAYS = 3;
-  function recentlyServed(days){
+  // THE CLOCK IS THE COMPOSITION'S `now`, NOT THE WALL CLOCK (step 45 prerequisite).
+  // `sessionOpts` threads its `now` into the seed, `now`, the confidence and `historySince`;
+  // this window was the one time-dependent input still pinned to `Date.now()`. So under a
+  // day-varying probe every other input advanced and the damp did not -- a harness measuring
+  // the rotation would have been silently measuring nothing, which is the failure class this
+  // project has recorded five times. Production is unchanged: every non-probe caller reaches
+  // here with `now = Date.now()`.
+  function recentlyServed(days, nowMs){
     const out = new Set();
-    const cut = Date.now() - (Number(days) || RECENT_DAMP_DAYS) * 86400000;
+    const base = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    const cut = base - (Number(days) || RECENT_DAMP_DAYS) * 86400000;
     servedLedger().forEach(r=>{ if(r && r.name && Number(r.servedAt) >= cut) out.add(String(r.name)); });
     return out;
   }
-  function recentSessionTypes(sessions){
-    return readSessionLog().slice(-sessions).reverse().map(e=>e && e.type).filter(Boolean);
+  // STEP 45 FIX B. This read `readSessionLog()`, whose only writer since step 8 is the import
+  // merge -- so `recentTypes` was empty for every queue user, chooseSessionType's anti-repeat
+  // (engine.js, D18) could never fire, and the type froze on whatever the triggers said. On the
+  // owner's record that is `transfer`, which is the type carrying route weight 4 of 10, so the
+  // two dead readers multiplied: the coach sat permanently in the one type whose defining slice
+  // could not be served.
+  //
+  // THE UNIT IS DAYS, NOT SERVINGS, and that distinction decides whether this works. The old log
+  // held ONE ROW PER DAY; the served ledger holds one row per SERVING. Reading the last n ledger
+  // rows would compare consecutive servings, and every serving of one day carries that day's
+  // type -- so `recent[0]===recent[1]` would be satisfied on nearly every read and D18's "never
+  // the same type three days running" would degenerate into "flip every time", producing perfect
+  // alternation that reads as success on any day-share bar. The day's type is its FIRST
+  // serving's, which is the composition the pre-queue log recorded.
+  function recentSessionTypes(days){
+    const byDay = new Map();
+    servedLedger().forEach(r=>{
+      if(!r || !r.type) return;
+      const d = Number(r.day); if(!Number.isFinite(d)) return;
+      const prev = byDay.get(d);
+      if(!prev || (Number(r.idx)||0) < (Number(prev.idx)||0)) byDay.set(d, r);
+    });
+    return Array.from(byDay.keys()).sort((a,b)=>b-a).slice(0, days)
+      .map(d=>byDay.get(d).type).filter(Boolean);
   }
   // `prebuilt` lets a render calibrate the row set once and use it for the composition,
   // the weakest-labels strip and the profile confidence alike -- the pass is a full sweep
@@ -16489,7 +16613,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       // step 12 (INTENT-1 + INTENT-2): the difficulty window is a target the feel rating
       // moves, not a fixed reading of what you play. A fold over the ratings in the ledger.
       levelAdjust: feelNow().adj,
-      recentItems: recentlyServed(3),
+      recentItems: recentlyServed(3, now),
       recentTypes: recentSessionTypes(3) }, over||{});
   }
   function sessionCompose(list, now, seedBump, over){ return composeSession(list, sessionOpts(list, now, seedBump, over), playlistFill()); }
@@ -16536,9 +16660,55 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const day = dayNumber(now===undefined ? Date.now() : now);
     return servedLedger().filter(r=>Number(r.day)===day).length;
   }
-  function serveNext(excludeName){
+  // ONE definition of what a served-ledger ROW is (PERF-5's rule at small scale). It was built
+  // inline inside `serveNext`, which pins its own `now`, so nothing could compose a row for a
+  // SIMULATED day -- and step 45's fix-B control has to write through the product's own writer
+  // or it tests a harness copy instead of the wiring it exists to test. Pure: it reads the
+  // composition and the clock it is handed, and writes nothing.
+  function servedRowFor(r, pbAt, now, idx){
+    const it = r.item, f = it.forecast;
+    const r3 = x => (x===null || x===undefined || !Number.isFinite(x)) ? undefined : Math.round(x*1000)/1000;
+    return { day: dayNumber(now), seedBump: 0, idx: idx, servedAt: now,
+      name: it.name, why: it.why, pbAt: pbAt,
+      // STEP 45 FIX B: the serving's TYPE. The row carried `why` -- the item's purpose --
+      // and never the day's type, so when step 8 removed the session log's writer there was
+      // no live source left for D18's anti-repeat and the rotation went dead. This is that
+      // source. `r.bias` is what queueNext already returns for composeSession's `type`.
+      type: r.bias || undefined,
+      n: Number.isFinite(it.attN) ? it.attN : undefined,
+      block: it.block || undefined, blockEpoch: it.block ? (blockEpoch() || undefined) : undefined,
+      rung: Number.isFinite(it.rung) ? it.rung : undefined,
+      // step 12: the difficulty WINDOW this item was drawn under, split into the part that
+      // comes from what he plays and the part the ratings moved. Without both, a later
+      // re-estimate cannot tell a drifting `level` from a working controller -- and the
+      // controller changes the very population `level` is derived from.
+      levelBase: Number.isFinite(Number(r.levelBase)) ? Number(r.levelBase) : undefined,
+      levelAdj: Number(r.levelAdjust) || undefined,
+      arm: it.arm || undefined, pv: P_VERSION, sv: SELECT_VERSION,
+      sd: Number.isFinite(it.mSpread) ? Math.round(it.mSpread*1000)/1000 : undefined,
+      p: f && Number.isFinite(f.p) ? Math.round(f.p*1000)/1000 : undefined,
+      gain: f ? r3(f.gain) : undefined, margin: f ? r3(f.margin) : undefined, odds: f ? r3(f.odds) : undefined };
+  }
+  // STEP 45 FIX C. `sealServed` pins the first run after a serving into its ledger row, which
+  // is what makes a resolution survive eviction from the 20-run rolling buffer. Its only call
+  // site was inside `renderSessionHistory`, so an outcome was durable only if the user happened
+  // to open `#/session?view=history`: play twenty further runs without visiting that page and
+  // the resolving run is evicted, a first-try collect reads as a miss, and eventually the row
+  // stops being resolved at all. That is the record the KPI and the randomised arm are computed
+  // from. Arrival -- a new serving -- is the moment a run has landed, so the seal belongs here.
+  //
+  // ORDERING IS LOAD-BEARING and the guard is in sealServed rather than here: it writes only for
+  // an exposure already resolved FROM THE RUN RECORD (`src === 'runs'`) with finite firstT/firstS,
+  // and it never re-seals. So sealing early is a no-op and sealing late is what loses the run.
+  function sealNow(nowMs){
+    const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    const H = sessionHistoryStats(readSessionLog(), name => SCORES.get(name)||0, now, null, runsForScoring, servedLedger());
+    return sealServed(H.exposures);
+  }
+  function serveNext(excludeName, nowMs){
     const list = calibrateRows(sessionScenarios());
-    const now = Date.now();
+    const now = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    sealNow(now);
     // THE SEED MUST ADVANCE PER SERVING, and it did not until 2026-08-26. `seed` is
     // `dayNumber(now)*7919 + seedBump`, and this passed seedBump 0 every time -- so every serve
     // in a day replayed the IDENTICAL random sequence: the same purpose draw, the same block
@@ -16568,23 +16738,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // the same way -- day, a per-day index, the name -- so every aggregate built on exposures
     // (the KPI, the weekly shape, the arm) keeps reading one record.
     reconcileServed();
-    const it = r.item, f = it.forecast;
-    const r3 = x => (x===null || x===undefined || !Number.isFinite(x)) ? undefined : Math.round(x*1000)/1000;
-    appendServed([{ day: dayNumber(now), seedBump: 0, idx: idx, servedAt: now,
-      name: it.name, why: it.why, pbAt: q.pbAt,
-      n: Number.isFinite(it.attN) ? it.attN : undefined,
-      block: it.block || undefined, blockEpoch: it.block ? (blockEpoch() || undefined) : undefined,
-      rung: Number.isFinite(it.rung) ? it.rung : undefined,
-      // step 12: the difficulty WINDOW this item was drawn under, split into the part that
-      // comes from what he plays and the part the ratings moved. Without both, a later
-      // re-estimate cannot tell a drifting `level` from a working controller -- and the
-      // controller changes the very population `level` is derived from.
-      levelBase: Number.isFinite(Number(r.levelBase)) ? Number(r.levelBase) : undefined,
-      levelAdj: Number(r.levelAdjust) || undefined,
-      arm: it.arm || undefined, pv: P_VERSION, sv: SELECT_VERSION,
-      sd: Number.isFinite(it.mSpread) ? Math.round(it.mSpread*1000)/1000 : undefined,
-      p: f && Number.isFinite(f.p) ? Math.round(f.p*1000)/1000 : undefined,
-      gain: f ? r3(f.gain) : undefined, margin: f ? r3(f.margin) : undefined, odds: f ? r3(f.odds) : undefined }]);
+    appendServed([servedRowFor(r, q.pbAt, now, idx)]);
     return q;
   }
   // Close the open item and hand over the next one. The OUTCOME is not written anywhere: it is
@@ -16610,7 +16764,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       q = serveNext(null);
     }
     if(!q){
-      wrap.innerHTML = '<div class="eyebrow"><span class="dot"></span> queue</div><h1>Queue</h1><p class="sub">Nothing to serve &mdash; every scenario at or under your level is maxed or excluded.</p>';
+      wrap.innerHTML = '<div class="eyebrow"><span class="dot"></span> queue</div><h1>Queue</h1><p class="sub">Nothing to serve &mdash; every played scenario is maxed or excluded.</p>';
       app.innerHTML=''; app.appendChild(wrap); return;
     }
     const st = queueState(q) || { k: 0, boutN: 0, historyN: 0, pExhaust: null, martingale: 1, n: 1 };
@@ -16677,22 +16831,34 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // read the un-stated version as a contradiction, 2026-08-26). Fill-outs and routes run at
     // level+1; only the weakest and revisit pools sit at the window. (The quickwin branch was
     // retired with the purpose itself, D39.)
-    const winExempt = ((q && (q.purpose === 'fillout' || q.purpose === 'route')) ? ' &mdash; this purpose may run one rung above it' : '');
-    const windowTxt = lvl===null ? '' : 'Window: at or under <b>'+esc(DIFF_LABELS[lvl]||String(lvl))+'</b> ('+esc(adjTxt)+')'+winExempt+streakTxt;
+    // D43: the window no longer gates the FLOOR pools, so the line says what it does gate.
+    // The exemption inverted -- it used to name fill-out and routes as the exceptions; they are
+    // now the only purposes the window touches, and weakest/revisit run at every rung.
+    const winGates = (q && (q.purpose === 'fillout' || q.purpose === 'route'));
+    const windowTxt = lvl===null ? ''
+      : (winGates
+          ? 'Window: this purpose runs at or under <b>'+esc(DIFF_LABELS[Math.min(8, lvl+1)]||String(lvl+1))+'</b> ('+esc(adjTxt)+', one rung above your level)'+streakTxt
+          : 'Any difficulty &mdash; your level reads <b>'+esc(DIFF_LABELS[lvl]||String(lvl))+'</b>'+(fa.adj===0 ? '' : ' ('+esc(adjTxt)+')')+streakTxt);
+    // D43, measured: with the ceiling off the floor pools, `levelAdjust` no longer steers what
+    // is SERVED. Over 200 size-1 draws on a real record every serving was weakest or revisit --
+    // zero fill-out, zero route -- and those two are the only purposes the window still gates.
+    // So this copy says what the rating actually does now rather than asserting a dead control.
+    // Giving the rating a live consumer again is INTENT-2, reopened by D43 and not invented here.
     const feelTip = {
-      easy: 'Three of these in a row move the window up a rung.',
-      good: 'The window is where it should be. This breaks a run of the other two.',
-      hard: 'Closes this item now, and three in a row move the window down a rung.' };
+      easy: 'Moves your level READING up a rung after three in a row. Since D43 that reading no longer decides what you are served -- the weakest and revisit slices admit every rung -- so it now only affects fill-out and route candidates.',
+      good: 'Breaks a run of the other two, so a streak has to be consecutive to count.',
+      hard: 'Closes this item now -- that part is live and unchanged. Three in a row also move your level reading down a rung, which since D43 only affects fill-out and route candidates.' };
     const feelRow = '<div class="q-feel" id="q-feel">'
       + '<span class="q-feel-label">How did that feel?</span>'
       + FEEL_LIST.map(f=>'<button class="btn btn-feel'+(q.feel===f?' on':'')+'" data-feel="'+f+'" title="'+esc(feelTip[f])+'">'+esc(FEEL_TXT[f])+'</button>').join('')
-      + (windowTxt ? '<span class="q-window" title="'+esc('The weakest and revisit pools admit scenarios at or under this rung; fill-out and routes admit one above it. It starts at the median rung of what you have played and the ratings move it, at most '+FEEL_ADJ_MAX+' rungs either way.')+'">'+windowTxt+'</span>' : '')
+      + (windowTxt ? '<span class="q-window" title="'+esc('D43: the weakest and revisit slices admit EVERY rung -- a hard scenario and an easy one you are equally weak at are equally servable, and a personal best on either counts the same, because it is scored against that scenario own 1/(n+1) and never against its rung. Step 42 measured the claim that used to gate them (that a percentile above your level overstates weakness) and refuted it: across 7,135 sampled players the above-level reading is +0.69 percentile points, if anything slightly generous. What the window still gates is fill-out and routes, at one rung above your level: a route claims that practising one scenario moves ANOTHER, and co-variation does fade with rung distance -- pooled r runs +0.016 at the same rung down to -0.048 eight rungs apart. Your level starts at the median rung of what you have played and the ratings move it, at most '+FEEL_ADJ_MAX+' rungs either way.')+'">'+windowTxt+'</span>' : '')
       + '</div>';
     const blocksStrip = renderBlocksStrip(q.blocks);
     wrap.innerHTML = '<div class="eyebrow"><span class="dot"></span> queue</div>'
       + '<h1>Queue</h1>'
       + '<p class="sub">One scenario at a time. Set a high score or stagnate and the next arrives; leave whenever &mdash; it will still be here. '
       + '<b>'+served+'</b> served today. <a href="#/session?view=history">history &rarr;</a></p>'
+      + queueIntro()
       + blocksStrip
       + closedTxt
       + '<div class="q-card">'
@@ -16719,6 +16885,44 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     wrap.querySelectorAll('.btn-feel').forEach(b=>b.addEventListener('click', ()=>{
       if(writeFeel(q.key, b.getAttribute('data-feel'))) renderSession();
     }));
+    const introOk = wrap.querySelector('#queue-intro-ok');
+    if(introOk) introOk.addEventListener('click', ()=>{
+      try{ localStorage.setItem(QUEUE_INTRO_KEY, String(Date.now())); }catch(e){}
+      renderSession();
+    });
+  }
+  // ---- the one-time intro, and the arm's disclosure (2026-08-29, the owner's ruling) -----
+  // D33 ratified that the randomised arm stays ON in the public template, and the open list
+  // carried "ships ON undisclosed" ever since. Nothing rendered said so. That is defensible
+  // for an experiment whose blind is per-ITEM, and not defensible for a person who never
+  // agreed to be in one at all -- and the one real template user has never opened the coach,
+  // so an intro is worth having on its own terms.
+  //
+  // THE BLIND IS UNTOUCHED. This says a share of revisits serve the runner-up; it never says
+  // WHICH item, because that is the thing that would change how hard you try and make the
+  // comparison measure belief instead of ranking. Knowing the experiment exists does not.
+  // Template only: the owner knows, and telling him on his own page is noise.
+  const QUEUE_INTRO_KEY = storeKey('queue-intro');
+  function queueIntroSeen(){ try{ return !!localStorage.getItem(QUEUE_INTRO_KEY); }catch(e){ return true; } }
+  function queueIntro(){
+    if(!IS_TOOLKIT_TEMPLATE || queueIntroSeen()) return '';
+    return '<div class="template-banner queue-intro" id="queue-intro">'
+      + '<h3>How this queue works</h3>'
+      + '<p>It serves <b>one scenario at a time</b>, drawn from wherever you stand weakest across '
+      + 'the skill groups the population data measures. Play it until you beat your best on it, or '
+      + 'until your own run history says this sitting is not going to produce one &mdash; then the '
+      + 'next arrives. Leave whenever you like; the open item is still here when you come back.</p>'
+      + '<p><b>It also runs a small experiment on itself, and you are in it.</b> On about a quarter '
+      + 'of <i>revisit</i> slots it holds back its top pick and serves you its second choice '
+      + 'instead, without saying which. That is the only way it can find out whether its ordering '
+      + 'is worth anything, rather than only whether you improved &mdash; and it has to stay hidden '
+      + 'per item, because knowing you had been handed the runner-up would change how hard you '
+      + 'tried. Items that have already resolved reveal which arm they were in, on the '
+      + '<a href="#/session?view=history">history page</a>. You can switch it off in Settings.</p>'
+      + '<p class="sub">Nothing here is sent anywhere except your KovaaK’s username, to fetch '
+      + 'your own scores.</p>'
+      + '<button class="btn" id="queue-intro-ok">Got it</button>'
+      + '</div>';
   }
   // The blocks strip, unchanged from v0.5 except that it takes the standings the queue's own
   // evaluation produced rather than a stored session's.
@@ -16868,7 +17072,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // The model that replaces the arm's normal approximation cannot be fitted for months. A
     // gate you can SEE is a gate; a gate you have to remember is a hope -- so what it needs
     // and what the record is short of are computed here and printed, not left in a document.
-    const RD = coach4Readiness(H.exposures, { pv: P_VERSION, epoch: blockEpoch(), nowMs: now,
+    // `sv` was accepted by coach4Readiness and never passed, so the svOk filter D43 added --
+    // to stop rows from two different SELECTION POLICIES being pooled in one fit -- has been
+    // inert since the day it was written. D43's own bump was the first whose rows differ in
+    // which scenarios were eligible at all, and step 45's is the first whose rows differ in
+    // which PURPOSES were servable. Passing it is what makes the stamp mean something.
+    const RD = coach4Readiness(H.exposures, { pv: P_VERSION, sv: SELECT_VERSION, epoch: blockEpoch(), nowMs: now,
       // size the fit on the blocks the coach uses NOW, so the target does not grow as the record fills
       blocksNow: (()=>{ const B = overlapBlocks(); return (B && Array.isArray(B.list)) ? B.list.length : 0; })() });
     const readyCard = '<div class="sess-score sess-ready'+(RD.ready ? ' is-ready' : '')+'">'
@@ -16915,7 +17124,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const ripeCard = (HZ && (HZ.ripening.length || HZ.ripeNow)) ? '<div class="sess-score sess-ripe">'
       + '<div class="sess-score-head">What is ripening</div>'
       + '<div class="sess-score-nums mono">'
-        + '<span title="'+esc('Played, rated at or under your level, not maxed -- the set a revisit can come from at all.')+'">ELIGIBLE '+HZ.eligible+'</span>'
+        + '<span title="'+esc('Played, rated, not maxed -- the set a revisit can come from at all. Every rung since D43.')+'">ELIGIBLE '+HZ.eligible+'</span>'
         + '<span title="'+esc('Past the '+REVISIT_MIN_DAYS+'-day bar already. The queue draws from these; it does not work down a list.')+'">RIPE NOW '+HZ.ripeNow+'</span>'
       + '</div>'
       + (HZ.ripening.length
@@ -18257,6 +18466,11 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     feelAdjust, feelNow, feelsInOrder, writeFeel, FEEL_RUN, FEEL_ADJ_MAX, attemptSources, coach4Readiness,
     attemptRuns, attemptsFor, attemptNames, personalTransfer, scenarioDuration, rankCorrelation, topKOverlap, orderingResolution, standardisePct, expectedBestOfJ, personalReturnEvents, revisitHorizon, provenanceOf, TRANSFER_PROVENANCE, playlistSharing, overlapDefaults, playlistKeysOf, overlapOf, groupMatrix, independentGroups, overlapLabelsOf, labelKeyLayer,
     readQueue, queueState, serveNext, advanceQueue, servedToday,
+    // step 45 prerequisite: the served-ledger WRITERS. A control for fix B has to write a
+    // simulated day through the product's own writer and row builder -- a harness copy would
+    // test the copy, not the wiring. `sessionOpts` rides along so a probe can assert which
+    // clock reached the composition.
+    appendServed, servedLedger, servedRowFor, sessionOpts, recentSessionTypes, sealNow,
     importScoresText, recordScores, recordAttempts });
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
