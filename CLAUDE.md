@@ -667,3 +667,35 @@ half-works silently. `location.pathname` updates but content never re-renders,
 because playlist→playlist is the same route with different params. That produced
 entirely wrong data once, caught only by checking `titleMatched`. A single
 profile→playlist hop *does* work, which is why it passes a smoke test.
+
+## CJK subcategory rulings (2026-08-29, release #15)
+
+`docs/taxonomy-vocab-ratified.json` gained **14 subcategory entries** for the
+Chinese benchmark, taking subcategories 73 -> 87. The 2026-08-18 pass ruled the
+Chinese CATEGORIES (R16 and four `zh:` entries) and never the subcategories —
+and an unrecognised subcategory is assumed to be a skill, because `noSkillLabel`
+(engine.js:3237) does its own raw lookup and returns false for a label it does
+not know, while `facetEntry` twenty lines away defaults an unknown subcategory to
+`nofacet`. Two readings of one vocabulary, and the block layer takes the lenient
+one.
+
+The consequence, on real data: the tracker's 2026-08-29 catalog refresh pushed a
+label meaning **"ultimate goal"** — a difficulty word — over the map size floor,
+where it became a coach skill block on 2 rated scenarios, collapsed its own
+`tau^2` to the floor, and took 18 of 40 COVERAGE slots. The tracker's app smoke
+test refused the release. Blocks went 8 -> 7 once the labels were ruled.
+
+**Every new entry states its translation and a confidence in its `n` note**, so
+any single ruling is cheap to overturn. Three are LOW confidence, and the two
+"confirmation" labels take `a: nofacet` — they deliberately claim NOTHING rather
+than guess a facet. The two "ultimate" labels take `a: evict`, the marker
+`easy`/`hard`/`advanced` already carry, because the difficulty attribute owns
+level words.
+
+**The `noSkillLabel` / `facetEntry` inconsistency is deliberately NOT fixed** —
+the owner chose to rule the labels rather than adopt the structural rule, so it
+is recorded rather than changed. The next unratified subcategory to cross the
+size floor will behave the same way.
+
+Regenerate with the tracker's `dev\gen-facet-vocab.ps1` after any edit here
+(`-Check` verifies), then build, re-bless the facets snapshot, commit both repos.
