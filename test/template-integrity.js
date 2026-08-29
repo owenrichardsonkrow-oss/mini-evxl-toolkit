@@ -221,7 +221,7 @@ check(html.includes('.replace(/"/g,\'&quot;\')'), "esc() no longer escapes '\"'"
   if (m) {
     let rep = null; try { rep = JSON.parse(m[1]); } catch (e) {}
     check(rep !== null && Object.keys(rep.quarantine || {}).length === 0,
-      'the template must ship an EMPTY repair table -- it names run history that is not the user's');
+      "the template must ship an EMPTY repair table -- it names run history that is not the user's");
   }
 }
 check(!/richardsonkrow|mayogobbler/i.test(html), 'personal identity string in template');
