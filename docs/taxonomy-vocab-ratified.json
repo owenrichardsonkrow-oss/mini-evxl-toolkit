@@ -880,6 +880,77 @@
     "multiform": {
       "m": "clicking",
       "n": "R21: clicking, staged format"
+    },
+    "终极目标": {
+      "a": "evict",
+      "n": "CJK 2026-08-29: ultimate goal -- a difficulty word; the difficulty attribute owns it. This label became a coach BLOCK on 2026-08-29 and took 18 of 40 coverage slots. HIGH confidence."
+    },
+    "终极": {
+      "a": "evict",
+      "n": "CJK 2026-08-29: ultimate -- difficulty word. HIGH confidence."
+    },
+    "速度": {
+      "mod": [
+        "speed"
+      ],
+      "n": "CJK 2026-08-29: speed. HIGH confidence."
+    },
+    "精准度": {
+      "mod": [
+        "precise"
+      ],
+      "n": "CJK 2026-08-29: precision. HIGH confidence."
+    },
+    "精准": {
+      "mod": [
+        "precise"
+      ],
+      "n": "CJK 2026-08-29: precise. HIGH confidence."
+    },
+    "微调": {
+      "mod": [
+        "micro"
+      ],
+      "n": "CJK 2026-08-29: micro-adjustment. HIGH confidence."
+    },
+    "平滑": {
+      "mod": [
+        "smooth"
+      ],
+      "n": "CJK 2026-08-29: smooth. HIGH confidence."
+    },
+    "变向": {
+      "mod": [
+        "evasive"
+      ],
+      "n": "CJK 2026-08-29: change of direction -- evasive. LOW confidence."
+    },
+    "确认": {
+      "a": "nofacet",
+      "n": "CJK 2026-08-29: confirmation -- reads as a feel descriptor rather than a skill. LOW confidence, so it deliberately claims NOTHING rather than guess a facet."
+    },
+    "确认感": {
+      "a": "nofacet",
+      "n": "CJK 2026-08-29: sense of confirmation -- feel descriptor. LOW confidence, claims nothing."
+    },
+    "跟踪": {
+      "m": "tracking",
+      "n": "CJK 2026-08-29: tracking, literal (also a category). HIGH confidence."
+    },
+    "control track dojo 道場": {
+      "m": "tracking",
+      "mod": [
+        "control"
+      ],
+      "n": "CJK 2026-08-29: control tracking; dojo is a curator section marker. HIGH confidence."
+    },
+    "pasu track dojo 道場": {
+      "m": "tracking",
+      "n": "CJK 2026-08-29: Pasu is a tracking scenario family. MEDIUM confidence."
+    },
+    "ground track dojo 道場": {
+      "m": "tracking",
+      "n": "CJK 2026-08-29: ground tracking. HIGH confidence."
     }
   },
   "oneOffSubcategoryDefault": "nofacet",

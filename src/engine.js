@@ -4986,6 +4986,7 @@ const MiniEvxlEngine = (function(){
     "click": {"m":"clicking"},
     "clicking": {"m":"clicking"},
     "control": {"mod":["control"]},
+    "control track dojo 道場": {"m":"tracking","mod":["control"]},
     "ctrl": {"mod":["control"]},
     "devts": {"a":"nofacet"},
     "dodge": {"mod":["strafe"]},
@@ -4997,6 +4998,7 @@ const MiniEvxlEngine = (function(){
     "flick": {"m":"clicking","mod":["flick"]},
     "fluidity": {"mod":["smooth"]},
     "ground": {"f":["env","ground"]},
+    "ground track dojo 道場": {"m":"tracking"},
     "horizontal": {"f":["axis","horizontal"]},
     "hybrid": {"mod":["hybrid"]},
     "linear": {"a":"nofacet"},
@@ -5008,6 +5010,7 @@ const MiniEvxlEngine = (function(){
     "micros": {"mod":["micro"]},
     "mix": {"mod":["hybrid"]},
     "multiform": {"m":"clicking"},
+    "pasu track dojo 道場": {"m":"tracking"},
     "patts": {"a":"nofacet"},
     "pokeball": {"a":"nofacet"},
     "precise": {"mod":["precise"]},
@@ -5041,7 +5044,18 @@ const MiniEvxlEngine = (function(){
     "wide wall": {"a":"nofacet"},
     "wrist": {"f":["region","wrist"]},
     "xents": {"a":"nofacet"},
-    "xyz": {"a":"nofacet"}
+    "xyz": {"a":"nofacet"},
+    "变向": {"mod":["evasive"]},
+    "平滑": {"mod":["smooth"]},
+    "微调": {"mod":["micro"]},
+    "确认": {"a":"nofacet"},
+    "确认感": {"a":"nofacet"},
+    "精准": {"mod":["precise"]},
+    "精准度": {"mod":["precise"]},
+    "终极": {"a":"evict"},
+    "终极目标": {"a":"evict"},
+    "跟踪": {"m":"tracking"},
+    "速度": {"mod":["speed"]}
   }
 };
   const FACET_MECHANICS = ['clicking', 'tracking', 'switching'];
