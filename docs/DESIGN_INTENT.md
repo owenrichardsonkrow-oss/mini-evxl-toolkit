@@ -1102,3 +1102,34 @@ decisions and do not belong in this sequence.
   INTENT-2, reopened here and deliberately not invented. Note the payoff: serving above level
   directly is what finally makes step 12's difficulty re-take possible ON-POLICY — the eligible
   pool used to contain 0 hard scenarios, which is why that estimate had to be taken off-policy.
+
+- **D44** (2026-08-29) — **the foreign-run contamination was a full deep sync under the friend's
+  username, and the residual is closed by DIRECT ATTRIBUTION; a switched username over a
+  non-empty store now requires explicit confirmation.** The owner reported a second foreign PB
+  (D38's repair had already caught 23): his displayed 3,301 on a scenario whose runs he could
+  place was the friend's leaderboard score, and he NAMED the player. That name closed the case
+  in one leaderboard row — the score belongs to the friend the template was built for — and
+  opened the attribution channel the D38 forensics never had: the friend's own per-scenario API
+  record. **Mechanism, revised from D38's "transient foreign rows" hypothesis:** the friend has
+  ever played 134 scenarios and 127 of them sit in the owner's store — the fingerprint of the
+  DEEP SYNC having run once under the friend's username (the by-name rows carry no identity, so
+  the QUERY is the attribution), not of an endpoint fault. That is also why D38's window
+  classifier structurally missed two thirds of it: by-name returns each scenario's last-10
+  WHENEVER PLAYED, so the ingested foreign runs carry epochs spanning July 2025 to August 2026,
+  far outside any ingest-window test. **The sweep:** probe the friend's record for all 127
+  intersecting scenarios; a stored run is foreign iff it exact-matches one of theirs — within
+  the store's own 600s dedupe window at truncation-exact score (a first 0.5-point tolerance
+  called 110.4 and 110.002 the same score and was caught by its own report). Result, applied
+  delta-exact: **+388 runs across 108 scenarios quarantined (the table now 128 scenarios / 563
+  runs), 53 stored PBs were the friend's — 25 lowered to the best provable clean value, 28
+  deleted for want of any clean evidence** (the weekly steamId-keyed channel re-raises anything
+  cut too deep, the asymmetry D38 chose). Fifty attempts records were the friend's history in
+  their entirety. The clean-baseline guard also caught that the 2026-08-16 repo snapshot was
+  itself already contaminated on at least one scenario, and refused it as a repair target.
+  **The standing fix:** switching the sync to a different username while the store holds scores
+  now takes a confirm dialog naming both users and the merge consequence — switching stays one
+  click (the template is passed between people by design), it is just no longer silent.
+  **Honest residual:** attribution reaches only what the friend's CURRENT last-10 per scenario
+  shows; runs they have since evicted by playing more are invisible to this method, and absence
+  from their last-10 is not proof a stored run is the owner's. The input filters and this
+  dialog cap the class going forward.
