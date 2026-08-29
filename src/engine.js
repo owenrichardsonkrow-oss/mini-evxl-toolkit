@@ -1842,7 +1842,13 @@ const MiniEvxlEngine = (function(){
   // at the point the draw changed instead of pooling two different policies.
   //   1 = softmax over an invented temperature (release #2, the arm experiment's first days)
   //   2 = Thompson sampling from the measured spread (step 7)
-  const SELECT_VERSION = 3;   // 3 = D43, the ceiling off for floor work (weakest/revisit)
+  //   4 = step 45, the queue-readers repair. Rows either side differ in which PURPOSES were
+  //       SERVABLE at all: before it, a `route` draw composed no anchor and the top-up relabelled
+  //       the serving `weakest`, so no row under sv <= 3 can be pooled with one under sv 4 when
+  //       asking what a purpose was worth. Measured at 84 of 84 route draws collapsing
+  //       (dev/queue-readers.json). Same class as D43's 2 -> 3, which split on which SCENARIOS
+  //       were eligible; this splits on which PURPOSES were reachable.
+  const SELECT_VERSION = 4;
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
@@ -3281,6 +3287,11 @@ const MiniEvxlEngine = (function(){
   // error of that mean above zero. No invented threshold -- the same instinct as
   // overlapOf's "sort `with` by the lower edge of the interval", applied to a mean.
   const ROUTE_MIN_PAIRS = 10;    // fewer measured pairs into the block than this: not a claim
+  // How deep a route draw walks the ranked weak pool looking for an anchor it can route out of.
+  // DECLARED rather than incidental: the realised route share is monotone in this number, so
+  // leaving it implicit would make BAR 1's result a property of an unstated parameter
+  // (dev/STEP45-PREREG.md). 8 is `spread`'s own target under the transfer weights.
+  const ROUTE_ANCHOR_SCAN = 8;
   // index: buildOverlapIndex's adjacency. memberNames: the block's scenarios (a Set).
   // opts.exclude: names that cannot be candidates (already chosen, or in the block).
   // opts.minN: the shared-player floor per pair (the index's own, by default).
@@ -4074,7 +4085,24 @@ const MiniEvxlEngine = (function(){
     // Both must pass routeCheck against the weak item: rated, at or under level+1, not
     // maxed, not a sink, and either unplayed or standing higher -- volume there is
     // productive where volume on the weak one may not be.
-    const weakItems = items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>byName.get(it.name)).filter(Boolean);
+    // ---- STEP 45 FIX A: the anchor is the ranked weak POOL, not the served items ------
+    // This was `items.filter(...)` alone, and the queue composes ONE item: on a `route` draw
+    // template.weakest is 0, no weakest item is composed, the list is empty, both loops below
+    // iterate nothing, routeList stays empty and the top-up at the end relabels the serving
+    // `weakest`. So the route purpose has never been servable by the queue. Measured before
+    // the fix (dev/queue-readers.json): 84 of 84 route draws collapsed that way, and served
+    // weakest equalled drawn-weakest plus drawn-route EXACTLY, in every arm.
+    //
+    // `spread` is the right anchor because it is built from the TYPE's weights
+    // (spreadTarget, above) rather than from the drawn template, so it is populated on a
+    // route draw when `items` is not. The owner's ruling (2026-08-29): the coach picks the
+    // weak scenario behind the scenes and serves only the route, naming the weakness it
+    // feeds -- so the anchor is deliberately internal and need not be a served item.
+    //
+    // `routeAnchors: 'served'` restores the pre-fix behaviour, which is what the step-45
+    // 2x2 needs to attribute A's effect separately from B's.
+    const servedWeak = items.filter(it=>it.why==='weakest' || it.why==='coverage').map(it=>byName.get(it.name)).filter(Boolean);
+    const weakItems = opts.routeAnchors === 'served' ? servedWeak : spread.slice(0, ROUTE_ANCHOR_SCAN);
     const pairsIndex = opts.pairsIndex && typeof opts.pairsIndex.edges==='function' ? opts.pairsIndex : null;
     const plOf = sc => new Set(sc && sc.plKeys ? sc.plKeys : []);
     const sharesPlaylist = (a, b) => { const pa = plOf(a); return (b && b.plKeys || []).some(k=>pa.has(k)); };
