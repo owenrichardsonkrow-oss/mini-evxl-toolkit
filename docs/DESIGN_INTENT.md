@@ -616,6 +616,19 @@ run-history import; both transfer analyses.
   weighted draw rather than the argmin: D1 ratified floor-*biased* and explicitly not
   strict maximin, so sampling is the objective read correctly, and it is what stops every
   session looking identical. Opt-in (`opts.rotate`), so every earlier path is unchanged.
+  **AMENDED 2026-08-29 (step 45): the anti-repeat had been INERT since step 8, and is now
+  wired.** `recentSessionTypes` read the session log, and step 8 removed that log's writer, so
+  `chooseSessionType` received an empty list and the "never the same type three days running"
+  clause could never fire. On the owner's record the type therefore froze on `transfer` — the
+  one type carrying route weight 4 of 10 — which compounded with the route defect below into a
+  single behaviour: the coach sat permanently in the type whose defining slice could not be
+  served. The serving's type is now stamped on the append-only served ledger and read back
+  DAY-BASED (the first serving of each day). **The unit is the whole fix**: the old log held one
+  row per DAY and the ledger holds one per SERVING, so a naive port would compare consecutive
+  servings of the same day, satisfy `recent[0]===recent[1]` on nearly every read, and degenerate
+  this rule into "flip every time" — perfect alternation that reads as success on any day-share
+  bar. Measured over 40 simulated days (`dev/queue-readers.json`): the modal type holds **37/40
+  before and 26/40 after**, against a bar of 30 committed before the estimator existed.
 - **D19** *(NOT Review Ledger V's D19, which is a queue id for step 11's proposal to unify the shown and drawn intervals, which was REJECTED — see the note above D25)* — the return-collect rate is always reported against the **1/(n+1)** null model
   (the chance of a first-try PB if nothing had changed), scored with Brier and a skill
   score, and is NOT scored at all under 20 resolved revisits. A KPI that cannot come out
@@ -1096,7 +1109,21 @@ decisions and do not belong in this sequence.
   The step-42 pre-registration committed to settling by measurement a question two referees
   disagreed on: at size 1, what share of servings still comes from a pool the window gates? **Over
   200 draws: `weakest` 167, `revisit` 33, fill-out 0, route 0 — a share of ZERO.** So
-  `levelAdjust` no longer changes what is served on this profile. What survives is the "too hard"
+  `levelAdjust` no longer changes what is served on this profile.
+  **AMENDED 2026-08-29 (step 45) — the conclusion stands and the REASON was wrong.** The window
+  is inert, but not because the pools it gates are rarely drawn: `route` was never SERVABLE at
+  all. At size 1 a route draw composed no weakest item, so the route anchors were empty and the
+  top-up relabelled the serving `weakest`. Measured directly, which this harness could not do
+  because it recorded only the SERVED label and discarded the DRAWN one:
+  **84 of 84 route draws collapsed to `weakest`**, and served-weakest equalled drawn-weakest plus
+  drawn-route exactly, in every arm (`dev/queue-readers.json`). Fill-out's zero is separate and
+  benign — its weight is 0 under `transfer`. **Coverage does NOT collapse** and the first draft
+  of step 45 wrongly said it did: `coldBlocks` is character-identical to `isCold`, so a coverage
+  draw implies a non-empty cold list; measured 73 drawn, 73 served. The coverage WEIGHT on the
+  D43 profile was 0, which that harness computed and threw away — recorded now rather than
+  inferred. INTENT-2's reopening is unaffected: `levelAdjust` still steers nothing, and after
+  step 45 the reason is that the window gates fill-out and routes while the ratings move a rung
+  target that neither pool now consults. What survives is the "too hard"
   THIRD EXIT, which closes the open item and is untouched. The rating copy now says exactly that
   rather than asserting a control that does nothing. Giving the rating a live consumer again is
   INTENT-2, reopened here and deliberately not invented. Note the payoff: serving above level
@@ -1133,3 +1160,52 @@ decisions and do not belong in this sequence.
   shows; runs they have since evicted by playing more are invisible to this method, and absence
   from their last-10 is not proof a stored run is the owner's. The input filters and this
   dialog cap the class going forward.
+
+2026-08-29:
+
+- **D45** (Review Ledger VIII step 45) — **the transfer mechanism had never run in the shipped
+  product, and three readers left behind by step 8 are why.** Pre-registered before any code
+  change (`dev/STEP45-PREREG.md`), adversarially reviewed BEFORE the estimator existed (45
+  agents, five lenses, an independent refuter per finding: **40 raised, 0 refuted, 23
+  blocking**), amended against all 23, then implemented and measured against bars that were
+  fixed first.
+  **The defect.** `queueNext` composes at size 1, where `drawPurposes` assigns the slot exactly
+  one purpose. Route targets were derived from items ALREADY COMPOSED in the same pass, so a
+  `route` draw composed no weakest item, both route loops iterated nothing, and the top-up
+  relabelled the serving `weakest` — silently, since nothing recorded that a route had been
+  requested and refused. **So the map that D12's whole protocol exists to produce fed a code
+  path that could not execute.** Sibling readers: D18's anti-repeat read a log with no writer
+  (amended above), and `sealServed` was called only from the history-view render, so an outcome
+  was durable only if a particular page happened to be opened.
+  **The fix.** Route anchors are the ranked weak POOL — `spread`, which is built from the TYPE's
+  weights rather than the drawn template and so is populated exactly when the served items are
+  not — at a DECLARED scan depth (`ROUTE_ANCHOR_SCAN = 8`), because the realised route share is
+  monotone in it. Per the owner's ruling (2026-08-29) the anchor is deliberately internal: the
+  coach picks the weak scenario behind the scenes and serves only the route, naming the weakness
+  it feeds. The serving's type is stamped on the served ledger and read back day-based; the seal
+  runs on the queue path.
+  **The result, on bars committed before the estimator** (`dev/queue-readers.json`, 40 days × 25
+  servings, one prebuilt row set, 2×2 over {A off, A on} × {B off, B simulated}):
+  BAR 1 route serve rate **1.000 over 204 route draws** (bar ≥ 0.5 over ≥ 150); BAR 2 modal type
+  **26/40** against 37/40 before (bar ≤ 30); BAR 3 **0 of 204** route servings duplicate what the
+  A-off run served as `weakest` at the same day and index (bar ≤ 0.25). A converts draws into
+  servings and B raises the draws — 122 → 204 — so neither substitutes for the other, which is
+  what the cell split was for.
+  **`SELECT_VERSION` 3 → 4**, because rows either side differ in which PURPOSES were servable at
+  all — the same class as D43's bump on which SCENARIOS were eligible.
+  **D28 stays out of scope, and that is CHECKED rather than asserted:** the ranked pool
+  `opts.rank` returns is identical with the fix on and off (970 rows). Had it differed, A would
+  be a ranking change and would walk the four legs before shipping.
+  **Three things recorded because they went wrong.** The pre-registration predicted the session
+  snapshot would move and it did not — on that fixture `spread`'s prefix and the served weakest
+  coincide, so A is a no-op there while being total at size 1; the prediction was wrong in the
+  conservative direction, and the route serve rate plus the ranking check are what establish A is
+  reached at all. The parity control initially inherited the fix's own setting and stopped
+  reproducing D43's known zero the moment A landed — a control measuring the treatment instead of
+  the instrument; it is pinned to A-off now. And the first draft's coverage-collapse claim was
+  refuted by the review and then by measurement (73 drawn, 73 served).
+  **Still open and NOT decided here: the continuous queue itself has no decision-log entry.** It
+  has been the shipped product shape since step 8 — through eight releases and fifteen D entries
+  — while this document's product-shape section and D6 still describe a ten-item session and D7
+  describes a tick-off that no longer exists. Ratifying a product shape is the owner's act, not
+  an assistant's, so it is named here rather than written.
