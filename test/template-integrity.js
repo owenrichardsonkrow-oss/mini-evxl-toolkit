@@ -226,6 +226,17 @@ check(html.includes('.replace(/"/g,\'&quot;\')'), "esc() no longer escapes '\"'"
 }
 check(!/richardsonkrow|mayogobbler/i.test(html), 'personal identity string in template');
 check(!/\bOwen\b/.test(html), "the owner's name survives in the template -- source comments ship verbatim, say \"the owner\" instead");
+
+// D33 ratified that the randomised arm stays ON in the public template. The open list carried
+// "ships ON undisclosed" from that day until 2026-08-29, when the owner ruled it should be
+// disclosed. A person who never agreed to be in an experiment should be told there is one --
+// and the blind is unaffected, because it is per ITEM: knowing a share of revisits serve the
+// runner-up changes nothing, knowing WHICH one would change how hard you try.
+check(/serves you its second choice/.test(html) && /without saying which/.test(html),
+  'the template no longer discloses the randomised arm -- D33 ships it ON, so the intro must say a share of revisits serve the runner-up');
+// and it must NOT name the arm anywhere a live item could be identified by it
+check(!/\bthis item is arm\b/i.test(html) && !/\byou were given arm\b/i.test(html),
+  'the template names an arm for a live item -- the blind is per item and this would make the comparison measure belief');
 check(!/7656119\d{10}/.test(html), 'steam64 id in template');
 // SECOND-PERSON CLAIMS ABOUT A RECORD THE VISITOR DOES NOT HAVE.
 // A leak is not only a NAME. Step 22 put the owner's hazard measurement into the queue's
