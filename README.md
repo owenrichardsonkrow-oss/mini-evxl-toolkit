@@ -280,14 +280,21 @@ Other things worth knowing about the page itself: filters, sort, tags and the
 search box are all kept in the URL, so a filtered view can be bookmarked or
 shared; Home has a sort menu, a **Quick wins** panel (played scenarios closest
 to their next tier, most playlists first) and a **Recent improvements** panel
-(every score a sync or import raised, newest first — kept locally, not exported);
+(every score a sync or import raised, newest first — kept in your browser, and
+carried by Settings → Export since format v3);
 the theme button (top right) cycles system → light → dark.
 
 ## Privacy
 
-Nothing in this tool sends your data anywhere. The scrape only reads pages evxl.app
-already serves publicly to anyone with your profile link. The *Load Your Data*
-import keeps everything in your own browser's local storage. Hosting on GitHub
+**What leaves your machine, and when.** Syncing sends your KovaaK's username to
+kovaaks.com to fetch your own scores — that is the whole point of *Sync Scores
+Online*, and it is the only thing sent. Auto-check does the same on a much smaller
+request when you return to the tab, and can be turned off in Settings. Nothing else
+is transmitted: no telemetry, no analytics, no account, no server of ours. Your
+scores, run history and the coach's record live only in your own browser's local
+storage for the page's origin, and *Sync Scores Locally* reads your KovaaK's stats
+folder without uploading any of it. The scrape only reads pages evxl.app already
+serves publicly to anyone with your profile link. Hosting on GitHub
 Pages makes your tracker HTML (and whatever dataset you baked into it) publicly
 readable at that URL, same as any static site. If you'd rather keep your scores
 private, don't embed a dataset in a publicly-hosted copy — use the local-only
