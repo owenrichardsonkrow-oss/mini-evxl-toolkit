@@ -18899,6 +18899,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // clock reached the composition.
     appendServed, servedLedger, servedRowFor, sessionOpts, recentSessionTypes, sealNow,
     chooseSessionType, COLLECT_MIN, COLLECT_REPEAT_DEFAULT, RIPE_RULE_DEFAULT,
+    // step 49: the export-ingest reader. sessionHistoryStats is PURE -- it takes the log,
+    // the scores, the runs and the ledger as arguments -- so a real export can be read
+    // through the product's own statistic without merging it into any store.
+    sessionHistoryStats, readSessionLog,
     importScoresText, recordScores, recordAttempts });
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
