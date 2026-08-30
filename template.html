@@ -18903,6 +18903,10 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // the scores, the runs and the ledger as arguments -- so a real export can be read
     // through the product's own statistic without merging it into any store.
     sessionHistoryStats, readSessionLog,
+    // the three stamps that decide what is POOLABLE with today. The ingest tool called
+    // coach4Readiness without them, which pools across definitions -- inert while the record
+    // is one epoch deep, and an over-count the moment a freeze is promoted or a version bumps.
+    P_VERSION, blockEpoch,
     importScoresText, recordScores, recordAttempts });
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
