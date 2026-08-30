@@ -1306,3 +1306,22 @@ decisions and do not belong in this sequence.
   player's backup merges scores, attempts, history, the session log and the served ledger with
   no check. It is the least likely of the three paths (it needs a file transfer between two
   people) and the highest-impact, and it is recorded rather than closed.
+
+- **D47** (2026-08-30) — **an export declares its owner, and an import checks it.** This closes
+  the third and last contamination path, the one D46 recorded and left open. Step 44 established
+  the cost: another player's record reached this store and corrupted **53 personal bests across
+  108 scenarios**. D44 closed the silent username switch; D46 closed the automatic channel and
+  established that the check must read PROVENANCE (`scores-owner`, stamped where a fetch actually
+  succeeded) rather than the Settings username field, which is editable and was D46's defect.
+  `exportScoresPayload` now declares `owner`, and `importScoresText` **refuses** a file whose
+  owner differs from the store's unless the caller passes an explicit opt-in.
+  **A confirm, not a wall**, and the asymmetry is deliberate: the store is per ORIGIN, so carrying
+  your OWN record between origins is the normal case, and the template is meant to be handed
+  between people. Three cases are allowed silently and each is a way this guard could have been
+  wrong in the strict direction — **an export with no owner** (every file made before today; a
+  refusal would block the owner's own backups), **a store with no owner** (it adopts, and adoption
+  can never overwrite an existing stamp), and **the same owner folded for case and trimmed**.
+  The refusal lives in `importScoresText` rather than only in the UI, so a caller that forgets to
+  ask cannot merge a stranger's record by omission — enforced rather than trusted. The decision is
+  a named predicate (`importOwnerBlock`) because D46's first fixture drove the UI end to end in a
+  context where the guard was never reached and would have passed with the gate deleted.

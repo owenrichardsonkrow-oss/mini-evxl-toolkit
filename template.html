@@ -14748,15 +14748,48 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // sufficient backup of the coach's evidence any more: it keeps one row per day and
     // overwrites it on a reroll, so the ledger is the only record of an exposure whose
     // composition was replaced -- and the only place the arm of such an item survives.
-    return { format: SCORES_EXPORT_FORMAT, version: 4, exportedAt: new Date().toISOString(), count: SCORES.size, scores, attempts,
+    // D47: WHOSE record this is. Step 44 found another player's entire history in this store --
+    // 388 runs, 108 scenarios, 53 corrupted personal bests -- and D44/D46 closed the two channels
+    // that carried it (a silent username switch, and the automatic one). The IMPORT path was
+    // recorded as the third and was left open: an export declared no identity, so merging someone
+    // else's backup was unchecked. `owner` is the PROVENANCE stamp (who the record was ingested
+    // as), never the Settings username field, which is editable and was D46's actual defect.
+    // Absent on an unstamped store, which is also what every pre-D47 export looks like.
+    return { format: SCORES_EXPORT_FORMAT, version: 4, exportedAt: new Date().toISOString(),
+      owner: scoresOwner() || undefined, count: SCORES.size, scores, attempts,
       history: HISTORY.slice(), sessionLog: readSessionLog(), served: servedLedger() };
   }
   // Accepts our export (v1 or v2), or a bare {name: score} object. Max-merge, never lowers.
-  function importScoresText(text){
+  // THE DECISION, as a named predicate, so it can be tested without driving a file input.
+  // D46's lesson exactly: its first fixture drove autoCheck end to end in an iframe where it
+  // exits early, so it would have passed with the gate deleted. Returns the foreign owner's
+  // name when the merge should be questioned, else null.
+  //
+  //   no owner in the file  -> null. Every pre-D47 export is unstamped; refusing them would
+  //                            block the owner's own backups, which is not the threat.
+  //   no owner in the store -> null, and the caller ADOPTS the file's owner.
+  //   same owner           -> null. Case-folded and trimmed, as D38's check is.
+  //   different owner      -> the name, and importScoresText refuses without an explicit opt-in.
+  function importOwnerBlock(parsed, current){
+    const fileOwner = (parsed && typeof parsed.owner === 'string') ? parsed.owner.trim() : '';
+    const storeOwner = (current === undefined || current === null) ? scoresOwner() : current;
+    if(!fileOwner || !storeOwner) return null;
+    return sameKovaaksUser(fileOwner, storeOwner) ? null : fileOwner;
+  }
+  function importScoresText(text, opts){
     let parsed;
     try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Not valid JSON: '+e.message); }
     const obj = parsed && typeof parsed==='object' && parsed.scores && typeof parsed.scores==='object' ? parsed.scores : parsed;
     if(!obj || typeof obj!=='object' || Array.isArray(obj)) throw new Error('Expected a scores export ({"scores": {name: score}}) or a plain {name: score} object.');
+    // Refuse BEFORE anything merges. The UI asks first and passes the opt-in, but the refusal
+    // lives here so a caller that forgets to ask cannot merge a stranger's record by omission --
+    // enforced rather than trusted, which is the only reason this is a guard and not a habit.
+    const foreignOwner = importOwnerBlock(parsed);
+    if(foreignOwner && !(opts && opts.allowForeignOwner)){
+      throw new Error('This export was made by "' + foreignOwner + '" and this record belongs to "'
+        + scoresOwner() + '". Importing it would merge their scores, runs, score history and served '
+        + 'ledger into yours, and an append-only record cannot be un-merged. If you meant to, import it again to confirm.');
+    }
     const map = new Map();
     let ignored = 0;
     Object.keys(obj).forEach(k=>{ const v = Number(obj[k]); if(k && Number.isFinite(v) && v>0) map.set(k.trim(), v); else ignored++; });
@@ -14815,6 +14848,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     const raised = recordScores(map, 'import');
     // PERF-2: an import of SCORES cannot change the pool, so the block derivation stands
     if(raised>0) invalidateScores();   // attempts are read live at render time (attemptsFor), no cache to drop
+    // adopt provenance into a store that had none, so the next import is checked against it
+    if(!scoresOwner() && parsed && typeof parsed.owner === 'string') stampScoresOwner(parsed.owner);
+
     return { raised, unchanged: map.size - raised, ignored, attemptsAdded, historyAdded, sessionsAdded, servedAdded };
   }
 
@@ -15235,11 +15271,15 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // as, or -- on the seeded personal build -- as the file's own owner. A function declaration
   // so resetToDefault (10-stores.js, an earlier fragment) can call it; it runs at startup
   // before any UI, so a Settings edit cannot get in first.
-  function stampScoresOwner(){
+  // `explicit` (D47): an import ADOPTS the owner an export declares, but only into a store that
+  // has none. It can never overwrite an existing stamp -- that is the whole point of the key, and
+  // an import that could rewrite provenance would hand back the hole D46 closed.
+  function stampScoresOwner(explicit){
     try{
       if(localStorage.getItem(SCORES_OWNER_KEY)) return;
-      if(!(SCORES.size > 0)) return;
-      const inferred = localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME;
+      const named = String(explicit||'').trim();
+      if(!named && !(SCORES.size > 0)) return;
+      const inferred = named || localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME;
       if(inferred) localStorage.setItem(SCORES_OWNER_KEY, inferred);
     }catch(e){}
   }
@@ -18510,7 +18550,21 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       const f = e.target.files[0]; e.target.value='';
       if(!f) return;
       try{
-        const res = importScoresText(await f.text());
+        const text = await f.text();
+        // D47: ask before merging a record that declares a different owner. A confirm rather
+        // than a refusal, because carrying your OWN record between origins is the normal case
+        // (the store is per origin) and the template is meant to be passed between people.
+        let allow = false;
+        try{
+          const foreign = importOwnerBlock(JSON.parse(text));
+          if(foreign){
+            allow = window.confirm('This file was exported by "' + foreign + '", but this record belongs to "'
+              + scoresOwner() + '". Importing merges their scores, runs, score history and served ledger into '
+              + 'yours; the served ledger is append-only and cannot be un-merged. Import anyway?');
+if(!allow){ scoresErr.textContent = 'Import cancelled -- the file belongs to ' + foreign + '.'; return; }
+          }
+        }catch(e){ /* not JSON, or no owner: importScoresText reports it */ }
+        const res = importScoresText(text, { allowForeignOwner: allow });
         paintScoresSummary(res.raised+' raised, '+res.unchanged+' already as high or higher'+(res.attemptsAdded>0 ? ', '+res.attemptsAdded+' runs logged' : '')+(res.historyAdded>0 ? ', '+res.historyAdded+' history events' : '')+(res.sessionsAdded>0 ? ', '+res.sessionsAdded+' sessions' : '')+(res.servedAdded>0 ? ', '+res.servedAdded+' served items' : '')+', from '+f.name);
         if(res.raised>0) updateTopnavSource();
       }catch(err){ scoresErr.textContent = err.message || String(err); }
@@ -18907,7 +18961,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // coach4Readiness without them, which pools across definitions -- inert while the record
     // is one epoch deep, and an over-count the moment a freeze is promoted or a version bumps.
     P_VERSION, blockEpoch,
-    importScoresText, recordScores, recordAttempts });
+    importScoresText, importOwnerBlock, recordScores, recordAttempts });
 
   // Brand and the "Load Your Data" tab follow the site identity: the personal
   // copy hides the importer (its data is baked in), the template shows it.
