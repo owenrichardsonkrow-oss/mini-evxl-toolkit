@@ -441,10 +441,23 @@
       noStanding:  pick({ blocksWithoutStanding: 1 }),
       sinks:       pick({ weakBlockSinks: true }),
       justWorked:  pick({ weakBlockTouchedDays: 3 }),
-      // never the same thing three days running -- but a ripe revisit does not get less ripe
+      // never the same thing three days running. `collect` used to be EXEMPT, on the argument
+      // that a ripe revisit does not get less ripe -- which assumed ripe revisits are scarce.
+      // Step 47 measured that they are not (227 ripe against a trigger of 2 on a real store),
+      // so the rotation pinned to collect 40 days of 40. The exemption is gone; what replaced
+      // it re-runs the CASCADE rather than forcing one type, so the day is still a function of
+      // its state.
       flipFloor:   pick({ recentTypes: ['floor', 'floor'] }),
       flipTransfer:pick({ weakBlockSinks: true, recentTypes: ['transfer', 'transfer'] }),
-      collectSticks: pick({ collectReady: 3, recentTypes: ['collect', 'collect'] }),
+      collectSuppressed: pick({ collectReady: 3, recentTypes: ['collect', 'collect'] }),
+      // the same day under the retired rule -- the defect has to stay reproducible or the
+      // two-arm comparison has no baseline to measure against
+      collectExempt: pick({ collectReady: 3, recentTypes: ['collect', 'collect'], collectRepeat: 'exempt' }),
+      // BAR 5: on a suppressed day the type must still READ ITS INPUTS. A rule that forces one
+      // type passes every trigger assertion above and is a mechanical rotation.
+      suppressedReadsState: pick({ collectReady: 3, recentTypes: ['collect', 'collect'], weakBlockSinks: true }),
+      // and the REJECTED candidate must fail that, or the line above asserts nothing
+      suppressedConstant: pick({ collectReady: 3, recentTypes: ['collect', 'collect'], weakBlockSinks: true, collectRepeat: 'flip-floor' }),
       // Number(null) is 0 and 0 is finite, so the careless spelling reads "this block has
       // never been touched" as "worked today" (always transfer) and "no confidence reading"
       // as confidence 0 (always breadth). Both bit here on the day this was written.
@@ -1298,7 +1311,10 @@
       if(TY.sinks!=='transfer') problems.push('types: a weakest block of sinks must go through the map, got '+TY.sinks);
       if(TY.justWorked!=='transfer') problems.push('types: a weakest block worked days ago must go through the map, got '+TY.justWorked);
       if(TY.flipFloor!=='transfer' || TY.flipTransfer!=='floor') problems.push('types: two of the same in a row must alternate, got floor->'+TY.flipFloor+', transfer->'+TY.flipTransfer);
-      if(TY.collectSticks!=='collect') problems.push('types: a ripe revisit does not get less ripe -- collect must not be flipped away, got '+TY.collectSticks);
+      if(TY.collectSuppressed==='collect') problems.push('step 47: two collect days running must suppress a third, got '+TY.collectSuppressed);
+      if(TY.collectExempt!=='collect') problems.push('step 47: `exempt` must still reproduce the pinning defect, got '+TY.collectExempt);
+      if(TY.suppressedReadsState!=='transfer') problems.push('step 47 BAR 5: a suppressed day must still read typeState (sinks -> transfer), got '+TY.suppressedReadsState);
+      if(TY.suppressedConstant!=='floor') problems.push('step 47 BAR 5 must be able to FAIL -- `flip-floor` should force floor regardless of state, got '+TY.suppressedConstant);
       if(TY.neverTouched!=='floor') problems.push('types: a block never touched is UNKNOWN, not "worked today" -- Number(null) is 0, got '+TY.neverTouched);
       if(TY.noConfReading!=='floor' || TY.noConfAtAll!=='floor') problems.push('types: a missing confidence reading is not confidence 0, got '+TY.noConfReading+' / '+TY.noConfAtAll);
     }

@@ -1850,6 +1850,30 @@ const MiniEvxlEngine = (function(){
   //       were eligible; this splits on which PURPOSES were reachable.
   const SELECT_VERSION = 4;
   const COLLECT_MIN = 2;              // ripe revisits before the day becomes a collect day
+  // What counts as RIPE. Selectable so the arms are comparable; see the note at collectReady.
+  // `se` is candidate D of dev/STEP47-PREREG.md: the mean must survive its own error.
+  const RIPE_RULES = {
+    odds: f => f.odds > 0,
+    se:   f => f.seGain !== null && f.seGain !== undefined && (f.gain - f.seGain) > f.margin
+  };
+  const RIPE_RULE_DEFAULT = 'odds';
+  // Step 47 candidate A: whether `collect` is subject to D18's anti-repeat rule. The shipped
+  // exemption rests on 'a ripe revisit does not get less ripe', which assumed ripe revisits are
+  // SCARCE. Measured 2026-08-30 they are not: 15 raise events across 3,038 scenarios made 227
+  // ripe, against a trigger of 2. Tightening what 'ripe' MEANS does not reach it either --
+  // candidate D's standard-error test cut 228 to 167 and the rotation stayed pinned 40/40.
+  //   'cascade'    -- SHIPPED (step 47, candidate A2): two collects running, suppress collect
+  //                   and RE-RUN THE CASCADE, so breadth/transfer/floor all stay reachable and
+  //                   the type is still a function of `typeState`.
+  //   'flip-floor' -- A1, REJECTED: two collects running, take `floor` outright. It clears the
+  //                   pinning bars, and it fails the STRUCTURAL one. Over a 32-state grid held
+  //                   at recentTypes ['collect','collect'] it returns `floor` 32 of 32 -- on the
+  //                   13 of 40 days it acts the type is a CONSTANT that reads none of its
+  //                   inputs, which is the mechanical rotation that bar disqualifies. Kept as a
+  //                   checkable arm, never a default. (A2 reads 3 distinct types over the same
+  //                   grid; the shipped exemption reads 4.)
+  //   'exempt'     -- the pre-step-47 rule, kept so the defect is reproducible.
+  const COLLECT_REPEAT_DEFAULT = 'cascade';
   const TRANSFER_RECENT_DAYS = 7;     // the weak block worked this recently -> the indirect path adds more than more direct work
   const SESSION_TYPE_ORDER = ['collect', 'breadth', 'transfer', 'floor'];
   // ---- The randomised arm (Review Ledger IV NEXT-4, 2026-08-25) ---------------------
@@ -1909,8 +1933,15 @@ const MiniEvxlEngine = (function(){
     const ready = Number(st.collectReady) || 0;
     const touchedRaw = st.weakBlockTouchedDays;
     const touched = (touchedRaw===null || touchedRaw===undefined || !Number.isFinite(Number(touchedRaw))) ? null : Number(touchedRaw);
+    // step 47: two collect days running may suppress a third, per the selected mode.
+    const collectRepeat = st.collectRepeat || COLLECT_REPEAT_DEFAULT;
+    const twoCollects = recent.length>=2 && recent[0]==='collect' && recent[1]==='collect';
+    const suppressCollect = collectRepeat !== 'exempt' && twoCollects;
     let type = 'floor', why = 'nothing is ripe to collect and the weakest block has been left alone, so the direct work is the move.';
-    if(ready >= COLLECT_MIN){
+    if(suppressCollect && collectRepeat === 'flip-floor'){
+      return { type: 'floor', why: 'your last two sessions were collect sessions; alternating keeps the direct work in the rotation.' };
+    }
+    if(!suppressCollect && ready >= COLLECT_MIN){
       type = 'collect'; why = ready+' revisits are ripe — the scenarios that move with them have gained more than your own gap to their PBs, so today is for going back and banking them.';
     } else if((conf!==null && conf < CONF_LOW) || Number(st.blocksWithoutStanding) > 0){
       type = 'breadth'; why = conf!==null && conf < CONF_LOW
@@ -2247,10 +2278,33 @@ const MiniEvxlEngine = (function(){
     // yet; data/attempts.json is the only source that could (Review Ledger IV NEXT-3).
     const wsum = evidence.reduce((s,e)=>s+e.rs, 0);
     const gain = wsum > 0 ? evidence.reduce((s,e)=>s+e.rs*e.pred, 0)/wsum : 0;
+    // ---- the gain's OWN standard error (step 47) ---------------------------------------
+    // `gain` is a WEIGHTED MEAN over the evidence, and until step 47 nothing asked whether it
+    // survived its own spread. It did not need to be large to matter: `odds > 0` is the ripe
+    // test, `margin` is 0 for most of the pool, and the map is dense -- so ANY positive
+    // movement anywhere in a co-varying neighbourhood made a candidate ripe. Measured
+    // 2026-08-30 on a store with FIFTEEN raise events across 3,038 scenarios: 227 revisits
+    // read as ripe, and COLLECT_MIN is 2, so the rotation pinned to `collect` permanently.
+    //
+    // SE of a weighted mean at Kish's effective sample size. This is the same
+    // mean-minus-its-own-error test already ratified in blockRouteCandidates,
+    // scenarioAffinity, cohesionSurvives and affinityAssignment -- no new constant.
+    // With fewer than two evidence rows there is no spread to estimate, so the answer is
+    // null: a single neighbour cannot establish that a mean beats its own noise, and null
+    // reads downstream as NOT ripe rather than as an error of zero (the Number(null) trap,
+    // eight sightings).
+    const nEv = evidence.length;
+    let seGain = null;
+    if(nEv >= 2 && wsum > 0){
+      const w2 = evidence.reduce((s,e)=>s+e.rs*e.rs, 0);
+      const nEff = w2 > 0 ? (wsum*wsum)/w2 : 0;
+      const varW = evidence.reduce((s,e)=>s+e.rs*(e.pred-gain)*(e.pred-gain), 0)/wsum;
+      if(nEff > 1 && Number.isFinite(varW)) seGain = Math.sqrt(varW/nEff);
+    }
     const margin = sc.resp && sc.resp.nearPct!==null && sc.resp.nearPct!==undefined ? sc.resp.nearPct : FORECAST_PRIOR_MARGIN;
     const odds = gain - margin;
     const p = 1/(1+Math.exp(-odds/FORECAST_SLOPE));
-    return { gain, margin, odds, p, evidence, synced: evidence.some(e=>e.synced) };
+    return { gain, margin, odds, p, seGain, nEv, evidence, synced: evidence.some(e=>e.synced) };
   }
   // Session-history statistics for the history view. log = the session log
   // ([{day, seedBump, startedAt, rating, regime, done, size, conf, template,
@@ -3946,8 +4000,14 @@ const MiniEvxlEngine = (function(){
           soonestRipe: rows.filter(r=>r.ripe).sort((a, b)=> a.lastT - b.lastT).slice(0, 5)
         };
       }
+      // Step 47: the ripe test is SELECTABLE so the two rules can be measured against each
+      // other without a build-and-revert, which is what steps 11 and 12 had to do and which
+      // makes a comparison depend on nobody having erred while reverting.
+      //   'odds' -- gain > margin. The shipped rule; ANY positive movement counts.
+      //   'se'   -- gain must clear margin by more than its own standard error.
       let collectReady = 0;
-      revPool.forEach(sc=>{ const f = revisitForecast(sc, byName, helpers0); if(f && f.odds > 0) collectReady++; });
+      const ripeTest = RIPE_RULES[opts.ripeRule] || RIPE_RULES[RIPE_RULE_DEFAULT];
+      revPool.forEach(sc=>{ const f = revisitForecast(sc, byName, helpers0); if(f && ripeTest(f)) collectReady++; });
       // step 10: the inputs the type decision was taken on, returned beside the decision.
       // The page has always printed the WHY; this makes the trigger itself auditable, which is
       // what let BUG-2 be measured -- on this profile both transfer triggers point the same way,
@@ -3956,6 +4016,7 @@ const MiniEvxlEngine = (function(){
       typeState = {
         confidence: opts.confidence || null,
         collectReady,
+        collectRepeat: opts.collectRepeat || COLLECT_REPEAT_DEFAULT,
         weakBlockTouchedDays: weakBlock && weakBlock.lastT ? (opts.now - weakBlock.lastT)/DAY_MS : null,
         // BUG-2, fixed at step 10. `weakPool` is sorted with SINKS LAST, so `slice(0, 3)` of
         // members taken from it were the three LEAST stuck in the block -- and the condition
@@ -5108,7 +5169,7 @@ const MiniEvxlEngine = (function(){
     boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, STAGNATE_MIN_K, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
-    chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, SCORE_MIN_REVISITS,
+    chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, RIPE_RULES, RIPE_RULE_DEFAULT, COLLECT_REPEAT_DEFAULT, SCORE_MIN_REVISITS,
     coach4Readiness, COACH4_EPV,
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
