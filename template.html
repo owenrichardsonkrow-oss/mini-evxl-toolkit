@@ -12015,9 +12015,11 @@ const MiniEvxlEngine = (function(){
   // pokeball scenario as a hybrid that leans static clicking) describes a MIXTURE, which
   // a hard partition cannot represent at all.
   //
-  // The freeze does hold a full 991 x 21 loadings matrix, but those are FACTOR loadings,
-  // and D13 ships the community lens precisely because the factor lens reproduced the
-  // carrying playlists (ARI 0.824). Shipping them as "skill mixture" would reintroduce
+  // The freeze does hold a full per-scenario x factor loadings matrix (991 x 21 on the
+  // freeze this paragraph was written against; 1,194 x 19 on the shipped fb5d2dab), but those
+  // are FACTOR loadings, and D13 ships the community lens precisely because the factor lens
+  // reproduced the carrying playlists (ARI vs playlist 0.824 on ed89927b, 0.619 on c9026a95
+  // and unchanged on fb5d2dab -- the margin narrowed, the conclusion did not). Shipping them as "skill mixture" would reintroduce
   // the co-training artefact A2 just removed. So the affinity is measured instead, from
   // the pairs the page already carries: a scenario's mean r against the members of each
   // block, CROSS-PLAYLIST only, which is the same statistic blockRouteCandidates uses
@@ -14982,8 +14984,14 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     try{ localStorage.removeItem(storeKey('served')); }catch(e){}
     // ...and the OPEN QUEUE ITEM (step 8), which is served against a PB this reset deletes
     try{ localStorage.removeItem(storeKey('queue')); }catch(e){}
+    // ...and WHO THE RECORD BELONGED TO (D46). Provenance describes the scores this reset
+    // just deleted, so it goes with them -- the same reasoning C3 applied to the coach's
+    // record and 3c then had to re-apply to the served ledger. Re-stamped below, after the
+    // re-seed, because the seeded scores do have a known owner on the personal build.
+    try{ localStorage.removeItem(storeKey('scores-owner')); }catch(e){}
     invalidateCaches();
     recordScores(SEED_SCORES, 'seed');
+    stampScoresOwner();
     seedAttempts();
     try{ localStorage.removeItem(IMPORT_KEY); }catch(e){}
     try{ localStorage.removeItem(PLAYED_KEY); }catch(e){}
@@ -15031,6 +15039,36 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // appears, and the dataset itself stays pristine.
   const KOVAAKS_USERNAME_KEY = storeKey('kovaaks-username');
   const DEFAULT_KOVAAKS_USERNAME = String(SITE.defaultUsername||'');
+  // WHO THIS RECORD BELONGS TO -- provenance, not preference (D46).
+  //
+  // D44 guarded a username SWITCH by comparing the name about to be queried against
+  // KOVAAKS_USERNAME_KEY. That key is a PREFERENCE the Settings field rewrites on every
+  // keystroke (75-ui-settings.js bindField), so typing another player's name there makes
+  // priorUser === username and the confirm CANNOT FIRE. Worse, autoCheck reads the same key
+  // on every page open and tab focus, and D38 clears an event when it matches the name being
+  // QUERIED rather than the account that owns this store -- so a re-pointed preference sends
+  // the automatic channel at another player's feed and every row it returns looks attributed.
+  // That is the mechanism of the 2026-08-07..08-20 contamination, reachable from a text box.
+  //
+  // This key is written ONLY where a fetch has already succeeded, so it records what was
+  // actually INGESTED rather than what someone typed. Switching stays one click -- the
+  // confirm still offers it -- it just cannot happen silently.
+  const SCORES_OWNER_KEY = storeKey('scores-owner');
+  const sameKovaaksUser = (a, b) =>
+    String(a||'').trim().toLowerCase() === String(b||'').trim().toLowerCase();
+  function scoresOwner(){ try{ return localStorage.getItem(SCORES_OWNER_KEY) || ''; }catch(e){ return ''; } }
+  // Backfill for a store that predates the key: it was ingested as whoever it last synced
+  // as, or -- on the seeded personal build -- as the file's own owner. A function declaration
+  // so resetToDefault (10-stores.js, an earlier fragment) can call it; it runs at startup
+  // before any UI, so a Settings edit cannot get in first.
+  function stampScoresOwner(){
+    try{
+      if(localStorage.getItem(SCORES_OWNER_KEY)) return;
+      if(!(SCORES.size > 0)) return;
+      const inferred = localStorage.getItem(KOVAAKS_USERNAME_KEY) || DEFAULT_KOVAAKS_USERNAME;
+      if(inferred) localStorage.setItem(SCORES_OWNER_KEY, inferred);
+    }catch(e){}
+  }
   // `?user=<kovaaks name>` on the page URL: a shareable link that prefills the
   // first-run box and the Sync prompt for a specific player, so onboarding a
   // friend is "open the link, click Sync". Never persisted by itself — a
@@ -15111,6 +15149,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // The file's own attempts (personal copy; {} in the template) -- a union, so
   // re-seeding on every open is a no-op once they're in.
   seedAttempts();
+  stampScoresOwner();
 
   // {total, tracked, at} from the last online sync's all-played response.
   const PLAYED_KEY = storeKey('kovaaks-played');
@@ -15386,8 +15425,9 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // carry no identity, so the QUERY is the attribution -- which makes a switched username
     // over a non-empty store the one gate that can stop the whole class. Switching is still
     // one click (the template is passed between people by design); it is just no longer silent.
-    const priorUser = localStorage.getItem(KOVAAKS_USERNAME_KEY);
-    if(priorUser && priorUser !== username && SCORES.size > 0){
+    // provenance, not the Settings-editable preference -- see SCORES_OWNER_KEY above
+    const priorUser = scoresOwner();
+    if(priorUser && !sameKovaaksUser(priorUser, username) && SCORES.size > 0){
       // one line, no escapes -- the repo's rule after twelve backslash-trap sightings is not
       // "escape it", it is DO NOT NEED AN ESCAPE.
       const ok = window.confirm('This page has been syncing as "'+priorUser+'" and holds '+SCORES.size+
@@ -15399,6 +15439,8 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     // Phase 1 — total-play. Cheap (3 paginated requests) but incomplete.
     const { scoreMap, newestEpoch, attempts: phase1Attempts } = await fetchKovaaksScores(username);
     localStorage.setItem(KOVAAKS_USERNAME_KEY, username);
+    // the fetch succeeded, so this account is now what the record holds
+    try{ localStorage.setItem(SCORES_OWNER_KEY, username); }catch(e){}
     let changes = patchScoresFromMap(scoreMap, 'online');
     // total-play returns the RECORD run only, so every row this feed adds is a PB by
     // construction -- see recordAttempts' note on why that matters for any rate.
@@ -18442,6 +18484,19 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // it leaves the page; on a normal top-level page the request left and never
   // came back, which in practice means KovaaK's is rate-limiting after a burst.
   // Only the embedded case can be the CSP, so check that rather than assuming.
+  // Who this record belongs to, against who autoCheck is about to query -- returns the OWNER
+  // when the two disagree (so the caller can name it) and null when they do not.
+  //
+  // Extracted because the refusal must be TESTABLE and end-to-end it is not: autoCheck exits
+  // at isEmbedded() below, and the app smoke harness runs the page in an IFRAME, so an
+  // assertion driving autoCheck there passes whether or not this gate exists. That is a check
+  // that cannot fail, which is the failure this project keeps finding -- so the decision is a
+  // named predicate and the fixture asserts the predicate.
+  function autoCheckOwnerBlock(username){
+    const owner = scoresOwner();
+    if(owner && !sameKovaaksUser(owner, username)) return owner;
+    return null;
+  }
   function isEmbedded(){
     try{ return window.self !== window.top; }catch(e){ return true; } // cross-origin throw = embedded
   }
@@ -18574,6 +18629,17 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     let state = null;
     try{ state = JSON.parse(localStorage.getItem(AUTO_CHECK_KEY)||'null'); }catch(e){}
     if(state && Date.now()-Number(state.at||0) < AUTO_CHECK_MIN_GAP_MS) return;
+    // The automatic path needs the same gate as the manual one and CANNOT ask for it: this
+    // runs on page open and on every tab focus. D38 clears an event when it matches the name
+    // being QUERIED, so a re-pointed username makes another player's feed look attributed --
+    // refuse instead, and SAY SO, because a silent stop reads as auto-check being broken.
+    // Placed after the gap check so the line appears at most once a minute.
+    const owner = autoCheckOwnerBlock(username);
+    if(owner){
+      try{ localStorage.setItem(AUTO_CHECK_KEY, JSON.stringify({ at: Date.now(), newest: state ? Number(state.newest||0) : 0 })); }catch(e){}
+      setSyncStatus('Auto-check is paused: this record was synced as ' + owner + ' but the saved username is ' + username + '. Use Sync Scores Online to switch deliberately.', 12000);
+      return;
+    }
     autoCheckRunning = true;
     try{
       const events = await fetchRecentHighScores(username);
@@ -18647,6 +18713,12 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
     feelAdjust, feelNow, feelsInOrder, writeFeel, FEEL_RUN, FEEL_ADJ_MAX, attemptSources, coach4Readiness,
     attemptRuns, attemptsFor, attemptNames, personalTransfer, scenarioDuration, rankCorrelation, topKOverlap, orderingResolution, standardisePct, expectedBestOfJ, personalReturnEvents, revisitHorizon, provenanceOf, TRANSFER_PROVENANCE, playlistSharing, overlapDefaults, playlistKeysOf, overlapOf, groupMatrix, independentGroups, overlapLabelsOf, labelKeyLayer,
     readQueue, queueState, serveNext, advanceQueue, servedToday,
+    // D46: the contamination guard's own basis, plus the AUTOMATIC channel it now gates.
+    // autoCheck is exported because that path is the dangerous one -- it runs on every page
+    // open and tab focus with no dialog -- and a guard nothing can fail on behalf of is the
+    // failure this project keeps finding. scoresOwner is what the guard compares; the point
+    // of the test is that it does NOT follow the Settings-editable username preference.
+    scoresOwner, sameKovaaksUser, stampScoresOwner, autoCheck, autoCheckOwnerBlock,
     // step 45 prerequisite: the served-ledger WRITERS. A control for fix B has to write a
     // simulated day through the product's own writer and row builder -- a harness copy would
     // test the copy, not the wiring. `sessionOpts` rides along so a probe can assert which

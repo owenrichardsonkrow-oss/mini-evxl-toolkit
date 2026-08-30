@@ -923,7 +923,7 @@
       "mod": [
         "evasive"
       ],
-      "n": "CJK 2026-08-29: change of direction -- evasive. LOW confidence."
+      "n": "CJK 2026-08-29: change of direction. LOW confidence and CONTESTED -- recorded rather than resolved. Read as evasive here; the sibling reading is reactive (it is the third column of this benchmark tracking triad beside the smooth and precision labels). An adversarial check found the transfer-table evidence for reactive is not decisive: reactive|BIANXIANG ranks 9th of the 22 rows containing this label, below hybrid, control and blending. Neither reading is supported enough to ship as fact; blast radius is 2 scenarios."
     },
     "确认": {
       "a": "nofacet",

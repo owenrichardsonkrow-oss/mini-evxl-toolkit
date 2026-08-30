@@ -206,10 +206,24 @@ about skill structure.
   weakest and revisit pools, `rung <= level+1` for fill-out and routes — with **no
   floor at any site**, so an Easy- scenario is fully eligible for a level-8 player;
   and difficulty never enters the ranking key, it gates eligibility beside it. See D42.
-- Quick wins folds in as the session's reward slice.
+  **Superseded the same day by D43: the ceiling is OFF for the weakest and revisit pools.**
+  It survives only where a slice CLAIMS transfer or coverage — routes at `level+1` and
+  fill-out. So the correction above is now itself false in the direction it corrected, which
+  is the worse failure of the two and is why it is annotated rather than rewritten.
+- Quick wins folds in as the session's reward slice. **Retired from the coach by D39** —
+  tier-proximity is benchmark-ladder logic, not floor logic; the Home panel stays.
 - **Live companion for free**: auto-check already fires on tab-back
   (visibilitychange) and patches new scores — the session view subscribes and
   checks items off as you play. Manual refresh remains the fallback.
+  **The tick-off went with the composed session at step 8**; arrival is the evaluation now.
+  The auto-check subscription itself is intact and is still what drives the re-render (D7).
+
+> **THE SHIPPED SHAPE IS A CONTINUOUS QUEUE (since step 8, 2026-08-25).** One scenario at a
+> time: set a high score or stagnate and the next arrives; leave and come back to the same
+> one. `queueNext` is `composeSession` at size 1. The ten-item session, the reroll and the
+> tick-off above are the era it replaced. The PURPOSES survive as WEIGHTS drawn per serving,
+> so the mix holds as a rate rather than a slot vector. This note records what the code does;
+> the queue itself has no ratified decision entry, which is recorded as open under D45.
 - Optional one-tap **session-feel rating** — a feedback input (user → tool),
   never a report; included because it is cheap n=1 data, skippable because it
   is friction.
@@ -426,6 +440,9 @@ run-history import; both transfer analyses.
 
 ## Decision log
 
+**D1–D20 and D25–D46 (42 entries).** D21–D24 are deliberately skipped — see the note above
+D25. Stated here so an index cannot go stale silently: the next entry moves this line.
+
 2026-08-18, all Owen unless noted:
 
 - **D1** Objective is floor-biased expected gain, not strict maximin;
@@ -435,9 +452,12 @@ run-history import; both transfer analyses.
 - **D3** All skills weighted equally in v1; game-relevance weighting is a
   later data knob.
 - **D4** (refined by D9) Explore/placement share is adaptive, not a constant.
-- **D5** Session-feel rating is a feedback mechanism (user → tool), so it is
-  included; optional, one tap.
-- **D6** Session default is 10 items — "we have to choose something."
+- **D5** *(the rating is per-ITEM since D27, written onto the served-ledger row, not per
+  session; D43 records it INERT as a serving control and reopens INTENT-2)* Session-feel
+  rating is a feedback mechanism (user → tool), so it is included; optional, one tap.
+- **D6** *(superseded in the code by the continuous queue at step 8; the ten survives only as
+  the denominator of the purpose-weight mix, and `SESSION_SIZE = 10` is still declared and
+  overridden on the queue path)* Session default is 10 items — "we have to choose something."
 - **D7** Interaction is a live, evxl-like page; auto-updating via the existing
   auto-check is the preferred form, manual refresh acceptable.
 - **D8** Competency metric is the percentile itself, not distance to a chosen
@@ -516,7 +536,13 @@ run-history import; both transfer analyses.
   saying which epoch it belonged to.
   **(3) Where a name would go, the evidence goes instead.** Step 5d's
   mis-assignment diagnostic is the closest thing to a naming argument the data
-  has produced, and it is recorded here rather than resolved: of 380 judgeable
+  has produced, and it is recorded here rather than resolved. **Stamped 2026-08-29: every
+  figure and every community id below was measured on freeze `c9026a95` (dev/block-misassignment.json,
+  2026-08-26). The shipped freeze is `fb5d2dab6862`, where those ids denote different
+  communities -- c:4 has no stable members at all -- and the diagnostic has NOT been re-run.
+  A community id is freeze-local, which is the whole reason this entry refuses to ratify names;
+  the argument stands, its worked example is a record of a superseded freeze.**
+  Of 380 judgeable
   stable members, **18 (4.7%) would move** under the project's own placement
   rule, and the residual is not scatter — **ten of the eighteen leave `c:1`
   (*tracking · reactive*) and every one of them prefers `c:4`
@@ -810,7 +836,10 @@ decisions and do not belong in this sequence.
   expensive.
 
 - **D33** (Review Ledger IV step 3, NEXT-4; ratified at Review Ledger VI step 29) — **a quarter of
-  revisit picks are RANDOMISED, and nothing rendered says so.** It exists because every other
+  revisit picks are RANDOMISED, and nothing rendered says WHICH ONE.** *(Narrowed 2026-08-29:
+  release #14 shipped a one-time queue intro on the public template that discloses the
+  experiment EXISTS. The per-item blind — the property the design actually rests on — is
+  untouched, because knowing which item you were handed is what would change how hard you try.)* It exists because every other
   measurement here is *the coach said X, you played X, here is what happened* — which can never
   separate a good recommendation from improvement you would have made anyway. D26's calibration
   says whether the forecast's probabilities are honest; it cannot say whether the ORDERING beats
@@ -1205,7 +1234,42 @@ decisions and do not belong in this sequence.
   the instrument; it is pinned to A-off now. And the first draft's coverage-collapse claim was
   refuted by the review and then by measurement (73 drawn, 73 served).
   **Still open and NOT decided here: the continuous queue itself has no decision-log entry.** It
-  has been the shipped product shape since step 8 — through eight releases and fifteen D entries
-  — while this document's product-shape section and D6 still describe a ten-item session and D7
-  describes a tick-off that no longer exists. Ratifying a product shape is the owner's act, not
-  an assistant's, so it is named here rather than written.
+  has been the shipped product shape since step 8, while this document's product-shape section
+  and D6 described a ten-item session. Ratifying a product shape is the owner's act, not an
+  assistant's, so it is named here rather than written.
+  *(Corrected 2026-08-29: this paragraph also said "D7 describes a tick-off that no longer
+  exists". D7 says no such thing — it names the auto-check subscription, which is still live and
+  still drives the re-render. The tick-off text is in the product-shape section. Both that
+  section and D6 now carry dated supersession notes recording what the code does, which is a
+  statement of FACT and not the ratification that remains open.)*
+
+- **D46** (2026-08-29, close-out of release #15) — **the contamination guard reads PROVENANCE,
+  not a preference.** D44 put a confirm on a username switch and compared the name about to be
+  queried against `kovaaks-username`. That key is a PREFERENCE which the Settings field rewrites
+  on every keystroke, so typing another player's name there made `priorUser === username` and
+  **the confirm could not fire**. Worse, `autoCheck` reads the same key on every page open and
+  tab focus, and D38 clears an event when it matches the name being **queried** rather than the
+  account that owns the store — so a re-pointed preference sent the AUTOMATIC channel at another
+  player's feed, with every row it returned looking correctly attributed and no dialog anywhere.
+  That is the mechanism of the 2026-08-07..08-20 contamination (D37/D44), reachable from a text
+  box, in the guard written to prevent exactly it.
+  **The fix:** `storeKey('scores-owner')` records who the record was actually INGESTED as,
+  written only where a fetch has already succeeded; the manual guard and the automatic channel
+  both read it, and the comparison folds case and trims as D38's already does. Existing stores
+  are stamped once at startup, before any UI, from the saved username or the build's own owner.
+  `resetToDefault` clears it with the scores it describes — the reasoning C3 applied to the
+  coach's record and 3c then had to re-apply to the served ledger — and re-stamps after the
+  re-seed. Switching accounts is still one click; it just cannot be silent.
+  **The automatic path refuses rather than asks**, because it cannot ask, and it SAYS so — a
+  silent stop reads as auto-check being broken.
+  **Recorded because it nearly repeated the failure it fixes:** the first version of the fixture
+  drove `autoCheck` end-to-end and asserted it issued zero requests. That assertion passed
+  vacuously — `autoCheck` exits at `isEmbedded()` and the app-smoke harness runs the page in an
+  iframe, so it never reached the gate and would have passed with the gate deleted. The decision
+  is a named predicate now and the fixture asserts the predicate. Proved by tampering: reverting
+  provenance to the preference fails seven checks, including "editing the username PREFERENCE
+  must not move provenance (got eekum bokum)".
+  **NOT fixed, and deliberately:** an export still carries no owner stamp, so importing another
+  player's backup merges scores, attempts, history, the session log and the served ledger with
+  no check. It is the least likely of the three paths (it needs a file transfer between two
+  people) and the highest-impact, and it is recorded rather than closed.

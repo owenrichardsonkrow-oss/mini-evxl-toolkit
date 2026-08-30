@@ -3330,9 +3330,11 @@ const MiniEvxlEngine = (function(){
   // pokeball scenario as a hybrid that leans static clicking) describes a MIXTURE, which
   // a hard partition cannot represent at all.
   //
-  // The freeze does hold a full 991 x 21 loadings matrix, but those are FACTOR loadings,
-  // and D13 ships the community lens precisely because the factor lens reproduced the
-  // carrying playlists (ARI 0.824). Shipping them as "skill mixture" would reintroduce
+  // The freeze does hold a full per-scenario x factor loadings matrix (991 x 21 on the
+  // freeze this paragraph was written against; 1,194 x 19 on the shipped fb5d2dab), but those
+  // are FACTOR loadings, and D13 ships the community lens precisely because the factor lens
+  // reproduced the carrying playlists (ARI vs playlist 0.824 on ed89927b, 0.619 on c9026a95
+  // and unchanged on fb5d2dab -- the margin narrowed, the conclusion did not). Shipping them as "skill mixture" would reintroduce
   // the co-training artefact A2 just removed. So the affinity is measured instead, from
   // the pairs the page already carries: a scenario's mean r against the members of each
   // block, CROSS-PLAYLIST only, which is the same statistic blockRouteCandidates uses
