@@ -655,6 +655,39 @@ D25. Stated here so an index cannot go stale silently: the next entry moves this
   this rule into "flip every time" — perfect alternation that reads as success on any day-share
   bar. Measured over 40 simulated days (`dev/queue-readers.json`): the modal type holds **37/40
   before and 26/40 after**, against a bar of 30 committed before the estimator existed.
+
+  **AMENDED AGAIN 2026-08-30 (step 47): the `collect` EXEMPTION is retired, and the exemption's
+  premise was the error.** The rule exempted `collect` and `breadth` from the anti-repeat, on the
+  argument that a ripe revisit does not get less ripe. That is true and it assumed ripe revisits
+  are SCARCE. Measured on a store that has score history: fifteen raise events across 3,038
+  scenarios make **227 revisits ripe against a trigger of 2**, because `revisitForecast`'s gain is
+  an r-weighted mean over TOUCHED neighbours and the shipped map carries 6,423 edges — so `odds =
+  gain - margin` clears 0 on essentially any positive movement anywhere in a co-varying
+  neighbourhood. The day type pinned to `collect` **40 of 40** and every session drew from one
+  weight vector, which is the shape the owner reported as the queue feeling switching-heavy.
+  Two candidates were measured against five bars fixed in `dev/STEP47-PREREG.md` before the
+  estimator existed:
+  - **tightening what "ripe" MEANS does not reach it.** A standard-error test on the forecast
+    (`gain - se(gain) > margin`) removes 27% of ripe revisits — `collectReady` 228 -> 167 — and
+    the rotation does not move a single day, because 167 is still 83x a trigger of 2. Kept as a
+    selectable, default-off rule. What is load-bearing is neither the threshold's value nor the
+    definition of ripe but the trigger's SHAPE: an absolute count against a fixed tiny threshold
+    pins for any definition a dense map and a real record can produce.
+  - **forcing a type on the suppressed day fails the structural bar.** Taking `floor` outright
+    clears every pinning bar (modal 27/40, weakest 0.457) and returns `floor` for **all 32 states**
+    of a grid over everything the cascade reads — on the third of days it acts the type reads none
+    of its inputs, which is the mechanical rotation the bar disqualifies. The bar's two NAMED
+    assertions pass for it, because a constant passes both; the property had to be measured
+    directly. Kept as a checkable arm so that bar can be shown to fail.
+
+  **SHIPPED: two collect days running suppress a third and the CASCADE IS RE-RUN**, so
+  breadth / transfer / floor all stay reachable and the type stays a function of `typeState`
+  (3 distinct types over the same grid; the retired exemption reads 4). Modal type **40/40 ->
+  27/40**, distinct types 1 -> 3, `weakest` 0.370 -> 0.443, distinct served 161 -> 177, top-ten
+  share 0.675 -> 0.614. **The cost is stated rather than hidden**: `revisit` falls 0.479 -> 0.389,
+  and revisits are the only path by which D11's KPI, COACH-4 and the randomised arm ever resolve,
+  so every record-gated projection in `dev/gate-calendar.json` slows by about a fifth. That is
+  what BAR 3's floor of 0.240 was set to bound.
 - **D19** *(NOT Review Ledger V's D19, which is a queue id for step 11's proposal to unify the shown and drawn intervals, which was REJECTED — see the note above D25)* — the return-collect rate is always reported against the **1/(n+1)** null model
   (the chance of a first-try PB if nothing had changed), scored with Brier and a skill
   score, and is NOT scored at all under 20 resolved revisits. A KPI that cannot come out
