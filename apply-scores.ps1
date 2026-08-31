@@ -38,12 +38,16 @@ $Scores = Resolve-FullPath $Scores
 if (-not (Test-Path -LiteralPath $Scores)) { Write-Output "Scores file not found: $Scores"; exit 1 }
 if (-not (Test-Path -LiteralPath $Html)) { Write-Output "Tracker not found: $Html"; exit 1 }
 
-$export = [System.IO.File]::ReadAllText($Scores, $Utf8NoBom) | ConvertFrom-Json
-$scoreObj = if ($export.PSObject.Properties.Name -contains 'scores') { $export.scores } else { $export }
-$map = @{}
-foreach ($p in $scoreObj.PSObject.Properties) {
-    $v = ConvertTo-Num $p.Value
-    if ($v -gt 0) { $map[$p.Name.Trim()] = [math]::Round($v, 2) }
+# -AsHashtable, because ConvertFrom-Json FOLDS KEY CASE and throws when two keys differ only
+# by case -- and a real export does: KovaaK's returned both `PureG BounceSphere` and
+# `PureG Bouncesphere` in one attempts block, which killed the parse before it reached the
+# scores. New-NameMap keeps the two apart afterwards; a plain @{} would have merged them.
+$export = [System.IO.File]::ReadAllText($Scores, $Utf8NoBom) | ConvertFrom-Json -AsHashtable
+$scoreObj = if ($export.Contains('scores')) { $export['scores'] } else { $export }
+$map = New-NameMap
+foreach ($nm in @($scoreObj.Keys)) {
+    $v = ConvertTo-Num $scoreObj[$nm]
+    if ($v -gt 0) { $map[([string]$nm).Trim()] = [math]::Round($v, 2) }
 }
 if ($map.Count -eq 0) { Write-Output "No usable scores in $Scores"; exit 1 }
 Write-Output "Read $($map.Count) score(s) from $Scores"
@@ -53,16 +57,16 @@ $ds = Read-TrackerDataset $Html
 # page's per-browser store, and the store keeps everything ever synced (a
 # scenario whose playlist is added later shows its score at once). Not-carried
 # ones are only counted, for information.
-$carried = @{}
+$carried = New-NameMap
 foreach ($b in $ds.data) { foreach ($s in (Get-EntryScenarios $b)) { $carried[$s.name] = $true } }
 $orphans = @($map.Keys | Where-Object { -not $carried.ContainsKey($_) }).Count
-$before = @{}; foreach ($k in $ds.scores.Keys) { $before[$k] = $ds.scores[$k] }
+$before = New-NameMap; foreach ($k in $ds.scores.Keys) { $before[$k] = $ds.scores[$k] }
 $raised = Merge-Scores $ds $map
 # A v2 export (2026-08-18) also carries the runs behind the scores; merge them
 # into the file's attempts block / data\attempts.json (union, deduped, capped).
 $runsAdded = 0
-if ($export.PSObject.Properties.Name -contains 'attempts' -and $export.attempts) {
-    $inc = ConvertFrom-AttemptsJson ($export.attempts | ConvertTo-Json -Depth 6 -Compress)
+if ($export.Contains('attempts') -and $export['attempts']) {
+    $inc = ConvertFrom-AttemptsJson ($export['attempts'] | ConvertTo-Json -Depth 6 -Compress)
     if ($inc.Count) { $runsAdded = Merge-Attempts $ds $inc }
 }
 

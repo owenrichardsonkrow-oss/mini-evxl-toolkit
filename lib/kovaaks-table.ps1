@@ -26,6 +26,19 @@
 
 $KovaaksApiBase = 'https://kovaaks.com/webapp-backend/benchmarks/player-progress-rank-benchmark'
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+# A SCENARIO-NAME MAP. PowerShell's @{} folds key case, so `PureG BounceSphere` and
+# `PureG Bouncesphere` are ONE key in it -- and KovaaK's ships both spellings (the transfer
+# map documents 18 such variants; data/benchmarks.json carries `ODB MFSI`/`odb MFSI` and
+# `143 LIQUID CLICK`/`143 Liquid Click`). Every name-keyed score and attempts map here used
+# @{}, so a merge would have SILENTLY combined two different scenarios' scores into one.
+# Found 2026-08-31 when ConvertFrom-Json threw on an export carrying both PureG spellings --
+# the loud half of the same bug, and the only reason the quiet half was noticed.
+#
+# A Hashtable with an Ordinal comparer, NOT a Dictionary[string,object]: it keeps hashtable
+# semantics, so a missing key still returns $null instead of throwing, and every existing
+# caller is unaffected.
+function New-NameMap { [hashtable]::new([StringComparer]::Ordinal) }
 $PctRegex = '^-?\d+(\.\d+)?%$'
 $Inv = [System.Globalization.CultureInfo]::InvariantCulture
 $DataTag   = '<script id="benchmarks-data" type="application/json">'
@@ -89,7 +102,7 @@ function Read-TrackerDataset([string]$Path, [switch]$AllowLegacy) {
         $bj = Join-Path $Path 'benchmarks.json'; $sj = Join-Path $Path 'scores.json'
         if (-not (Test-Path -LiteralPath $bj)) { throw "No benchmarks.json in $Path" }
         $data = @([System.IO.File]::ReadAllText($bj, $Utf8NoBom) | ConvertFrom-Json)
-        $scores = @{}
+        $scores = New-NameMap
         if (Test-Path -LiteralPath $sj) {
             $obj = [System.IO.File]::ReadAllText($sj, $Utf8NoBom) | ConvertFrom-Json
             if ($obj) { foreach ($p in $obj.PSObject.Properties) { $v = ConvertTo-Num $p.Value; if ($v -gt 0) { $scores[$p.Name] = $v } } }
@@ -110,7 +123,7 @@ function Read-TrackerDataset([string]$Path, [switch]$AllowLegacy) {
     if ($legacy -and -not $AllowLegacy) {
         throw "$Html is in the old (v1) tracker format -- its page can't read v2 data. Get the current template.html and carry your scores over with the page's Settings -> Export / Import, or run dev\migrate-v2.ps1 on a personal copy that has the v2 page."
     }
-    $scores = @{}; $se = -1
+    $scores = New-NameMap; $se = -1
     if ($ss -ge 0) {
         $ss += $ScoresTag.Length
         $se = $content.IndexOf('</script>', $ss)
@@ -144,17 +157,20 @@ function Get-AttemptsTrimmed($pairs) {
     , $out.ToArray()
 }
 function ConvertFrom-AttemptsJson([string]$json) {
-    $out = @{}
+    $out = New-NameMap
     if (-not $json -or -not $json.Trim() -or $json.Trim() -eq '{}') { return $out }
-    $obj = $json | ConvertFrom-Json
+    # -AsHashtable: ConvertFrom-Json without it FOLDS KEY CASE and throws outright when two
+    # keys differ only by case, which is what an export carrying both PureG spellings does.
+    # The OrderedHashtable it returns is case-sensitive, so both survive as distinct entries.
+    $obj = $json | ConvertFrom-Json -AsHashtable
     if ($obj) {
-        foreach ($p in $obj.PSObject.Properties) {
-            $r = $p.Value
+        foreach ($nm in @($obj.Keys)) {
+            $r = $obj[$nm]
             if ($null -eq $r -or $null -eq $r.last) { continue }
             $last = New-Object System.Collections.Generic.List[object]
             foreach ($x in @($r.last)) { $x = @($x); if ($x.Count -ge 2) { $t = [double]$x[0]; $sc = [double]$x[1]; if ($t -gt 0 -and $sc -ge 0) { $last.Add(@([long]$t, $sc)) } } }
             $n = if ($null -ne $r.n) { [int]$r.n } else { $last.Count }
-            $out[$p.Name] = @{ n = [Math]::Max($n, $last.Count); last = (Get-AttemptsTrimmed $last.ToArray()) }
+            $out[$nm] = @{ n = [Math]::Max($n, $last.Count); last = (Get-AttemptsTrimmed $last.ToArray()) }
         }
     }
     $out
@@ -187,7 +203,7 @@ function ConvertTo-AttemptsFileText($attempts) {
 }
 # Merge incoming (name -> @{n; last}) into $ds.attempts (creating it); returns the number of new runs.
 function Merge-Attempts($ds, $incoming) {
-    if ($null -eq $ds.attempts) { $ds | Add-Member -NotePropertyName attempts -NotePropertyValue @{} -Force }
+    if ($null -eq $ds.attempts) { $ds | Add-Member -NotePropertyName attempts -NotePropertyValue (New-NameMap) -Force }
     $added = 0
     foreach ($k in $incoming.Keys) {
         $inc = $incoming[$k]
@@ -278,7 +294,7 @@ function ConvertFrom-V1Entry($b) {
     $tierEnd = if ($hasEnergy) { $hdrs.Count - 1 } else { $hdrs.Count }
     $tierNames = @(); for ($i = $sIdx + 3; $i -lt $tierEnd; $i++) { $tierNames += [string]$hdrs[$i] }
     $cur = New-Object string[] ([Math]::Max($maxDepth, 1)); for ($i = 0; $i -lt $cur.Length; $i++) { $cur[$i] = '' }
-    $items = @(); $scores = @{}
+    $items = @(); $scores = New-NameMap
     foreach ($row in $b.rows) {
         if (@($row).Count -le 1) { continue }
         $p = -1; for ($i = 0; $i -lt $row.Count; $i++) { if ([string]$row[$i] -match $PctRegex) { $p = $i; break } }
@@ -442,7 +458,7 @@ function New-EntryGroups($layout, $flat) {
 }
 # The API's own scores for the player, as a name->score map (÷100 already applied).
 function Get-ApiScores($flat) {
-    $m = @{}
+    $m = New-NameMap
     foreach ($s in $flat) { if ($s.PSObject.Properties.Name -contains 'score' -and [double]$s.score -gt 0) { $m[$s.name] = [math]::Round([double]$s.score, 2) } }
     $m
 }
