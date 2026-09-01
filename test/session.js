@@ -1098,6 +1098,25 @@
     let sameSeed = null;
     for(let seed=1; seed<=60 && sameSeed===null; seed++){ if(revsOf(armOn(seed)).some(it=>it.arm==='B')) sameSeed = seed; }
     const onS = sameSeed===null ? null : armOn(sameSeed), offS = sameSeed===null ? null : armOff(sameSeed);
+    // ---- ARM R (step 56): the queue-size composition, over 200 seeds ----------------------
+    const rOn  = seed => E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed, size: 1, rotate: true, arm: true }), FILL);
+    const rOff = seed => E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed, size: 1, rotate: true }), FILL);
+    let rCount = 0, rOffCount = 0, rSize10 = 0, rPosSum = 0, rBadLabel = 0, rLeaks = 0, rNoDisplaced = 0;
+    const rNames = new Set();
+    for(let seed=1; seed<=200; seed++){
+      const it = (rOn(seed).items||[])[0];
+      if(it && it.arm==='R'){
+        rCount++; rNames.add(it.name);
+        if(Number.isFinite(it.rIndex) && Number.isFinite(it.rPool) && it.rPool>0) rPosSum += it.rIndex;
+        if(it.why!=='weakest') rBadLabel++;
+        if(!it.displaced) rNoDisplaced++;
+        if(/\bR\b|random/i.test(String(it.reason||'')+' '+String(it.label||''))) rLeaks++;
+      }
+      const off = (rOff(seed).items||[])[0]; if(off && off.arm==='R') rOffCount++;
+      if(seed<=40){ const ten = E.composeSession(armFixture(E), Object.assign({}, OPTS, { seed, rotate: true, arm: true }), FILL); if((ten.items||[]).some(x=>x.arm==='R')) rSize10++; }
+    }
+    R.armR = { share: E.ARM_R_SHARE, seeds: 200, rCount, rShare: rCount/200, rOffCount, rSize10,
+      meanPos: rCount ? rPosSum/rCount : null, distinct: rNames.size, badLabel: rBadLabel, leaks: rLeaks, noDisplaced: rNoDisplaced };
     R.arm = {
       share: E.ARM_B_SHARE, minPerArm: E.ARM_MIN_PER_ARM,
       aSlots, bSlots, armless, dupes,
@@ -1648,6 +1667,24 @@
       // and it must never cost the session a revisit -- the defect the affordability rule fixed
       if(!AM.revisitShortfall || AM.revisitShortfall.sessions !== 0) problems.push('arm: turning the experiment ON must never serve FEWER revisits than OFF, got '+J(AM.revisitShortfall));
       if(AM.leaks) problems.push('arm: BLINDED -- no item reason may mention the arm, got '+AM.leaks+' that do');
+    }
+    // ---- ARM R, the seven bars of dev/STEP56-PREREG.md ---------------------------------------
+    const AR = R.armR;
+    if(!AR) problems.push('armR: missing');
+    else {
+      if(!(AR.share > 0 && AR.share < 1)) problems.push('armR: the engine exports no usable ARM_R_SHARE, got '+J(AR.share));
+      // 1. REALISED SHARE within [0.05, 0.15] (expected 20 of 200, sd ~4.2)
+      if(!(AR.rShare >= 0.05 && AR.rShare <= 0.15)) problems.push('armR: realised share must lie in [0.05, 0.15], got '+J(AR.rShare)+' ('+AR.rCount+' of 200)');
+      // 2. A DRAW, NOT THE HEAD: a rule reproducing the coach top pick would read ~0
+      if(!(AR.meanPos > 3)) problems.push('armR: R must be a uniform DRAW from the pool, not its head -- mean position '+J(AR.meanPos));
+      // 3. BLINDED: served as weakest, carrying arm R and the displaced purpose, no leak in the text
+      if(AR.badLabel) problems.push('armR: every R item must be served as `weakest`, got '+AR.badLabel+' that were not');
+      if(AR.noDisplaced) problems.push('armR: every R item must record the purpose it displaced, got '+AR.noDisplaced+' without');
+      if(AR.leaks) problems.push('armR: BLINDED -- no R item reason or label may mention the arm, got '+AR.leaks);
+      // 4. OFF IS OFF
+      if(AR.rOffCount) problems.push('armR: with the arm switch off there must be no R servings, got '+AR.rOffCount);
+      // 5. SIZE 10 IS UNTOUCHED (this is also what keeps the session snapshot byte-identical)
+      if(AR.rSize10) problems.push('armR: at size 10 there must be no R servings, got '+AR.rSize10+' compositions with one');
       // THE POINT: a B slot withholds the top pick rather than reordering it
       const D = AM.displacedAbsent;
       if(!D || !D.bItem) problems.push('arm: no seed produced a B slot to check displacement against, got '+J(D));

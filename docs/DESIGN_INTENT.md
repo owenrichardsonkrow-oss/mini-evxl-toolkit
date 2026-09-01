@@ -1325,3 +1325,24 @@ decisions and do not belong in this sequence.
   ask cannot merge a stranger's record by omission — enforced rather than trusted. The decision is
   a named predicate (`importOwnerBlock`) because D46's first fixture drove the UI end to end in a
   context where the guard was never reached and would have passed with the gate deleted.
+
+- **D48** (2026-09-01) — **arm R: one queue serving in ten is a uniformly random ELIGIBLE pick,
+  blinded, so the ordering can be judged against no ordering at all.** D33's arm compares the
+  coach's top pick with its own runner-up; both come from the same ordering, so the effect is small
+  by construction (+5.8 points on n_B = 24, CI [−14, +26]) and needs ~30 weeks to resolve — and it
+  answers *"is rank 1 better than rank 2?"*, not the question under the owner's stated priority,
+  *"is the coach worth protecting"*: does coached practice beat uncoached practice. Nothing measured
+  that, because every served item was coached. The coach's +38.5% "excess over baseline" is excess
+  over the exchangeable null, which step 22 showed the owner beats by λ = 1.33 whatever is served;
+  a random arm faces the same null, so the difference between arms is clean.
+  `ARM_R_SHARE = 0.10`, drawn from `weakOrdered` — the eligible weakest pool — so what R removes is
+  the ORDER and nothing else. Served as `weakest` with the standing reason (truthful for any
+  eligible scenario), so nothing on the page can reveal it; the ledger row carries `arm: 'R'`,
+  `displaced` and `rIndex`/`rPool`. D11's KPI and D33's arm are untouched by construction.
+  `SELECT_VERSION` is deliberately NOT bumped: coach picks are unchanged in kind, R rows are fully
+  labelled, and a bump would reset COACH-4 to mark a definition change that did not happen.
+  Two pre-declared looks at n_R ≥ 40 and ≥ 80 (alpha 0.025 each), detectable ~20 then ~15 points,
+  ~2.5 and ~5 weeks at the owner's rate. **The cost is stated: one serving in ten is deliberately
+  unordered.** What it measures is *coach vs random eligible*, not *coach vs the owner's own choice*
+  — the latter is unobservable. Pre-registered before any code in `dev/STEP56-PREREG.md`; seven
+  fixture bars, three proved by tampering.

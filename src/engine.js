@@ -1919,6 +1919,12 @@ const MiniEvxlEngine = (function(){
   const P_VERSION = 3;   // 2 = post-COACH-1; 3 = post-MET-4, the slope applied in logit space
   const ARM_B_SHARE = 0.25;      // share of revisit slots that serve the runner-up
   const ARM_MIN_PER_ARM = 10;    // resolved items per arm before the comparison gets a verdict
+  // ARM R (step 56, dev/STEP56-PREREG.md): the share of QUEUE servings replaced by a uniformly
+  // random draw from the eligible weakest pool. The A/B arm compares the coach's top pick with
+  // its own runner-up -- similar by construction, so its effect is small and it needs ~30 weeks
+  // to resolve. R asks the coarse question first: does the ORDERING beat no ordering at all?
+  // What R removes is the order and nothing else; eligibility stays. One serving in ten.
+  const ARM_R_SHARE = 0.10;
   // Pure, and it explains itself: the page prints `why` so the rotation is never a mood.
   // state: { confidence: {c}|null, collectReady: int, weakBlockTouchedDays: number|null,
   //          weakBlockSinks: bool, blocksWithoutStanding: int, recentTypes: [newest first] }
@@ -3589,7 +3595,9 @@ const MiniEvxlEngine = (function(){
       const cf = conf(sc);
       items.push({ name: sc.name, why, reason: typeof reason==='function' ? reason(sc) : reason, label: sc._label||primary(sc)||null, rung: sc.rung, pct: hasPct(sc) ? sc.pct : null, to2nd: sc.to2nd, toMax: sc.toMax, via: (typeof via==='function' ? via(sc) : via)||null,
         resp: sc.resp ? { state: sc.resp.state, gain: sc.resp.gain, n: sc.resp.n, nearPct: sc.resp.nearPct, src: sc.resp.src } : null,
-        forecast: sc._forecast || null, arm: sc._arm || null, boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
+        forecast: sc._forecast || null, arm: sc._arm || null,
+        // step 56: what an R serving withheld, and where the random draw landed in the pool
+        displaced: sc._displaced || null, rIndex: numOrNull(sc._rIndex), rPool: numOrNull(sc._rPool), boardN: sc.boardN===undefined ? null : sc.boardN, conf: cf,
         // MET-6: what the RANKING used. `m` above is the number you can check; this is the
         // one the order was decided on, carried rather than hidden.
         mPooled: (()=>{ if(!pooledOf) return null; return numOrNull(pooledOf(sc)); })(),
@@ -4305,6 +4313,28 @@ const MiniEvxlEngine = (function(){
     take(weakOrdered, 'weakest', weakReasonB, opts.size-items.length);
     if(items.length<opts.size) take(gameFirst(shuffle(rated.filter(sc=>!sc.played && sc.rung<=level))), 'fillout', sc=>'Unplayed at '+label(sc)+' — fills out the picture'+gameNote(sc)+'.', opts.size-items.length);
     rev.forEach(sc=>{ delete sc._forecast; delete sc._arm; });
+    // ---- ARM R (step 56): a uniformly random ELIGIBLE pick, blinded -------------------------
+    // Queue only (size 1): at size 10 this would replace one item and move the session
+    // snapshot, and sessions of ten no longer exist as a product. The gate short-circuits on
+    // size BEFORE rnd() is called, so a size-10 composition consumes no extra randomness.
+    // The pick comes from weakOrdered -- the eligible weakest pool, sinks at the tail -- so R
+    // is 'random ELIGIBLE', a competent baseline rather than a strawman. It is served as
+    // `weakest` with the standing reason, which is TRUTHFUL for any eligible scenario; that
+    // is what blinds it. `displaced` records the purpose the coach had drawn, rIndex/rPool
+    // where the draw landed, so the analysis knows what was withheld and how far away.
+    // rnd() is the composition's seeded RNG, so a day is stable across re-renders like every
+    // other draw here. Untouched by construction: D11's KPI filters why === 'revisit' and R
+    // items are `weakest`; the A/B arm lives on revisits and R items are not revisits.
+    if(opts.arm && opts.size === 1 && items.length === 1 && weakOrdered.length > 1 && rnd() < ARM_R_SHARE){
+      const displaced = items[0].why;
+      chosen.delete(items[0].name);
+      items.length = 0;
+      const rIdx = Math.floor(rnd() * weakOrdered.length);
+      const pick = weakOrdered[rIdx];
+      pick._arm = 'R'; pick._displaced = displaced; pick._rIndex = rIdx; pick._rPool = weakOrdered.length;
+      take([pick], 'weakest', weakReasonB, 1);
+      delete pick._arm; delete pick._displaced; delete pick._rIndex; delete pick._rPool;
+    }
     return { regime: 'normal', level, levelBase, levelAdjust: levelAdj, popLevel, weakLabels, confidence: opts.confidence||null, template, purposeWeights, items, blocks: blocks ? blockStats : null,
       calibrated, mapped: scenarios.mapped||0, curved: scenarios.curved||0,
       type: sessionType, typeWhy: sessionTypeWhy, typeState, ranking, horizons, pooling: poolMode };
@@ -5179,6 +5209,6 @@ const MiniEvxlEngine = (function(){
     scenarioAffinity, affinityAssignment, AFFINITY_MIN_PAIRS,
     // overlap page (2026-08-22): the session's label/route helpers at module scope + the pair-index layer
     normalizeLabel, labelFacetSet, sameSkillLabels, noSkillLabel, sessionLevel, isStuck, routeCheck,
-    ARM_B_SHARE, ARM_MIN_PER_ARM, P_VERSION, windowEnds, poolToward, standingReliability, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
+    ARM_B_SHARE, ARM_R_SHARE, ARM_MIN_PER_ARM, P_VERSION, windowEnds, poolToward, standingReliability, rBand, rInterval, buildOverlapIndex, overlapOf, groupMatrix, independentGroups, foldLabels, bridgeRows, neighboursFromIndex, clusterGroupsOf };
 })();
 if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEngine;
