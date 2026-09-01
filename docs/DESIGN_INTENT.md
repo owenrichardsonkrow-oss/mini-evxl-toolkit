@@ -440,7 +440,7 @@ run-history import; both transfer analyses.
 
 ## Decision log
 
-**D1–D20 and D25–D46 (42 entries).** D21–D24 are deliberately skipped — see the note above
+**D1–D20 and D25–D48 (44 entries).** D21–D24 are deliberately skipped — see the note above
 D25. Stated here so an index cannot go stale silently: the next entry moves this line.
 
 2026-08-18, all Owen unless noted:
