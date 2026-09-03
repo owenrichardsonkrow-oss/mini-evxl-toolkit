@@ -318,6 +318,19 @@
     const brIndex = E.buildOverlapIndex({ pairs: { minShared: 100, names: brNames, e: brE } });
     const sBR = E.composeSession(fxBR, Object.assign({}, OPTS, { blocks: BLOCKS, pairsIndex: brIndex }), FILL);
     const brRoutes = sBR.items.filter(it=>it.why==='route');
+    // STEP 57: the route slice reads the recency window. The dedupes on this slice were per
+    // COMPOSITION, and a queue composition is one serving -- so the top candidate was served on
+    // every route draw. `recentItems` naming the block route must exclude it and ONLY it (F1);
+    // `routeRecent: 'ignore'` must reproduce the pre-fix routes exactly (F3); naming both routes
+    // must leave no route at all with the composition still full -- both loops read the window,
+    // and the slot tops up rather than repeats (F5, the no-fallback decision pinned).
+    const brOpts = over => Object.assign({}, OPTS, { blocks: BLOCKS, pairsIndex: brIndex }, over);
+    const routesOf = s => s.items.filter(it=>it.why==='route').map(it=>({ name: it.name, target: it.via && it.via.target }));
+    const sF1 = E.composeSession(fxBR, brOpts({ recentItems: new Set([CAND]) }), FILL);
+    const sF3 = E.composeSession(fxBR, brOpts({ recentItems: new Set([CAND]), routeRecent: 'ignore' }), FILL);
+    const sF5 = E.composeSession(fxBR, brOpts({ recentItems: new Set([CAND, 'Tr Smooth Cube']) }), FILL);
+    R.routeRecent = { defaultMode: E.ROUTE_RECENT_DEFAULT, base: routesOf(sBR),
+      excluded: routesOf(sF1), ignored: routesOf(sF3), both: routesOf(sF5), bothSize: sF5.items.length, size: sBR.items.length };
     R.blockRoutes = { routes: brRoutes.map(it=>({ name: it.name, target: it.via && it.via.target, block: it.via && it.via.block })),
       members: SWITCHERS.length, minPairs: E.ROUTE_MIN_PAIRS,
       cand: E.blockRouteCandidates(brIndex, new Set(SWITCHERS), {}).map(c=>[c.name, Math.round(c.meanR*1000)/1000, c.pairs, c.lower>0]),
@@ -1279,6 +1292,19 @@
       const br = B2.routes.filter(r=>r.block);
       if(!br.length) problems.push('blockRoutes: no route carried a block -- the block-level path never fired: '+J(B2.routes));
       else if(br[0].name!=='Cl Dynamic Large') problems.push('blockRoutes: the block route must be the aggregated candidate, got '+J(br));
+    }
+    // step 57: routes read the recency window (dev/STEP57-PREREG.md, F1-F5)
+    const RR = R.routeRecent;
+    if(!RR) problems.push('routeRecent: missing');
+    else {
+      if(RR.defaultMode!=='exclude') problems.push('routeRecent: the shipped default must be exclude, got '+J(RR.defaultMode));
+      if(RR.base.length < 2) problems.push('routeRecent: the fixture must compose at least two routes for F1 to discriminate, got '+J(RR.base));
+      if(RR.excluded.some(r=>r.name==='Cl Dynamic Large')) problems.push('routeRecent F1: a candidate served inside the recency window must NOT be routed, got '+J(RR.excluded));
+      if(!RR.excluded.length) problems.push('routeRecent F1: excluding one candidate must not kill the slice -- the other route must still be served, got none');
+      if(RR.excluded.some(r=>!RR.base.some(b=>b.name===r.name))) problems.push('routeRecent F1: the exclusion may only REMOVE routes, got '+J(RR.excluded)+' against '+J(RR.base));
+      if(J(RR.ignored)!==J(RR.base)) problems.push('routeRecent F3: routeRecent ignore must reproduce the pre-fix routes exactly, got '+J(RR.ignored)+' vs '+J(RR.base));
+      if(RR.both.length!==0) problems.push('routeRecent F5: with every viable candidate recent there must be NO route (the slot tops up, it does not repeat), got '+J(RR.both));
+      if(RR.bothSize!==RR.size) problems.push('routeRecent F5: the composition must still fill to size when no route is viable, got '+RR.bothSize+' of '+RR.size);
     }
     // R6 changepoint
     const CP = R.changepoint;

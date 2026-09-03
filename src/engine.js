@@ -3352,6 +3352,19 @@ const MiniEvxlEngine = (function(){
   // leaving it implicit would make BAR 1's result a property of an unstated parameter
   // (dev/STEP45-PREREG.md). 8 is `spread`'s own target under the transfer weights.
   const ROUTE_ANCHOR_SCAN = 8;
+  // STEP 57: a route candidate served inside the recency window is not a route candidate.
+  // The dedupes on this slice are `chosen` and `routeTaken`, both per COMPOSITION -- and a queue
+  // composition is one serving, so under the queue they reset on every serve. Step 35 built
+  // `recentItems` (the served ledger's 3-day window) for exactly this class and wired it into the
+  // weakest slice's draw; step 45 then made routes servable at size 1 and wired nothing, so the
+  // top viable candidate for a weak block was served on every route draw whatever had just
+  // happened to it -- on the owner's record one scenario was served 14 times, every one a route,
+  // six of them in one evening (dev/STEP57-PREREG.md). 'exclude' is the rule; 'ignore' is the
+  // pre-fix behaviour, kept selectable so the defect stays reproducible without a build-and-revert.
+  // NO FALLBACK, deliberately: where every viable candidate is recent the route slot tops up as
+  // weakest, exactly as it does when no route can be found at all. A fallback that repeats could
+  // only fire on a profile with a single viable candidate, and there it IS the defect.
+  const ROUTE_RECENT_DEFAULT = 'exclude';
   // index: buildOverlapIndex's adjacency. memberNames: the block's scenarios (a Set).
   // opts.exclude: names that cannot be candidates (already chosen, or in the block).
   // opts.minN: the shared-player floor per pair (the index's own, by default).
@@ -4180,6 +4193,10 @@ const MiniEvxlEngine = (function(){
     const routeList = [];
     const routeSeen = new Set();       // weak items that already have a route
     const routeTaken = new Set();      // candidates already used as a route
+    // step 57: ...and candidates served inside the recency window (any purpose), which the
+    // per-composition sets above cannot see because a queue composition is one serving.
+    const routeRecent = opts.routeRecent || ROUTE_RECENT_DEFAULT;
+    const recentRoute = nm => routeRecent !== 'ignore' && recentItems.has(nm);
     // members of a block, and every playlist those members sit in: a candidate sharing
     // ANY of them is training the same playlist as the block, not bridging into it
     const blockMembers = new Map();
@@ -4212,7 +4229,7 @@ const MiniEvxlEngine = (function(){
         const cands = candidatesFor(bid, members);
         for(const cand of cands){
           const y = byName.get(cand.name);
-          if(!y || chosen.has(y.name) || routeTaken.has(y.name)) continue;
+          if(!y || chosen.has(y.name) || routeTaken.has(y.name) || recentRoute(y.name)) continue;
           if((y.plKeys||[]).some(k=>plKeys.has(k))) continue;      // shares a playlist with the block
           const rc = routeCheck(y, w, level); if(!rc.ok) continue;
           routeSeen.add(w.name); routeTaken.add(y.name);
@@ -4229,7 +4246,7 @@ const MiniEvxlEngine = (function(){
       weakItems.forEach(w=>{
         if(routeSeen.has(w.name)) return;
         (w.neighbours||[]).forEach(nb=>{
-          const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || routeTaken.has(y.name)) return;
+          const y = byName.get(nb[0]); if(!y || chosen.has(y.name) || routeTaken.has(y.name) || recentRoute(y.name)) return;
           if(!(nb[1]>0)) return;                 // positive co-variation only
           if(sharesPlaylist(w, y)) return;       // a playlist-mate is not an indirect route
           const rc = routeCheck(y, w, level); if(!rc.ok) return;
@@ -4239,7 +4256,7 @@ const MiniEvxlEngine = (function(){
       pairRoutes.sort((a,b)=> b.r*Math.log(b.n) - a.r*Math.log(a.n) || (a.y.name<b.y.name?-1:1));
       for(const rt of pairRoutes){
         if(routeList.length >= template.route) break;
-        if(routeSeen.has(rt.w.name) || chosen.has(rt.y.name) || routeTaken.has(rt.y.name)) continue;
+        if(routeSeen.has(rt.w.name) || chosen.has(rt.y.name) || routeTaken.has(rt.y.name) || recentRoute(rt.y.name)) continue;
         routeSeen.add(rt.w.name); routeTaken.add(rt.y.name); routeList.push(rt);
       }
     }
@@ -5199,7 +5216,7 @@ const MiniEvxlEngine = (function(){
     boutsOf, stagnation, stagnateP, HAZARD_LAMBDA_MEASURED, isMapLike, isSetLike, numOrNull, BOUT_GAP_MS, STAGNATE_AT, STAGNATE_MIN_K, FORM_ALPHA, queueNext, drawPurposes, PURPOSES,
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
-    chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, RIPE_RULES, RIPE_RULE_DEFAULT, COLLECT_REPEAT_DEFAULT, SCORE_MIN_REVISITS,
+    chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, RIPE_RULES, RIPE_RULE_DEFAULT, COLLECT_REPEAT_DEFAULT, ROUTE_RECENT_DEFAULT, SCORE_MIN_REVISITS,
     coach4Readiness, COACH4_EPV,
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,

@@ -440,7 +440,7 @@ run-history import; both transfer analyses.
 
 ## Decision log
 
-**D1–D20 and D25–D48 (44 entries).** D21–D24 are deliberately skipped — see the note above
+**D1–D20 and D25–D49 (45 entries).** D21–D24 are deliberately skipped — see the note above
 D25. Stated here so an index cannot go stale silently: the next entry moves this line.
 
 2026-08-18, all Owen unless noted:
@@ -1346,3 +1346,27 @@ decisions and do not belong in this sequence.
   unordered.** What it measures is *coach vs random eligible*, not *coach vs the owner's own choice*
   — the latter is unobservable. Pre-registered before any code in `dev/STEP56-PREREG.md`; seven
   fixture bars, three proved by tampering.
+
+- **D49** (2026-09-03) — **the route slice reads the served ledger's recency window: a scenario
+  served inside the last three days is not a route candidate, and there is no fallback.** Route
+  candidates are ranked by population evidence (mean r into the weak block, cross-playlist,
+  surviving its standard error), which play never moves, and the only dedupes on the slice were
+  per COMPOSITION — under the queue a composition is one serving, so the top viable candidate for
+  a weak block was served on every route draw whatever had just happened to it. On the owner's
+  record 38 of 49 route servings ever were a repeat inside three days; one scenario was served 14
+  times, every one a route, six in one evening with three PBs in between. Step 35 built the window
+  (`recentItems`) for exactly this class and wired it into the weakest slice's draw; step 45 made
+  routes servable at size 1 and wired nothing — the class step 35 named. The rule reuses that one
+  window and that one reader; nothing new is measured. **No fallback, deliberately**: where every
+  viable candidate is recent the route slot tops up as `weakest`, as it does when no route can be
+  found. A fallback that repeats could only fire on a profile whose weak block has a single viable
+  candidate, and there it IS the defect. Measured on the history-bearing fixture with the ledger
+  simulated (`dev/queue-readers.json`): the shipped rule serves 18 distinct routes with 0 repeats;
+  the pre-fix rule (`routeRecent: 'ignore'`, kept selectable) serves 3 distinct with 71 repeats of
+  78 and one scenario 8 times in a day. The cost is measured too: 8 of 89 route draws become
+  top-ups (serve rate 0.876 → 0.787), bounded by step 45's bar. The ranked pool is identical
+  (1,084 rows), so D28 is out of scope; `SELECT_VERSION` is not bumped — route rows are unchanged
+  in kind. Every route row now records `target` and `targetBlock`; until this date no export could
+  say what a route was for, so whether one ever moved its target was unaskable. Pre-registered in
+  `dev/STEP57-PREREG.md` before any code; five harness bars and five fixture bars, two proved by
+  tampering.
