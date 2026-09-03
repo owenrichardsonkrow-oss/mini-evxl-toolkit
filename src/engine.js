@@ -2579,6 +2579,7 @@ const MiniEvxlEngine = (function(){
       }
     }
     const oldestLogDay = entries.length ? entries.reduce((a,e)=>Math.min(a, Number(e.day)), Infinity) : Infinity;
+    const logDays = new Set(entries.map(e=>Number(e.day)).filter(Number.isFinite));   // step 60
     // every exposure, live ones included, so the app can seal today's resolutions too
     const sealable = exposures.map(x=>{ const r = resolvedBy.get(x.key); if(r) r.key = x.key; return r; }).filter(Boolean);
     const allRows = expRows.filter(r=>r.why==='revisit');
@@ -2657,12 +2658,19 @@ const MiniEvxlEngine = (function(){
       // provenance, so a number can never be read without knowing what produced it
       resolvedFrom: useLedger ? 'ledger' : (typeof runsOf==='function' ? 'runs' : 'pb'),
       windowed: true,
-      // Exposures with no surviving log row. Two very different causes, and only one of them
-      // is the reroll this counter exists to expose: a row older than the oldest the log still
-      // holds was dropped by SESSION_LOG_CAP, which is ordinary ageing, not a lost composition.
-      // Counting those as REROLLED would make the number grow forever on any long-lived store.
-      orphans: exposures.filter(x=>!logKeys.has(x.key) && x.day >= oldestLogDay).length,
-      aged: exposures.filter(x=>!logKeys.has(x.key) && x.day < oldestLogDay).length };
+      // Exposures with no surviving log row. THREE causes, and only one of them is the reroll
+      // this counter exists to expose (step 60, dev/STEP60-PREREG.md):
+      //   aged      older than the oldest row a NON-EMPTY log still holds -- dropped by
+      //             SESSION_LOG_CAP, ordinary ageing (nothing ages out of a log that never held
+      //             anything, so an empty log ages nothing)
+      //   orphans   the day HAS a log row and the key does not match -- a composition on a
+      //             logged day that the surviving row replaced: the reroll the label names
+      //   unlogged  the day has NO log row -- the queue's rows. Step 8 removed the log's writer,
+      //             so no queue serving has a log row by construction; until 2026-09-03 they all
+      //             read as REROLLED (273 of 273 on the owner's record, against zero rerolls).
+      orphans: exposures.filter(x=>!logKeys.has(x.key) && logDays.has(Number(x.day))).length,
+      aged: exposures.filter(x=>!logKeys.has(x.key) && entries.length > 0 && x.day < oldestLogDay).length,
+      unlogged: exposures.filter(x=>!logKeys.has(x.key) && !logDays.has(Number(x.day)) && !(entries.length > 0 && x.day < oldestLogDay)).length };
     return { sessions, weeks, overall, exposures: sealable };
   }
   // ---- THE ACCEPTANCE CRITERION FOR A RANKING CHANGE (step 19, 2026-08-26) ----------

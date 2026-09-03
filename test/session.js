@@ -1239,6 +1239,20 @@
                  bN: withLedger.overall.arms.b.n, bHits: withLedger.overall.arms.b.hits,
                  from: withLedger.overall.resolvedFrom, orphans: withLedger.overall.orphans,
                  sessions: withLedger.overall.sessions },
+      // STEP 60: THREE states for a row with no log key, on what the record can tell apart.
+      //   L1 a row on a day with NO log row is `unlogged` (the queue's rows -- the log has had no
+      //      writer since step 8), never an orphan: the owner's page read 273 REROLLED on zero rerolls
+      //   L2 the reroll above (a LOGGED day, key mismatch) stays `orphans` 1
+      //   L3 a row older than the oldest row of a NON-EMPTY log is `aged`; with an empty log the
+      //      same row is `unlogged` -- nothing ages out of a log that never held anything
+      unlogged: (()=>{ const o = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed,
+                         ledger.concat([{ name: 'X', why: 'weakest', pbAt: 100, n: 9, day: 301, seedBump: 0, servedAt: TB + DAYMS }])).overall;
+                       return { orphans: o.orphans, unlogged: o.unlogged, aged: o.aged }; })(),
+      aged: (()=>{ const older = [{ name: 'X', why: 'weakest', pbAt: 100, n: 9, day: 299, seedBump: 0, servedAt: TB - DAYMS }];
+                   const withLog = E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, ledger.concat(older)).overall;
+                   const noLog = E.sessionHistoryStats([], () => 150, TB + 2*DAYMS, null, runsPlayed, ledger.concat(older)).overall;
+                   return { withLog: { aged: withLog.aged, orphans: withLog.orphans, unlogged: withLog.unlogged },
+                            noLog: { aged: noLog.aged, orphans: noLog.orphans, unlogged: noLog.unlogged } }; })(),
       // an empty or absent ledger must leave the log path exactly as it was
       emptyIsIdentity: JSON.stringify(E.sessionHistoryStats(rerollLog, () => 150, TB + 2*DAYMS, null, runsPlayed, []).overall)
                     === JSON.stringify(noLedger.overall),
@@ -1772,7 +1786,10 @@
       if(LD.with.aN !== 1 || LD.with.aHits !== 1) problems.push('ledger: the rerolled-away exposure was served AND played, so it must resolve with its arm, got A n '+LD.with.aN+' hits '+LD.with.aHits);
       if(LD.with.bN !== 1 || LD.with.bHits !== 1) problems.push('ledger: the surviving exposure must still resolve, got B n '+LD.with.bN+' hits '+LD.with.bHits);
       if(LD.with.from !== 'ledger') problems.push('ledger: the provenance must say the ledger produced the numbers, got '+J(LD.with.from));
-      if(LD.with.orphans !== 1) problems.push('ledger: the exposure with no surviving log row must be COUNTED and named, not silently absorbed, got '+J(LD.with.orphans));
+      if(LD.with.orphans !== 1) problems.push('ledger L2: the exposure rerolled away on a LOGGED day must be COUNTED and named, not silently absorbed, got '+J(LD.with.orphans));
+      if(!LD.unlogged || LD.unlogged.orphans !== 1 || LD.unlogged.unlogged !== 1) problems.push('ledger L1 (step 60): a row on a day with NO log row is unlogged (the queue, no writer since step 8), never a reroll -- got '+J(LD.unlogged));
+      if(!LD.aged || LD.aged.withLog.aged !== 1 || LD.aged.withLog.orphans !== 1 || LD.aged.withLog.unlogged !== 0) problems.push('ledger L3 (step 60): a row older than the oldest log row is aged, got '+J(LD.aged && LD.aged.withLog));
+      if(!LD.aged || LD.aged.noLog.aged !== 0 || LD.aged.noLog.orphans !== 0 || LD.aged.noLog.unlogged !== 3) problems.push('ledger L3 (step 60): with an EMPTY log nothing is aged and nothing is rerolled -- every row is unlogged, got '+J(LD.aged && LD.aged.noLog));
       if(LD.with.sessions !== 1) problems.push('ledger: the session list stays the display record of what the log kept, got '+J(LD.with.sessions));
       if(!LD.emptyIsIdentity) problems.push('ledger: an empty ledger must leave the pre-3c log path byte-identical');
       if(LD.noRuns.resolved !== 0 || LD.noRuns.collected !== 0) problems.push('ledger: a row whose scenario has NO run record must be unresolved, never resolved off the PB, got '+J(LD.noRuns));
