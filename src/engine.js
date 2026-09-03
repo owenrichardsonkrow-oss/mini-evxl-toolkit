@@ -2962,6 +2962,13 @@ const MiniEvxlEngine = (function(){
   // The fit is months away and a gate you have to remember is a hope. So it is computed from
   // the live record: what is there, what the fit needs, and what is missing.
   const COACH4_EPV = 10;   // events per variable, the conventional floor for a logistic fit
+  // STEP 59: a term enters the fit only if its regressor VARIES in the population -- a coefficient
+  // on a constant is not estimable at any sample size, and counting events per variable for it is
+  // counting for a parameter the fit does not have. On the owner's record `margin` (resp.nearPct,
+  // the gap between the recent best and the PB) is 0 on the median revisit row and never above
+  // 0.008: a revisit is 14+ days unplayed and its PB is almost always among its last few runs.
+  // Symmetric: a term that starts varying re-enters and the requirement rises with it.
+  const COACH4_MIN_SD = 0.01;
   function coach4Readiness(exposures, opts){
     const o = Object.assign({ epv: COACH4_EPV, pv: null, sv: null, epoch: null,
       minPerArm: ARM_MIN_PER_ARM, nowMs: Date.now() }, opts||{});
@@ -2976,8 +2983,21 @@ const MiniEvxlEngine = (function(){
     // never read, so a bumped SELECT_VERSION would silently NOT have split this gate -- and
     // D43's bump is the first one whose rows differ in which scenarios were eligible at all.
     const svOk  = r => o.sv===null  || r.sv===null  || r.sv===o.sv;
-    const usable = all.filter(r=>pvOk(r) && epOk(r) && svOk(r));
+    const poolable = all.filter(r=>pvOk(r) && epOk(r) && svOk(r));
+    // STEP 59: THE POPULATION IS THE ROWS THAT CARRY THE MODEL'S INPUTS. gain and margin are the
+    // forecast's measured parts and only a served revisit carries a forecast; a row without them
+    // cannot inform the coefficients it lacks, and padding the fit with such rows (gain = margin
+    // = 0 plus an indicator) satisfies the EPV rule nominally while leaving the gain slope exactly
+    // as poorly determined -- a bar passed by construction. Until 2026-09-03 this counted every
+    // poolable resolved row: 268 toward 100 on the owner's record, 139 of them carrying no input.
+    const hasTerms = r => Number.isFinite(r.gain) && Number.isFinite(r.margin);
+    const usable = poolable.filter(hasTerms);
+    const noTerms = poolable.length - usable.length;
     const staleSv = all.length - all.filter(svOk).length;
+    const sdOf = vals => { const n = vals.length; if(n < 2) return 0; const m = vals.reduce((a,x)=>a+x,0)/n; return Math.sqrt(vals.reduce((a,x)=>a+(x-m)*(x-m),0)/(n-1)); };
+    const sdGain = sdOf(usable.map(r=>Number(r.gain))), sdMargin = sdOf(usable.map(r=>Number(r.margin)));
+    // under two rows nothing can be said about variance, so the model stays as declared
+    const varies = sd => usable.length < 2 || sd >= COACH4_MIN_SD;
     const blocks = Array.from(new Set(usable.map(r=>r.block).filter(Boolean)));
     // The coefficient count is a property of the MODEL, not of how much data has arrived. Size
     // it on the blocks the coach uses TODAY (`opts.blocksNow`), not on the blocks the resolved
@@ -2986,8 +3006,8 @@ const MiniEvxlEngine = (function(){
     const blocksModelled = Math.max(Number(o.blocksNow)||0, blocks.length);
     const terms = [
       { name: 'intercept', df: 1, have: true },
-      { name: 'gain',   df: 1, have: usable.some(r=>Number.isFinite(r.gain)) },
-      { name: 'margin', df: 1, have: usable.some(r=>Number.isFinite(r.margin)) },
+      { name: 'gain',   df: varies(sdGain) ? 1 : 0,   have: usable.length > 0, sd: sdGain },
+      { name: 'margin', df: varies(sdMargin) ? 1 : 0, have: usable.length > 0, sd: sdMargin },
       { name: 'arm',    df: 1, have: usable.some(r=>r.arm) },
       { name: 'rung',   df: 1, have: usable.some(r=>Number.isFinite(r.rung)) },
       { name: 'block (k-1 dummies)', df: Math.max(blocksModelled - 1, 0), have: blocks.length > 1 }
@@ -3008,11 +3028,11 @@ const MiniEvxlEngine = (function(){
     const shortfallRarer = Math.max(0, requiredRarer - rarer);
     const weeksToReady = (perWeek && perWeek>0 && rarerShare && rarerShare>0)
       ? (shortfallRarer/(perWeek*rarerShare)) : null;
-    const dropped = all.length - usable.length;
-    const blockers = [];
+    const dropped = all.length - poolable.length;
+    const blockers = [], notes = [];
     if(!usable.length){
       // one honest sentence beats five that all say the same thing
-      blockers.push('no resolved items yet -- an item resolves once a run is logged AFTER it was served');
+      blockers.push('no resolved items in the population yet -- an item resolves once a run is logged AFTER it was served, and only poolable rows carrying gain/margin count (step 59)');
     } else {
       if(shortfallRarer > 0) blockers.push(shortfallRarer+' more of the rarer outcome ('+(hits<=misses?'collected':'not collected')+'), for '+o.epv+' events per variable across '+coefficients+' coefficients');
       if(armA < o.minPerArm) blockers.push((o.minPerArm-armA)+' more resolved items on arm A (the coach\'s top pick)');
@@ -3020,15 +3040,25 @@ const MiniEvxlEngine = (function(){
       if(blocks.length < 2) blockers.push('resolved items in at least two blocks -- with one block there is no dummy to fit');
       terms.forEach(t=>{ if(!t.have && t.df>0) blockers.push('no resolved item carries `'+t.name+'` yet'); });
     }
-    if(dropped > 0) blockers.push(dropped+' resolved item(s) are stamped under an older definition and cannot be pooled with the rest');
-    return { terms, coefficients, epv: o.epv,
-      resolved: all.length, usable: usable.length, dropped, staleSv,
+    // STEP 59: NOTES, NOT BLOCKERS. Dropped rows are excluded from the fit by design, so their
+    // existence cannot block it -- filed as a blocker (until 2026-09-03) the gate could never read
+    // READY on a record spanning a definition change, which is every record since D43.
+    if(dropped > 0) notes.push(dropped+' resolved item(s) are stamped under an older definition and are not pooled (reported, not blocking)');
+    if(noTerms > 0) notes.push(noTerms+' poolable resolved item(s) carry no forecast (gain/margin) and are outside the population of this fit');
+    terms.forEach(t=>{ if(t.df===0 && t.sd!==undefined && usable.length >= 2) notes.push('`'+t.name+'` is constant in the record (sd '+t.sd.toFixed(4)+' < '+COACH4_MIN_SD+') and is not fitted -- a coefficient on a constant regressor is not estimable'); });
+    if(usable.length){
+      const thin = blocks.filter(b=>{ const rows = usable.filter(r=>r.block===b); return rows.length < 5 || !rows.some(r=>!r.hit); });
+      if(thin.length) notes.push('block(s) with fewer than 5 rows or no misses merge into the reference at fit time: '+thin.join(', '));
+    }
+    return { terms, coefficients, epv: o.epv, minSd: COACH4_MIN_SD,
+      resolved: all.length, poolable: poolable.length, usable: usable.length, dropped, noTerms, staleSv,
+      sdGain: Math.round(sdGain*10000)/10000, sdMargin: Math.round(sdMargin*10000)/10000,
       hits, misses, rarer, rarerIs: hits<=misses ? 'collected' : 'not collected',
       requiredRarer, shortfallRarer, ready: blockers.length===0,
       armA, armB, minPerArm: o.minPerArm, blocks: blocks.length, blocksModelled,
       perWeek: perWeek===null ? null : Math.round(perWeek*10)/10,
       weeksToReady: weeksToReady===null ? null : Math.ceil(weeksToReady),
-      spanDays: Math.round(spanDays*10)/10, blockers };
+      spanDays: Math.round(spanDays*10)/10, blockers, notes };
   }
 
   // ---- The comparable competency number, `m` (Review Ledger III A1 + S3, 2026-08-25) --
@@ -5217,7 +5247,7 @@ const MiniEvxlEngine = (function(){
     feelAdjust, FEEL_RUN, FEEL_ADJ_MAX, FEEL_VALUES, blockRouteCandidates, ROUTE_MIN_PAIRS, stuckness, shrinkR, SHRINK_LAMBDA,
     changePoint, plateauSince, CHANGEPOINT_MIN_RUNS,
     chooseSessionType, SESSION_TYPES, collectBaseline, brierScore, reliabilityBins, COLLECT_MIN, RIPE_RULES, RIPE_RULE_DEFAULT, COLLECT_REPEAT_DEFAULT, ROUTE_RECENT_DEFAULT, SCORE_MIN_REVISITS,
-    coach4Readiness, COACH4_EPV,
+    coach4Readiness, COACH4_EPV, COACH4_MIN_SD,
     TRANSFER_PROVENANCE, provenanceOf, highestProvenance,
     personalTransfer, personalReturnEvents, PERSONAL_MIN_GAP_DAYS, PERSONAL_MIN_PRIOR, PERSONAL_MIN_EVENTS,
     scenarioDuration, DURATION_MIN_SAMPLES,

@@ -1040,7 +1040,9 @@
     // must not break is that it can say NO for each distinct reason, and YES when they clear.
     const mkExp = (i, over) => Object.assign({
       resolved: true, hit: i % 3 === 0 ? 1 : 0, pv: 2, blockEpoch: 'e1', block: 'c' + (i % 7),
-      rung: 4, gain: 0.1, margin: 0.05, arm: (i % 4 === 0 ? 'B' : 'A'),
+      // STEP 59: gain and margin VARY across rows -- a term with no variance in the population is
+      // not fitted (COACH4_MIN_SD), so a fixture holding them constant would model 9 coefficients
+      rung: 4, gain: 0.05 + (i % 7) * 0.02, margin: 0.01 + (i % 5) * 0.02, arm: (i % 4 === 0 ? 'B' : 'A'),
       servedAt: FIXED_MS - (400 - i) * 3600000
     }, over || {});
     const full = Array.from({ length: 400 }, (u, i) => mkExp(i));
@@ -1048,7 +1050,8 @@
       const r = E.coach4Readiness(rows, Object.assign({ pv: 2, epoch: 'e1', blocksNow: 7, nowMs: FIXED_MS }, over || {}));
       return { coefficients: r.coefficients, required: r.requiredRarer, rarer: r.rarer, usable: r.usable,
                dropped: r.dropped, ready: r.ready, blockers: r.blockers, armA: r.armA, armB: r.armB,
-               blocks: r.blocks, blocksModelled: r.blocksModelled, weeks: r.weeksToReady };
+               blocks: r.blocks, blocksModelled: r.blocksModelled, weeks: r.weeksToReady,
+               notes: r.notes, noTerms: r.noTerms, termDf: r.terms.map(t=>[t.name, t.df]) };
     };
     R.coach4 = {
       empty: rd([]),
@@ -1065,7 +1068,12 @@
       // and the arm needs BOTH sides
       noArmB: rd(full.map(r => Object.assign({}, r, { arm: 'A' }))),
       // the coefficient count is a property of the MODEL: it must not move with the data
-      sizedOnModel: rd(full.slice(0, 20), { blocksNow: 7 }).coefficients
+      sizedOnModel: rd(full.slice(0, 20), { blocksNow: 7 }).coefficients,
+      // STEP 59 (G2): rows carrying no forecast are not the model's population -- 200 of them
+      // added to the thin record must move neither usable nor rarer, and must be counted
+      noTerms: rd(full.slice(0, 40).concat(Array.from({ length: 200 }, (u, i) => mkExp(i, { gain: undefined, margin: undefined })))),
+      // STEP 59 (G3): a term constant across the record is not fitted -- one coefficient fewer
+      constantMargin: rd(full.map(r => Object.assign({}, r, { margin: 0.05 })))
     };
 
     // ---- NEXT-4: the randomised arm -------------------------------------------------------
@@ -1635,7 +1643,14 @@
       if(C4.thin.ready || !C4.thin.blockers.some(b=>/more of the rarer outcome/.test(b))) problems.push('coach4: a thin record must name the shortfall on the RARER outcome, got '+J(C4.thin.blockers));
       if(!(C4.thin.weeks > 0)) problems.push('coach4: a thin record with a measurable rate must project a number of weeks, got '+J(C4.thin.weeks));
       if(C4.unresolved.rarer !== C4.thin.rarer || C4.unresolved.usable !== C4.thin.usable) problems.push('coach4: UNRESOLVED items must not count toward the gate -- adding 500 of them moved it from '+J(C4.thin.usable)+' to '+J(C4.unresolved.usable));
-      if(C4.stalePv.dropped !== 50 || !C4.stalePv.blockers.some(b=>/older definition/.test(b))) problems.push('coach4: rows under an older `pv` must be dropped as unpoolable and said so, got '+J(C4.stalePv));
+      // STEP 59 (G1): the drop is a NOTE. Until 2026-09-03 this line required a BLOCKER, and the gate
+      // could never read READY on a record spanning a definition change.
+      if(C4.stalePv.dropped !== 50 || !(C4.stalePv.notes||[]).some(b=>/older definition/.test(b))) problems.push('coach4: rows under an older `pv` must be dropped as unpoolable and said so in NOTES, got '+J(C4.stalePv));
+      if(C4.stalePv.blockers.some(b=>/older definition/.test(b))) problems.push('coach4 G1: dropped rows are excluded from the fit by design and must NOT block it, got '+J(C4.stalePv.blockers));
+      if(!C4.stalePv.ready) problems.push('coach4 G1: a record meeting every requirement but carrying dropped rows must read READY, got '+J(C4.stalePv));
+      if(!C4.noTerms || C4.noTerms.noTerms !== 200 || C4.noTerms.usable !== C4.thin.usable || C4.noTerms.rarer !== C4.thin.rarer) problems.push('coach4 G2: rows without gain/margin are not the model population and must move neither usable nor rarer (counted as noTerms), got '+J(C4.noTerms && { noTerms: C4.noTerms.noTerms, usable: C4.noTerms.usable, rarer: C4.noTerms.rarer })+' against thin '+J({ usable: C4.thin.usable, rarer: C4.thin.rarer }));
+      if(!C4.constantMargin || C4.constantMargin.coefficients !== 10 || C4.constantMargin.required !== 100 || !(C4.constantMargin.notes||[]).some(b=>/margin/.test(b) && /constant/.test(b))) problems.push('coach4 G3: a term constant across the record is not fitted -- 10 coefficients, 100 required, a note naming margin, got '+J(C4.constantMargin && { coefficients: C4.constantMargin.coefficients, required: C4.constantMargin.required, notes: C4.constantMargin.notes }));
+      if(!C4.constantMargin || !C4.constantMargin.ready) problems.push('coach4 G3: the constant-margin record still meets its (smaller) requirement and must read READY, got '+J(C4.constantMargin && C4.constantMargin.blockers));
       if(C4.staleEpoch.dropped !== 60) problems.push('coach4: rows whose block id belongs to a previous freeze must be dropped -- c:1 was a different community then, got dropped '+J(C4.staleEpoch.dropped));
       if(!C4.oneBlock.blockers.some(b=>/at least two blocks/.test(b))) problems.push('coach4: one block leaves no dummy to fit and must block, got '+J(C4.oneBlock.blockers));
       if(!C4.noArmB.blockers.some(b=>/arm B/.test(b))) problems.push('coach4: the arm contrast needs both sides, got '+J(C4.noArmB.blockers));
