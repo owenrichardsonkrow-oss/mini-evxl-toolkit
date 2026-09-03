@@ -17352,11 +17352,24 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
   // the same type three days running" would degenerate into "flip every time", producing perfect
   // alternation that reads as success on any day-share bar. The day's type is its FIRST
   // serving's, which is the composition the pre-queue log recorded.
-  function recentSessionTypes(days){
+  // STEP 58: TODAY IS NOT ONE OF THE PREVIOUS DAYS. This read included the day being composed as
+  // soon as its first serving was written, so from the second serving on D18's "never the same
+  // type three DAYS running" was tested against today's own first serving instead of yesterday's.
+  // The first serving of a day is decided with no row for today yet -- correctly -- and every
+  // later serving read that first serving as recent[0], a different comparison, so the cascade
+  // acted on one serving a day and the rest of the day ran under the OPPOSITE type. On the owner's
+  // record: 08-31 transfer then collect x127, 09-02 collect then transfer x24, 09-03 transfer then
+  // collect x20, every row predicted exactly by this reading (dev/STEP58-PREREG.md). The harness
+  // had modelled the intended reader all along (recentTypes fixed per day before its inner loop),
+  // and the smoke test's wiring check planted a today row and asserted it came back FIRST -- the
+  // gate pinned the defect. The clock is the composition's `now`, not the wall clock (step 45).
+  function recentSessionTypes(days, nowMs){
+    const base = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+    const today = dayNumber(base);
     const byDay = new Map();
     servedLedger().forEach(r=>{
       if(!r || !r.type) return;
-      const d = Number(r.day); if(!Number.isFinite(d)) return;
+      const d = Number(r.day); if(!Number.isFinite(d) || d >= today) return;
       const prev = byDay.get(d);
       if(!prev || (Number(r.idx)||0) < (Number(prev.idx)||0)) byDay.set(d, r);
     });
@@ -17402,7 +17415,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = MiniEvxlEn
       // moves, not a fixed reading of what you play. A fold over the ratings in the ledger.
       levelAdjust: feelNow().adj,
       recentItems: recentlyServed(3, now),
-      recentTypes: recentSessionTypes(3) }, over||{});
+      recentTypes: recentSessionTypes(3, now) }, over||{});
   }
   function sessionCompose(list, now, seedBump, over){ return composeSession(list, sessionOpts(list, now, seedBump, over), playlistFill()); }
   // Read-only: the list a given day would compose, with NOTHING written. The only other way
